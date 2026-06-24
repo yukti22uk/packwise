@@ -530,9 +530,12 @@ function BoxPackingTool(){
               <div style={{fontSize:"20px",fontWeight:"700",color:"#1e293b"}}>{cnt}</div>
               <div style={{fontSize:"12px",fontWeight:"600",color:"#374151"}}>{title}</div>
               <div style={{fontSize:"11px",color:"#9ca3af"}}>{sub}</div></div>))}</div></div>
-      <div style={{display:"flex",gap:"6px",marginBottom:"16px"}}>
-        {[["3d","🔄 3D Model"],["2d","📐 2D Views"]].map(([id,label])=>(
-          <button key={id} onClick={()=>setView(id)} style={{padding:"8px 18px",border:"none",borderRadius:"8px",cursor:"pointer",fontWeight:"600",fontSize:"13px",background:view===id?"#059669":"#f1f5f9",color:view===id?"#fff":"#374151"}}>{label}</button>))}</div>
+      <div style={{display:"flex",gap:"10px",marginBottom:"16px",alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:"6px",flex:1}}>
+          {[["3d","🔄 3D Model"],["2d","📐 2D Views"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setView(id)} style={{padding:"8px 18px",border:"none",borderRadius:"8px",cursor:"pointer",fontWeight:"600",fontSize:"13px",background:view===id?"#059669":"#f1f5f9",color:view===id?"#fff":"#374151"}}>{label}</button>))}</div>
+        <WAShare message={`📦 *PackWise Packing Result*\nContainer: ${fmtN(result.cL)}×${fmtN(result.cW)}×${fmtN(result.cH)} mm\nBox: ${fmtN(result.sl)}×${fmtN(result.sw)}×${fmtN(result.sh)} mm\n*Max boxes: ${result.effQty.toLocaleString()}*\nBest orientation: ${result.orient}\nSpace used: ${(result.volUtil*100).toFixed(1)}%\n\nCalculate your load free at packwise.netlify.app`}/>
+      </div>
       {view==="3d"&&<div style={S.card}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}><div style={S.cardTitle}>🔄 3D Model</div><span style={{fontSize:"11px",color:"#94a3b8"}}>Drag to rotate · Scroll to zoom</span></div>
         <ThreeViewer result={result}/>
@@ -627,7 +630,10 @@ function ShipmentPlanner(){
           ["Volume Util.",(result.usedVol*100).toFixed(1)+"%",result.usedVol>=0.75?"#f0fdf4":"#fefce8",result.usedVol>=0.75?"#166534":"#854d0e"]].map(([l,v,bg,col])=>(
           <div key={l} style={{background:bg,borderRadius:"10px",padding:"14px",textAlign:"center"}}>
             <div style={{fontSize:"20px",fontWeight:"700",color:col,wordBreak:"break-word"}}>{v}</div><div style={{fontSize:"11px",color:"#6b7a8d",marginTop:"4px"}}>{l}</div></div>))}</div>
-      <button style={{...S.btnPrimary,marginBottom:"16px",background:"#dc2626"}} onClick={exportPDF}>⬇ Download Branded PDF Loading Plan</button>
+      <div style={{display:"flex",gap:"12px",marginBottom:"16px",flexWrap:"wrap"}}>
+        <button style={{...S.btnPrimary,flex:1,background:"#dc2626"}} onClick={exportPDF}>⬇ Download PDF Loading Plan</button>
+        <WAShare message={`🚚 *PackWise Shipment Plan*\nVehicle: ${result.contName}\nBox: ${fmtN(result.sku.L)}×${fmtN(result.sku.W)}×${fmtN(result.sku.H)} mm | ${result.order.toLocaleString()} units\n*${result.containers} containers needed*\n${result.perContainer.toLocaleString()} units per container\nSpace used: ${(result.usedVol*100).toFixed(1)}%${result.costPerUnit!=null?`\nCost per unit: ${money(result.costPerUnit)}`:""}\n\nPlan your shipment at packwise.netlify.app`}/>
+      </div>
       <div style={S.card}><div style={S.cardTitle}>💰 Container Comparison — find the cheapest option</div>
         <div style={{fontSize:"12px",color:"#6b7a8d",marginBottom:"12px"}}>Enter freight cost for each vehicle type. Cheapest cost-per-unit is highlighted green.</div>
         <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
@@ -959,29 +965,78 @@ function TwoSKUTool(){
 
 // ─── WEBSITE PAGES ────────────────────────────────────────────────────────────
 
+// ─── UTILITY COMPONENTS ───────────────────────────────────────────────────────
+
+// Scroll-triggered fade-in (supports stagger class)
+function FadeIn({children,className="",style={},stagger=false}){
+  const ref=useRef(null);
+  useEffect(()=>{
+    const el=ref.current;if(!el) return;
+    const obs=new IntersectionObserver(([e])=>{
+      if(e.isIntersecting){el.classList.add("in");obs.disconnect();}
+    },{threshold:0.1,rootMargin:"0px 0px -40px 0px"});
+    obs.observe(el);return()=>obs.disconnect();
+  },[]);
+  return <div ref={ref} className={`${stagger?"stagger":"fade-up"} ${className}`} style={style}>{children}</div>;
+}
+
+// Animated count-up number (triggers on scroll into view)
+function CountUp({value,suffix="",prefix="",duration=1600}){
+  const[n,setN]=useState(0);const ref=useRef(null);const done=useRef(false);
+  useEffect(()=>{
+    const el=ref.current;if(!el) return;
+    const obs=new IntersectionObserver(([e])=>{
+      if(e.isIntersecting&&!done.current){
+        done.current=true;const start=Date.now();
+        const tick=()=>{
+          const p=Math.min((Date.now()-start)/duration,1);
+          const eased=1-Math.pow(1-p,3);
+          setN(Math.round(value*eased));
+          if(p<1) requestAnimationFrame(tick);
+        };requestAnimationFrame(tick);obs.disconnect();}
+    },{threshold:0.5});
+    obs.observe(el);return()=>obs.disconnect();
+  },[value,duration]);
+  return <span ref={ref}>{prefix}{n}{suffix}</span>;
+}
+
+// WhatsApp share button
+function WAShare({message}){
+  const url=`https://wa.me/?text=${encodeURIComponent(message)}`;
+  return(
+    <a href={url} target="_blank" rel="noopener noreferrer" className="wa-btn">
+      <svg width="15" height="15" fill="currentColor" viewBox="0 0 24 24">
+        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+      </svg>
+      Share on WhatsApp
+    </a>
+  );
+}
+
 // ── Nav ──
 function Nav({page,setPage,isPro,onUpgrade,onLogout}){
   const[menuOpen,setMenuOpen]=useState(false);
   const links=[["home","Home"],["tool","Calculator"],["pricing","Pricing"],["about","About"]];
+  const go=(id)=>{setPage(id);setMenuOpen(false);};
   return(
     <nav style={{position:"sticky",top:0,zIndex:200,background:"rgba(255,255,255,0.97)",
       backdropFilter:"blur(8px)",borderBottom:"1px solid #e2e8f0",
       boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
-      <div style={{maxWidth:"1200px",margin:"0 auto",padding:"0 32px",
+      <div style={{maxWidth:"1200px",margin:"0 auto",padding:"0 24px",
         display:"flex",alignItems:"center",justifyContent:"space-between",height:"60px"}}>
         {/* Logo */}
-        <div onClick={()=>setPage("home")} style={{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer"}}>
+        <div onClick={()=>go("home")} style={{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer",flexShrink:0}}>
           <div style={{width:"34px",height:"34px",background:"linear-gradient(135deg,#059669,#0f172a)",
             borderRadius:"8px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px"}}>📦</div>
           <div>
             <div style={{fontWeight:"800",fontSize:"16px",color:"#0f172a",lineHeight:1}}>PackWise</div>
-            <div style={{fontSize:"10px",color:"#64748b",letterSpacing:"0.06em"}}>PACKING INTELLIGENCE</div>
+            <div style={{fontSize:"10px",color:"#64748b",letterSpacing:"0.06em"}} className="hide-mobile">PACKING INTELLIGENCE</div>
           </div>
         </div>
         {/* Desktop links */}
-        <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+        <div className="nav-desktop">
           {links.map(([id,label])=>(
-            <button key={id} onClick={()=>setPage(id)} style={{padding:"7px 14px",border:"none",
+            <button key={id} onClick={()=>go(id)} style={{padding:"7px 14px",border:"none",
               background:page===id?"#f0fdf4":"none",color:page===id?"#059669":"#475569",
               fontWeight:page===id?"700":"500",fontSize:"14px",borderRadius:"8px",cursor:"pointer"}}>
               {label}</button>))}
@@ -991,10 +1046,41 @@ function Nav({page,setPage,isPro,onUpgrade,onLogout}){
               color:"#92400e",fontWeight:"700",fontSize:"12px",padding:"6px 14px",
               borderRadius:"99px",cursor:"pointer",border:"1px solid #fde68a"}}>⭐ PRO</span>
           ):(
-            <button onClick={()=>{setPage("tool");setTimeout(onUpgrade,100);}} style={{padding:"8px 18px",
-              background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",
-              borderRadius:"8px",fontWeight:"700",fontSize:"14px",cursor:"pointer",
+            <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-green"
+              style={{padding:"8px 18px",background:"linear-gradient(135deg,#059669,#047857)",
+              color:"#fff",border:"none",borderRadius:"8px",fontWeight:"700",fontSize:"14px",cursor:"pointer",
               boxShadow:"0 2px 8px rgba(5,150,105,0.35)"}}>⭐ Get Pro</button>
+          )}
+        </div>
+        {/* Mobile burger */}
+        <button className="nav-burger" onClick={()=>setMenuOpen(o=>!o)} aria-label="Menu">
+          <div style={{width:"22px",display:"flex",flexDirection:"column",gap:"5px"}}>
+            <div style={{height:"2px",background:"#374151",borderRadius:"2px",
+              transform:menuOpen?"rotate(45deg) translate(5px,5px)":"none",transition:"transform 0.2s"}}/>
+            <div style={{height:"2px",background:"#374151",borderRadius:"2px",
+              opacity:menuOpen?0:1,transition:"opacity 0.2s"}}/>
+            <div style={{height:"2px",background:"#374151",borderRadius:"2px",
+              transform:menuOpen?"rotate(-45deg) translate(5px,-5px)":"none",transition:"transform 0.2s"}}/>
+          </div>
+        </button>
+      </div>
+      {/* Mobile dropdown */}
+      <div className={`nav-mobile ${menuOpen?"open":""}`}>
+        {links.map(([id,label])=>(
+          <button key={id} onClick={()=>go(id)} style={{padding:"12px 8px",border:"none",
+            background:"none",textAlign:"left",fontSize:"16px",fontWeight:"600",
+            color:page===id?"#059669":"#374151",cursor:"pointer",borderBottom:"1px solid #f1f5f9"}}>
+            {label}</button>))}
+        <div style={{marginTop:"14px"}}>
+          {isPro?(
+            <span onClick={()=>{onLogout();setMenuOpen(false);}} style={{display:"inline-block",
+              background:"#fef3c7",color:"#92400e",fontWeight:"700",fontSize:"13px",
+              padding:"8px 16px",borderRadius:"99px",cursor:"pointer"}}>⭐ PRO (tap to sign out)</span>
+          ):(
+            <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-green"
+              style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#059669,#047857)",
+              color:"#fff",border:"none",borderRadius:"10px",fontWeight:"700",fontSize:"15px",cursor:"pointer"}}>
+              ⭐ Get Pro</button>
           )}
         </div>
       </div>
@@ -1090,7 +1176,7 @@ function HomePage({setPage,onUpgrade}){
           <h1 style={{fontSize:"clamp(36px,6vw,64px)",fontWeight:"900",color:"#fff",
             lineHeight:"1.1",margin:"0 0 20px",letterSpacing:"-0.02em"}}>
             Stop guessing.<br/>
-            <span style={{background:"linear-gradient(90deg,#34d399,#059669)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>
+            <span className="shimmer-text">
               Load smarter.
             </span>
           </h1>
@@ -1122,21 +1208,27 @@ function HomePage({setPage,onUpgrade}){
 
       {/* Stats bar */}
       <div style={{background:"#f8fafc",borderBottom:"1px solid #e2e8f0"}}>
-        <div style={{maxWidth:"1200px",margin:"0 auto",padding:"0 32px",
-          display:"grid",gridTemplateColumns:"repeat(4,1fr)"}}>
-          {stats.map((s,i)=>(
-            <div key={i} style={{padding:"28px 20px",textAlign:"center",
-              borderRight:i<3?"1px solid #e2e8f0":"none"}}>
-              <div style={{fontSize:"32px",fontWeight:"900",color:"#059669",lineHeight:1}}>{s.v}</div>
+        <div style={{maxWidth:"1200px",margin:"0 auto",padding:"0 24px"}} className="rg-4">
+          {[
+            {v:75,suf:"%",l:"of logistics firms still\nuse manual spreadsheets"},
+            {v:15,suf:"–25%",l:"space wasted with\nmanual planning"},
+            {v:5,suf:"–15%",l:"freight cost saved\nwith load optimization"},
+            {v:5,suf:"%",pre:"< ",l:"of Indian supply chains\nare digitized"},
+          ].map((s,i)=>(
+            <FadeIn key={i} style={{padding:"28px 20px",textAlign:"center"}}
+              className={`stat-right-border${i<3?" ":""}`}>
+              <div style={{fontSize:"32px",fontWeight:"900",color:"#059669",lineHeight:1}}>
+                {s.pre&&s.pre}<CountUp value={s.v} suffix={s.suf}/>
+              </div>
               <div style={{fontSize:"12px",color:"#64748b",marginTop:"6px",lineHeight:"1.5",whiteSpace:"pre-line"}}>{s.l}</div>
-            </div>
+            </FadeIn>
           ))}
         </div>
       </div>
 
       {/* Problem statement */}
-      <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 32px 0"}}>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"60px",alignItems:"center"}}>
+      <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 24px 0"}}>
+        <FadeIn className="rg-2c">
           <div>
             <div style={{fontSize:"12px",fontWeight:"700",color:"#059669",letterSpacing:"0.1em",
               textTransform:"uppercase",marginBottom:"12px"}}>The problem</div>
@@ -1176,19 +1268,19 @@ function HomePage({setPage,onUpgrade}){
               </div>
             ))}
           </div>
-        </div>
+        </FadeIn>
       </div>
 
       {/* Features */}
-      <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 32px 0"}}>
-        <div style={{textAlign:"center",marginBottom:"48px"}}>
+      <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 24px 0"}}>
+        <FadeIn style={{textAlign:"center",marginBottom:"48px"}}>
           <div style={{fontSize:"12px",fontWeight:"700",color:"#059669",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>What's inside</div>
           <h2 style={{fontSize:"36px",fontWeight:"800",color:"#0f172a",margin:"0 0 12px"}}>Four tools. One platform.</h2>
           <p style={{fontSize:"16px",color:"#64748b",maxWidth:"480px",margin:"0 auto"}}>Start free with single-container packing. Upgrade when you're ready to plan full shipments.</p>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"20px"}}>
+        </FadeIn>
+        <FadeIn className="rg-2e stagger">
           {features.map((f,i)=>(
-            <div key={i} style={{background:"#fff",borderRadius:"14px",padding:"28px",
+            <div key={i} className="hover-lift" style={{background:"#fff",borderRadius:"14px",padding:"28px",
               border:`1px solid ${f.free===true?"#bbf7d0":f.free===false?"#e2e8f0":"#fde68a"}`,
               position:"relative",boxShadow:"0 1px 4px rgba(0,0,0,0.05)"}}>
               <div style={{position:"absolute",top:"20px",right:"20px"}}>
@@ -1199,7 +1291,7 @@ function HomePage({setPage,onUpgrade}){
               <div style={{fontSize:"32px",marginBottom:"12px"}}>{f.icon}</div>
               <h3 style={{fontSize:"18px",fontWeight:"700",color:"#0f172a",margin:"0 0 8px"}}>{f.title}</h3>
               <p style={{fontSize:"14px",color:"#64748b",lineHeight:"1.7",margin:0}}>{f.desc}</p>
-              <button onClick={()=>setPage("tool")} style={{marginTop:"16px",padding:"8px 16px",
+              <button onClick={()=>setPage("tool")} className="btn-green" style={{marginTop:"16px",padding:"8px 16px",
                 background:f.free===false?"linear-gradient(135deg,#059669,#047857)":"#f8fafc",
                 color:f.free===false?"#fff":"#059669",border:`1px solid ${f.free===false?"transparent":"#059669"}`,
                 borderRadius:"8px",fontSize:"13px",fontWeight:"600",cursor:"pointer"}}>
@@ -1207,17 +1299,17 @@ function HomePage({setPage,onUpgrade}){
               </button>
             </div>
           ))}
-        </div>
+        </FadeIn>
       </div>
 
       {/* How it works */}
-      <div style={{background:"#0f172a",margin:"80px 0 0",padding:"80px 32px"}}>
+      <div style={{background:"#0f172a",margin:"80px 0 0",padding:"80px 24px"}}>
         <div style={{maxWidth:"1200px",margin:"0 auto"}}>
-          <div style={{textAlign:"center",marginBottom:"56px"}}>
+          <FadeIn style={{textAlign:"center",marginBottom:"56px"}}>
             <div style={{fontSize:"12px",fontWeight:"700",color:"#34d399",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>How it works</div>
             <h2 style={{fontSize:"36px",fontWeight:"800",color:"#fff",margin:0}}>From dimensions to loading plan in 4 steps</h2>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"32px"}}>
+          </FadeIn>
+          <FadeIn className="rg-steps stagger">
             {steps.map((s,i)=>(
               <div key={i} style={{borderTop:"3px solid #059669",paddingTop:"24px"}}>
                 <div style={{fontSize:"42px",fontWeight:"900",color:"rgba(52,211,153,0.2)",lineHeight:1,marginBottom:"12px"}}>{s.n}</div>
@@ -1225,9 +1317,9 @@ function HomePage({setPage,onUpgrade}){
                 <p style={{fontSize:"13px",color:"#94a3b8",lineHeight:"1.7",margin:0}}>{s.desc}</p>
               </div>
             ))}
-          </div>
+          </FadeIn>
           <div style={{textAlign:"center",marginTop:"48px"}}>
-            <button onClick={()=>setPage("tool")} style={{padding:"14px 32px",
+            <button onClick={()=>setPage("tool")} className="btn-green" style={{padding:"14px 32px",
               background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",
               borderRadius:"10px",fontSize:"15px",fontWeight:"700",cursor:"pointer",
               boxShadow:"0 4px 20px rgba(5,150,105,0.4)"}}>
@@ -1238,12 +1330,12 @@ function HomePage({setPage,onUpgrade}){
       </div>
 
       {/* Who it's for */}
-      <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 32px 0"}}>
-        <div style={{textAlign:"center",marginBottom:"48px"}}>
+      <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 24px 0"}}>
+        <FadeIn style={{textAlign:"center",marginBottom:"48px"}}>
           <div style={{fontSize:"12px",fontWeight:"700",color:"#059669",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>Who it's for</div>
           <h2 style={{fontSize:"36px",fontWeight:"800",color:"#0f172a",margin:0}}>Built for the people who actually load trucks</h2>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"20px"}}>
+        </FadeIn>
+        <FadeIn className="rg-3 stagger">
           {[
             {icon:"🏭",title:"MSME Exporters",desc:"Plan container loads before your shipment leaves. Know exactly how many 20ft or 40ft containers you need and the cost per unit — before booking."},
             {icon:"📦",title:"Amazon FBA Sellers",desc:"Calculate exactly how many units fit per shipment box or pallet. Stop paying for air inside containers you're already loading at a premium."},
@@ -1252,25 +1344,25 @@ function HomePage({setPage,onUpgrade}){
             {icon:"📊",title:"Supply Chain Planners",desc:"Upload your SKU list and instantly know which products waste the most container space. Identify packing inefficiencies across your entire catalog."},
             {icon:"🌏",title:"Import/Export Agents",desc:"Your clients ask how many units fit and what it costs. Answer in 30 seconds with a professional PDF report — without calling your warehouse."},
           ].map((c,i)=>(
-            <div key={i} style={{background:"#f8fafc",borderRadius:"12px",padding:"24px",border:"1px solid #e2e8f0"}}>
+            <div key={i} className="hover-lift hover-border" style={{background:"#f8fafc",borderRadius:"12px",padding:"24px",border:"1px solid #e2e8f0",transition:"border-color 0.2s"}}>
               <div style={{fontSize:"28px",marginBottom:"10px"}}>{c.icon}</div>
               <h3 style={{fontSize:"16px",fontWeight:"700",color:"#0f172a",margin:"0 0 8px"}}>{c.title}</h3>
               <p style={{fontSize:"13px",color:"#64748b",lineHeight:"1.7",margin:0}}>{c.desc}</p>
             </div>
           ))}
-        </div>
+        </FadeIn>
       </div>
 
       {/* Testimonials */}
-      <div style={{background:"#f0fdf4",margin:"80px 0 0",padding:"72px 32px"}}>
+      <div style={{background:"#f0fdf4",margin:"80px 0 0",padding:"72px 24px"}}>
         <div style={{maxWidth:"1200px",margin:"0 auto"}}>
-          <div style={{textAlign:"center",marginBottom:"48px"}}>
+          <FadeIn style={{textAlign:"center",marginBottom:"48px"}}>
             <h2 style={{fontSize:"32px",fontWeight:"800",color:"#0f172a",margin:"0 0 8px"}}>What users say</h2>
             <p style={{color:"#64748b",fontSize:"15px",margin:0}}>Early users from India's manufacturing and export clusters</p>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"20px"}}>
+          </FadeIn>
+          <FadeIn className="rg-3 stagger">
             {testimonials.map((t,i)=>(
-              <div key={i} style={{background:"#fff",borderRadius:"14px",padding:"28px",
+              <div key={i} className="hover-lift" style={{background:"#fff",borderRadius:"14px",padding:"28px",
                 boxShadow:"0 2px 12px rgba(0,0,0,0.06)",border:"1px solid #dcfce7"}}>
                 <div style={{fontSize:"32px",color:"#059669",lineHeight:1,marginBottom:"14px"}}>"</div>
                 <p style={{fontSize:"14px",color:"#374151",lineHeight:"1.8",margin:"0 0 20px",fontStyle:"italic"}}>{t.q}</p>
@@ -1278,7 +1370,7 @@ function HomePage({setPage,onUpgrade}){
                 <div style={{fontSize:"12px",color:"#64748b"}}>{t.role}</div>
               </div>
             ))}
-          </div>
+          </FadeIn>
         </div>
       </div>
 
@@ -1339,7 +1431,7 @@ function PricingPage({onUpgrade,setPage}){
           ))}
         </div>
         {/* Pro */}
-        <div style={{background:"linear-gradient(160deg,#0f172a,#0d2b1a)",borderRadius:"16px",padding:"32px",border:"1px solid #059669",boxShadow:"0 8px 32px rgba(5,150,105,0.25)",position:"relative",overflow:"hidden"}}>
+        <div className="pro-glow" style={{background:"linear-gradient(160deg,#0f172a,#0d2b1a)",borderRadius:"16px",padding:"32px",border:"1px solid #059669",boxShadow:"0 8px 32px rgba(5,150,105,0.25)",position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",top:"16px",right:"16px",background:"#fbbf24",color:"#78350f",fontSize:"11px",fontWeight:"800",padding:"4px 10px",borderRadius:"99px"}}>MOST POPULAR</div>
           <div style={{fontSize:"14px",fontWeight:"700",color:"#34d399",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:"8px"}}>Pro</div>
           <div style={{fontSize:"42px",fontWeight:"900",color:"#fff",lineHeight:1}}>{CONFIG.priceLabel.split(" / ")[0]}</div>
@@ -1550,10 +1642,12 @@ export default function App(){
     <div style={{fontFamily:"'Segoe UI',system-ui,-apple-system,sans-serif",background:"#fff",minHeight:"100vh"}}>
       <Nav page={page} setPage={setPage} isPro={isPro} onUpgrade={openUpgrade} onLogout={logout}/>
       <main>
-        {page==="home"&&<HomePage setPage={setPage} onUpgrade={openUpgrade}/>}
-        {page==="tool"&&<ToolPage isPro={isPro} setIsPro={setIsPro} modalOpen={modalOpen} setModalOpen={setModalOpen}/>}
-        {page==="pricing"&&<PricingPage onUpgrade={openUpgrade} setPage={setPage}/>}
-        {page==="about"&&<AboutPage setPage={setPage}/>}
+        <div className="page-enter" key={page}>
+          {page==="home"&&<HomePage setPage={setPage} onUpgrade={openUpgrade}/>}
+          {page==="tool"&&<ToolPage isPro={isPro} setIsPro={setIsPro} modalOpen={modalOpen} setModalOpen={setModalOpen}/>}
+          {page==="pricing"&&<PricingPage onUpgrade={openUpgrade} setPage={setPage}/>}
+          {page==="about"&&<AboutPage setPage={setPage}/>}
+        </div>
       </main>
       <Footer setPage={setPage}/>
     </div>
