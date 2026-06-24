@@ -1,1 +1,173 @@
+/* ─── FONTS ─────────────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800;900&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: 'Space Grotesk', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0; padding: 0;
+}
+
+html { scroll-behavior: smooth; }
+
+/* ─── FADE-IN ANIMATIONS ─────────────────────────────────────────────────────  */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(32px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes gradientPulse {
+  0%,100% { box-shadow: 0 8px 32px rgba(5,150,105,0.25), 0 0 0 1px rgba(52,211,153,0.4); }
+  50%      { box-shadow: 0 8px 48px rgba(5,150,105,0.5),  0 0 0 2px rgba(52,211,153,0.8); }
+}
+@keyframes shimmerGrad {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+@keyframes floatBox {
+  0%,100% { transform: translateY(0px) rotate(0deg); }
+  50%      { transform: translateY(-12px) rotate(2deg); }
+}
+
+.fade-up {
+  opacity: 0;
+  transform: translateY(32px);
+  transition: opacity 0.65s cubic-bezier(0.16,1,0.3,1),
+              transform 0.65s cubic-bezier(0.16,1,0.3,1);
+}
+.fade-up.in { opacity: 1; transform: translateY(0); }
+
+/* Stagger children when parent gets .in */
+.stagger > * {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.stagger.in > *:nth-child(1) { opacity:1;transform:none;transition-delay:0ms; }
+.stagger.in > *:nth-child(2) { opacity:1;transform:none;transition-delay:90ms; }
+.stagger.in > *:nth-child(3) { opacity:1;transform:none;transition-delay:180ms; }
+.stagger.in > *:nth-child(4) { opacity:1;transform:none;transition-delay:270ms; }
+.stagger.in > *:nth-child(5) { opacity:1;transform:none;transition-delay:360ms; }
+.stagger.in > *:nth-child(6) { opacity:1;transform:none;transition-delay:450ms; }
+
+/* Page entrance */
+.page-enter { animation: fadeUp 0.45s cubic-bezier(0.16,1,0.3,1) both; }
+
+/* ─── PRO CARD GLOW ──────────────────────────────────────────────────────────  */
+.pro-glow { animation: gradientPulse 2.5s ease-in-out infinite; }
+
+/* ─── HOVER CARDS ────────────────────────────────────────────────────────────  */
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.1) !important;
+}
+.hover-border:hover { border-color: #059669 !important; }
+
+/* ─── BUTTONS ────────────────────────────────────────────────────────────────  */
+.btn-green {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.btn-green:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(5,150,105,0.45) !important;
+  opacity: 0.94;
+}
+
+/* ─── WHATSAPP BUTTON ────────────────────────────────────────────────────────  */
+.wa-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #25D366;
+  color: #fff !important;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.wa-btn:hover {
+  background: #128C7E;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(18,140,126,0.4);
+}
+
+/* ─── RESPONSIVE GRIDS ───────────────────────────────────────────────────────  */
+.rg-4    { display:grid; grid-template-columns:repeat(4,1fr); }
+.rg-3    { display:grid; grid-template-columns:repeat(3,1fr); gap:20px; }
+.rg-2c   { display:grid; grid-template-columns:1fr 1fr;       gap:60px; align-items:center; }
+.rg-2e   { display:grid; grid-template-columns:1fr 1fr;       gap:20px; }
+.rg-steps{ display:grid; grid-template-columns:repeat(4,1fr); gap:32px; }
+
+@media (max-width: 960px) {
+  .rg-4     { grid-template-columns:1fr 1fr; }
+  .rg-3     { grid-template-columns:1fr 1fr; }
+  .rg-2c    { grid-template-columns:1fr; gap:28px; }
+  .rg-2e    { grid-template-columns:1fr; }
+  .rg-steps { grid-template-columns:1fr 1fr; gap:20px; }
+}
+@media (max-width: 600px) {
+  .rg-4     { grid-template-columns:1fr; }
+  .rg-3     { grid-template-columns:1fr; }
+  .rg-2e    { grid-template-columns:1fr; }
+  .rg-steps { grid-template-columns:1fr; }
+}
+
+/* ─── MOBILE NAV ─────────────────────────────────────────────────────────────  */
+.nav-desktop { display:flex; align-items:center; gap:6px; }
+.nav-burger  { display:none; background:none; border:none; cursor:pointer; padding:8px; }
+.nav-mobile  {
+  display:none; flex-direction:column; padding:12px 24px 20px;
+  background:#fff; border-top:1px solid #e2e8f0;
+  position:absolute; top:60px; left:0; right:0;
+  box-shadow:0 8px 24px rgba(0,0,0,0.1); z-index:199;
+}
+.nav-mobile.open { display:flex; }
+
+@media (max-width: 720px) {
+  .nav-desktop { display:none; }
+  .nav-burger  { display:flex; align-items:center; }
+}
+
+/* ─── MOBILE PADDING ─────────────────────────────────────────────────────────  */
+@media (max-width: 720px) {
+  .px-page   { padding-left:16px !important; padding-right:16px !important; }
+  .hero-btns { flex-direction:column; align-items:stretch !important; }
+  .hero-btns a, .hero-btns button { text-align:center; }
+  .stat-right-border { border-right:none !important; border-bottom:1px solid #e2e8f0; }
+  .stat-right-border:last-child { border-bottom:none; }
+  .hide-mobile { display:none !important; }
+}
+
+/* ─── SHIMMER HERO TITLE ─────────────────────────────────────────────────────  */
+.shimmer-text {
+  background: linear-gradient(90deg, #34d399 0%, #10b981 30%, #a7f3d0 60%, #059669 80%, #34d399 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmerGrad 3s linear infinite;
+}
+
+/* ─── FLOATING BOX ANIMATION (hero decoration) ───────────────────────────────  */
+.float-anim { animation: floatBox 4s ease-in-out infinite; }
+
+/* ─── SMOOTH SCROLL INPUT FOCUS ──────────────────────────────────────────────  */
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid #059669;
+  outline-offset: 1px;
+  border-color: #059669 !important;
+}
 
