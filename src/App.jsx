@@ -1307,6 +1307,187 @@ function PackWiseLogo({size=36}){
   );
 }
 
+// ─── BOX LOADING ANIMATION (hero) ────────────────────────────────────────────
+const ANIM_COLS=7,ANIM_ROWS=4,ANIM_TOTAL=ANIM_COLS*ANIM_ROWS;
+const BOX_COLORS=["#be185d","#1a1a1a","#9d174d","#2d1020","#7c1d4e","#111111","#4a0d2a"];
+
+function BoxLoadingAnim(){
+  const[count,setCount]=useState(0);
+  const[paused,setPaused]=useState(false);
+  useEffect(()=>{
+    if(paused){const t=setTimeout(()=>{setCount(0);setPaused(false);},2200);return()=>clearTimeout(t);}
+    if(count>=ANIM_TOTAL){setPaused(true);return;}
+    const t=setTimeout(()=>setCount(c=>c+1),72);
+    return()=>clearTimeout(t);
+  },[count,paused]);
+  return(
+    <div style={{position:"relative",userSelect:"none"}}>
+      <div style={{border:"2px solid #be185d",borderRadius:"10px",padding:"14px",
+        background:"rgba(190,24,93,0.04)",position:"relative",overflow:"visible",
+        boxShadow:"0 0 40px rgba(190,24,93,0.12)"}}>
+        <div style={{position:"absolute",left:0,top:0,bottom:0,width:"18px",borderRadius:"8px 0 0 8px",
+          background:"linear-gradient(180deg,#be185d,#7c1d4e)",opacity:0.7}}/>
+        <div style={{marginLeft:"20px",display:"grid",gridTemplateColumns:`repeat(${ANIM_COLS},1fr)`,gap:"5px"}}>
+          {Array.from({length:ANIM_TOTAL},(_,i)=>(
+            <div key={i} style={{height:"46px",borderRadius:"4px",
+              background:BOX_COLORS[i%BOX_COLORS.length],
+              opacity:i<count?1:0,
+              transform:i<count?"scale(1) translateY(0)":"scale(0.4) translateY(8px)",
+              transition:i<count?"opacity 0.22s ease,transform 0.22s ease":"none",
+              boxShadow:"inset 0 6px 0 rgba(255,255,255,0.07),inset 0 0 0 1px rgba(255,255,255,0.04)"}}/>
+          ))}
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:"10px",
+          marginLeft:"20px",fontSize:"11px",fontWeight:"600"}}>
+          <span style={{color:"rgba(255,255,255,0.35)"}}>📦 {Math.min(count,ANIM_TOTAL)}/{ANIM_TOTAL} boxes</span>
+          <span style={{color:count>=ANIM_TOTAL?"#be185d":"rgba(255,255,255,0.2)",transition:"color 0.3s"}}>
+            {count>=ANIM_TOTAL?"✓ 100% utilized":"loading..."}</span>
+        </div>
+      </div>
+      <div style={{position:"absolute",top:"-12px",right:"-12px",background:"#be185d",color:"#fff",
+        padding:"5px 12px",borderRadius:"6px",fontSize:"11px",fontWeight:"700",
+        boxShadow:"0 4px 16px rgba(190,24,93,0.5)"}}>✓ Optimal layout</div>
+      <div style={{position:"absolute",bottom:"-12px",left:"-12px",background:"#111",
+        color:"rgba(255,255,255,0.7)",padding:"5px 12px",borderRadius:"6px",fontSize:"11px",
+        fontWeight:"600",border:"1px solid #333",boxShadow:"0 4px 12px rgba(0,0,0,0.4)"}}>
+        3D model included →</div>
+    </div>
+  );
+}
+
+// ─── INTERACTIVE 3D HOMEPAGE DEMO ────────────────────────────────────────────
+const HOME_PRESETS=[
+  {name:"Tata Ace",  box:[300,200,150],container:[2100,1525,1600]},
+  {name:"20ft ISO",  box:[500,400,300],container:[5900,2350,2390]},
+  {name:"32ft SXL",  box:[600,400,300],container:[9750,2350,2700]},
+  {name:"Pallet",    box:[300,250,200],container:[1200,1000,1400]},
+];
+
+function HomeDemoViewer(){
+  const mountRef=useRef(null);const cleanRef=useRef(null);
+  const[preset,setPreset]=useState(1);const[result,setResult]=useState(null);
+  useEffect(()=>{
+    const p=HOME_PRESETS[preset];
+    const r=calcMixedDetailed(p.container[0],p.container[1],p.container[2],p.box[0],p.box[1],p.box[2]);
+    setResult({...r,volUtil:(r.total*p.box[0]*p.box[1]*p.box[2])/(p.container[0]*p.container[1]*p.container[2]),preset:p});
+  },[preset]);
+  useEffect(()=>{
+    if(!result||!mountRef.current) return;
+    if(cleanRef.current){cleanRef.current();cleanRef.current=null;}
+    const t=setTimeout(()=>{
+      const el=mountRef.current;if(!el) return;
+      const W=el.clientWidth||700,H=340;
+      const{cL,cW,cH,nx,ny,nz,boxL,boxW,boxH,leftover1:l1,leftover2:l2,leftover3:l3}=result;
+      const scene=new THREE.Scene();scene.background=new THREE.Color(0x0f172a);
+      const camera=new THREE.PerspectiveCamera(45,W/H,0.01,100000);
+      const renderer=new THREE.WebGLRenderer({antialias:true});
+      renderer.setSize(W,H);renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+      el.appendChild(renderer.domElement);renderer.domElement.style.display="block";
+      scene.add(new THREE.AmbientLight(0xffffff,0.75));
+      const d1=new THREE.DirectionalLight(0xffffff,0.7);d1.position.set(5,8,5);scene.add(d1);
+      const d2=new THREE.DirectionalLight(0xff88aa,0.25);d2.position.set(-3,-2,-3);scene.add(d2);
+      const regs=[
+        {col:0xbe185d,ox:0,oy:0,oz:0,rnx:nx,rny:ny,rnz:nz,bL:boxL,bW:boxW,bH:boxH},
+        {col:0x374151,ox:l1.offX,oy:l1.offY,oz:l1.offZ,rnx:l1.nx,rny:l1.ny,rnz:l1.nz,bL:l1.boxL,bW:l1.boxW,bH:l1.boxH},
+        {col:0x4b5563,ox:l2.offX,oy:l2.offY,oz:l2.offZ,rnx:l2.nx,rny:l2.ny,rnz:l2.nz,bL:l2.boxL,bW:l2.boxW,bH:l2.boxH},
+        {col:0x6b7280,ox:l3.offX,oy:l3.offY,oz:l3.offZ,rnx:l3.nx,rny:l3.ny,rnz:l3.nz,bL:l3.boxL,bW:l3.boxW,bH:l3.boxH},
+      ];
+      const tot=regs.reduce((s,r)=>s+(r.rnx||0)*(r.rny||0)*(r.rnz||0),0)||1;
+      const MAX_D=900;
+      regs.forEach(r=>{
+        if(!r.rnx||!r.rny||!r.rnz||!r.bL||!r.bW||!r.bH) return;
+        const total=r.rnx*r.rny*r.rnz,cap=Math.max(1,Math.round(MAX_D*(total/tot)));
+        const stride=total>cap?total/cap:1;const pos=[];let idx=0,next=0;
+        for(let iz=0;iz<r.rnz;iz++)for(let iy=0;iy<r.rny;iy++)for(let ix=0;ix<r.rnx;ix++){
+          const e=(ix===0||ix===r.rnx-1||iy===0||iy===r.rny-1||iz===0||iz===r.rnz-1);
+          if(e||idx>=next){pos.push([(r.ox||0)+ix*r.bL+r.bL/2,(r.oz||0)+iz*r.bH+r.bH/2,(r.oy||0)+iy*r.bW+r.bW/2]);
+            if(idx>=next)next+=stride;}idx++;}
+        const mesh=new THREE.InstancedMesh(new THREE.BoxGeometry(r.bL*0.86,r.bH*0.86,r.bW*0.86),
+          new THREE.MeshPhongMaterial({color:r.col,shininess:40,transparent:true,opacity:0.96}),pos.length);
+        mesh.count=pos.length;const dummy=new THREE.Object3D();
+        pos.forEach(([x,y,z],i)=>{dummy.position.set(x,y,z);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);});
+        mesh.instanceMatrix.needsUpdate=true;scene.add(mesh);});
+      const cw=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(cL,cH,cW)),
+        new THREE.LineBasicMaterial({color:0xbe185d}));
+      cw.position.set(cL/2,cH/2,cW/2);scene.add(cw);
+      const grid=new THREE.GridHelper(Math.max(cL,cW)*2.5,10,0x1e293b,0x1a2030);
+      grid.position.set(cL/2,-1,cW/2);scene.add(grid);
+      const center=new THREE.Vector3(cL/2,cH/2,cW/2);
+      const diag=Math.sqrt(cL*cL+cW*cW+cH*cH)||10;
+      let radius=diag*2.1,theta=Math.PI*0.3,phi=Math.PI*0.28,drag=false,prev={x:0,y:0};
+      const cv=renderer.domElement;cv.style.cursor="grab";
+      const onD=(e)=>{drag=true;prev={x:e.clientX,y:e.clientY};cv.style.cursor="grabbing";};
+      const onM=(e)=>{if(!drag)return;theta-=(e.clientX-prev.x)*0.006;
+        phi=Math.max(0.05,Math.min(1.5,phi+(e.clientY-prev.y)*0.006));prev={x:e.clientX,y:e.clientY};};
+      const onU=()=>{drag=false;cv.style.cursor="grab";};
+      const onW=(e)=>{e.preventDefault();radius=Math.max(diag*0.5,Math.min(diag*5,radius+e.deltaY*0.4));};
+      cv.addEventListener("mousedown",onD);window.addEventListener("mousemove",onM);
+      window.addEventListener("mouseup",onU);cv.addEventListener("wheel",onW,{passive:false});
+      const onRz=()=>{const nW=el.clientWidth||700;renderer.setSize(nW,H);camera.aspect=nW/H;camera.updateProjectionMatrix();};
+      window.addEventListener("resize",onRz);
+      let animId;
+      const loop=()=>{animId=requestAnimationFrame(loop);
+        if(!drag)theta+=0.003;
+        camera.position.set(center.x+radius*Math.sin(phi)*Math.sin(theta),
+          center.y+radius*Math.cos(phi),center.z+radius*Math.sin(phi)*Math.cos(theta));
+        camera.lookAt(center);renderer.render(scene,camera);};loop();
+      cleanRef.current=()=>{cancelAnimationFrame(animId);
+        cv.removeEventListener("mousedown",onD);window.removeEventListener("mousemove",onM);
+        window.removeEventListener("mouseup",onU);cv.removeEventListener("wheel",onW);
+        window.removeEventListener("resize",onRz);
+        if(el.contains(cv))el.removeChild(cv);renderer.dispose();};
+    },120);
+    return()=>{clearTimeout(t);if(cleanRef.current){cleanRef.current();cleanRef.current=null;}};
+  },[result]);
+  return(
+    <div style={{background:"#0f172a",padding:"72px 24px",borderTop:"1px solid #1e293b"}}>
+      <div style={{maxWidth:"1200px",margin:"0 auto"}}>
+        <FadeIn style={{textAlign:"center",marginBottom:"32px"}}>
+          <div style={{fontSize:"12px",fontWeight:"700",color:"#f9a8d4",letterSpacing:"0.1em",
+            textTransform:"uppercase",marginBottom:"10px"}}>Live interactive demo</div>
+          <h2 style={{fontSize:"36px",fontWeight:"900",color:"#fff",margin:"0 0 8px",letterSpacing:"-0.02em"}}>
+            See the 3D model — before you sign up
+          </h2>
+          <p style={{fontSize:"15px",color:"#94a3b8",margin:0}}>
+            Real packing algorithm. Real 3D model. Drag to rotate, scroll to zoom.
+          </p>
+        </FadeIn>
+        <div style={{display:"flex",gap:"8px",justifyContent:"center",marginBottom:"20px",flexWrap:"wrap"}}>
+          {HOME_PRESETS.map((p,i)=>(
+            <button key={i} onClick={()=>setPreset(i)} style={{padding:"8px 20px",
+              border:`1.5px solid ${preset===i?"#be185d":"#1e293b"}`,
+              background:preset===i?"#be185d":"transparent",
+              color:preset===i?"#fff":"#9ca3af",borderRadius:"99px",cursor:"pointer",
+              fontWeight:"700",fontSize:"13px",fontFamily:"inherit",transition:"all 0.15s ease"}}>
+              {p.name}</button>
+          ))}
+        </div>
+        <div ref={mountRef} style={{width:"100%",height:"340px",borderRadius:"14px",
+          overflow:"hidden",border:"1px solid #1e293b",background:"#0f172a",
+          boxShadow:"0 0 60px rgba(190,24,93,0.08)"}}/>
+        {result&&(
+          <FadeIn style={{display:"flex",gap:"16px",justifyContent:"center",marginTop:"20px",flexWrap:"wrap"}}>
+            {[["📦","Boxes Fit",result.total.toLocaleString()],
+              ["📐","Space Used",(result.volUtil*100).toFixed(1)+"%"],
+              ["🔄","Orientation",result.orient],
+            ].map(([icon,label,val])=>(
+              <div key={label} style={{textAlign:"center",padding:"14px 24px",background:"#1e293b",
+                borderRadius:"10px",border:"1px solid #263040",minWidth:"140px"}}>
+                <div style={{fontSize:"22px",fontWeight:"900",color:"#fff",letterSpacing:"-0.02em"}}>{val}</div>
+                <div style={{fontSize:"11px",color:"#6b7280",marginTop:"4px",fontWeight:"600",
+                  textTransform:"uppercase",letterSpacing:"0.06em"}}>{icon} {label}</div>
+              </div>
+            ))}
+          </FadeIn>
+        )}
+        <div style={{textAlign:"center",marginTop:"20px",fontSize:"12px",color:"#4b5563"}}>
+          Drag to rotate · Scroll to zoom · Switch presets to see different containers
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Nav ──
 function Nav({page,setPage,isPro,onUpgrade,onLogout}){
   const[menuOpen,setMenuOpen]=useState(false);
@@ -1453,52 +1634,68 @@ function HomePage({setPage,onUpgrade}){
   ];
   return(
     <div>
-      {/* Hero */}
-      <div style={{background:"linear-gradient(160deg,#0f172a 0%,#0d2b1a 60%,#064e3b 100%)",
-        padding:"90px 32px 100px",textAlign:"center",position:"relative",overflow:"hidden"}}>
-        {/* Background grid decoration */}
-        <div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at 1px 1px, rgba(52,211,153,0.12) 1px, transparent 0)",backgroundSize:"32px 32px",pointerEvents:"none"}}/>
-        <div style={{maxWidth:"820px",margin:"0 auto",position:"relative"}}>
-          <div style={{display:"inline-flex",alignItems:"center",gap:"8px",background:"rgba(52,211,153,0.12)",
-            border:"1px solid rgba(52,211,153,0.3)",borderRadius:"99px",padding:"6px 16px",
-            marginBottom:"24px",fontSize:"13px",color:"#34d399",fontWeight:"600"}}>
-            🇮🇳 Built for Indian exporters & logistics teams
-          </div>
-          <h1 style={{fontSize:"clamp(36px,6vw,64px)",fontWeight:"900",color:"#fff",
-            lineHeight:"1.1",margin:"0 0 20px",letterSpacing:"-0.02em"}}>
-            Stop guessing.<br/>
-            <span className="shimmer-theme">
-              Load smarter.
-            </span>
-          </h1>
-          <p style={{fontSize:"clamp(16px,2.5vw,20px)",color:"#94a3b8",lineHeight:"1.7",
-            margin:"0 0 36px",maxWidth:"600px",marginLeft:"auto",marginRight:"auto"}}>
-            PackWise calculates the maximum boxes in any container or vehicle,
-            plans full shipments across multiple trucks, and exports loading plans
-            your warehouse team can follow — in seconds, not hours.
-          </p>
-          <div style={{display:"flex",gap:"14px",justifyContent:"center",flexWrap:"wrap"}}>
-            <button onClick={()=>setPage("tool")} style={{padding:"15px 32px",
-              background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",
-              borderRadius:"10px",fontSize:"16px",fontWeight:"700",cursor:"pointer",
-              boxShadow:"0 4px 24px rgba(5,150,105,0.4)"}}>
-              Try Free — No Sign-up →
-            </button>
-            <button onClick={()=>setPage("pricing")} style={{padding:"15px 32px",
-              background:"rgba(255,255,255,0.08)",color:"#fff",
-              border:"1px solid rgba(255,255,255,0.2)",borderRadius:"10px",
-              fontSize:"16px",fontWeight:"600",cursor:"pointer"}}>
-              See Pricing
-            </button>
-          </div>
-          <div style={{marginTop:"20px",fontSize:"13px",color:"#64748b"}}>
-            Free forever for single-container packing · Pro plan from {CONFIG.priceLabel}
+      {/* Hero — split layout */}
+      <div style={{background:"linear-gradient(160deg,#0f172a 0%,#1a0a14 60%,#2d0b1a 100%)",
+        padding:"80px 24px 90px",position:"relative",overflow:"hidden"}}>
+        <div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at 1px 1px, rgba(190,24,93,0.1) 1px, transparent 0)",backgroundSize:"32px 32px",pointerEvents:"none"}}/>
+        <div style={{maxWidth:"1200px",margin:"0 auto",position:"relative"}}>
+          <div className="rg-2c" style={{gap:"48px",alignItems:"center"}}>
+            {/* Left — text */}
+            <div>
+              <div style={{display:"inline-flex",alignItems:"center",gap:"8px",
+                background:"rgba(190,24,93,0.12)",border:"1px solid rgba(190,24,93,0.35)",
+                borderRadius:"99px",padding:"6px 16px",marginBottom:"24px",
+                fontSize:"13px",color:"#f9a8d4",fontWeight:"700"}}>
+                🇮🇳 Built for Indian exporters & logistics teams
+              </div>
+              <h1 style={{fontSize:"clamp(36px,5vw,60px)",fontWeight:"900",color:"#fff",
+                lineHeight:"1.08",margin:"0 0 20px",letterSpacing:"-0.03em"}}>
+                Stop guessing.<br/>
+                <span className="shimmer-theme">Load smarter.</span>
+              </h1>
+              <p style={{fontSize:"clamp(15px,2vw,18px)",color:"#94a3b8",lineHeight:"1.7",
+                margin:"0 0 32px",maxWidth:"460px"}}>
+                PackWise calculates the maximum boxes in any container or vehicle,
+                plans full shipments, and exports loading plans your warehouse team
+                can follow — in seconds, not hours.
+              </p>
+              <div className="hero-btns" style={{display:"flex",gap:"12px",flexWrap:"wrap"}}>
+                <button onClick={()=>setPage("tool")} className="btn-primary"
+                  style={{padding:"14px 28px",background:"linear-gradient(135deg,#be185d,#9d174d)",
+                  color:"#fff",border:"none",borderRadius:"10px",fontSize:"15px",fontWeight:"700",
+                  cursor:"pointer",boxShadow:"0 4px 24px rgba(190,24,93,0.4)",fontFamily:"inherit"}}>
+                  Try Free — No Sign-up →
+                </button>
+                <button onClick={()=>setPage("pricing")}
+                  style={{padding:"14px 28px",background:"rgba(255,255,255,0.07)",color:"#fff",
+                  border:"1px solid rgba(255,255,255,0.18)",borderRadius:"10px",
+                  fontSize:"15px",fontWeight:"600",cursor:"pointer",fontFamily:"inherit"}}>
+                  See Pricing
+                </button>
+              </div>
+              <div style={{marginTop:"16px",fontSize:"12px",color:"#4b5563"}}>
+                Free forever for single-container packing · Pro from {CONFIG.priceLabel}
+              </div>
+            </div>
+            {/* Right — animated box loading */}
+            <div>
+              <div style={{marginBottom:"14px",fontSize:"11px",fontWeight:"700",
+                color:"rgba(255,255,255,0.3)",textTransform:"uppercase",
+                letterSpacing:"0.1em",textAlign:"center"}}>Live packing animation</div>
+              <BoxLoadingAnim/>
+              <div style={{textAlign:"center",marginTop:"24px",fontSize:"12px",color:"#4b5563"}}>
+                32ft SXL · 7×4 grid · {ANIM_TOTAL} boxes · 100% utilized
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
+      {/* Interactive 3D Demo */}
+      <HomeDemoViewer/>
+
       {/* Stats bar */}
-      <div style={{background:"#f8fafc",borderBottom:"1px solid #e2e8f0"}}>
+      <div style={{background:"#fff",borderBottom:"1px solid #f1f5f9"}}>
         <div style={{maxWidth:"1200px",margin:"0 auto",padding:"0 24px"}} className="rg-4">
           {[
             {v:75,suf:"%",l:"of logistics firms still\nuse manual spreadsheets"},
@@ -1507,11 +1704,11 @@ function HomePage({setPage,onUpgrade}){
             {v:5,suf:"%",pre:"< ",l:"of Indian supply chains\nare digitized"},
           ].map((s,i)=>(
             <FadeIn key={i} style={{padding:"28px 20px",textAlign:"center"}}
-              className={`stat-right-border${i<3?" ":""}`}>
-              <div style={{fontSize:"32px",fontWeight:"900",color:"#059669",lineHeight:1}}>
+              className={`stat-sep${i<3?" ":""}`}>
+              <div style={{fontSize:"32px",fontWeight:"900",color:"#be185d",lineHeight:1}}>
                 {s.pre&&s.pre}<CountUp value={s.v} suffix={s.suf}/>
               </div>
-              <div style={{fontSize:"12px",color:"#64748b",marginTop:"6px",lineHeight:"1.5",whiteSpace:"pre-line"}}>{s.l}</div>
+              <div style={{fontSize:"12px",color:"#6b7280",marginTop:"6px",lineHeight:"1.5",whiteSpace:"pre-line"}}>{s.l}</div>
             </FadeIn>
           ))}
         </div>
