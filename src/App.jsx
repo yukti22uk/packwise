@@ -1022,6 +1022,7 @@ function Nav({page,setPage,isPro,onUpgrade,onLogout}){
     <nav style={{position:"sticky",top:0,zIndex:200,background:"rgba(255,255,255,0.97)",
       backdropFilter:"blur(8px)",borderBottom:"1px solid #e2e8f0",
       boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
+      {/* Main bar */}
       <div style={{maxWidth:"1200px",margin:"0 auto",padding:"0 24px",
         display:"flex",alignItems:"center",justifyContent:"space-between",height:"60px"}}>
         {/* Logo */}
@@ -1030,15 +1031,16 @@ function Nav({page,setPage,isPro,onUpgrade,onLogout}){
             borderRadius:"8px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px"}}>📦</div>
           <div>
             <div style={{fontWeight:"800",fontSize:"16px",color:"#0f172a",lineHeight:1}}>PackWise</div>
-            <div style={{fontSize:"10px",color:"#64748b",letterSpacing:"0.06em"}} className="hide-mobile">PACKING INTELLIGENCE</div>
+            <div style={{fontSize:"10px",color:"#64748b",letterSpacing:"0.06em"}}>PACKING INTELLIGENCE</div>
           </div>
         </div>
-        {/* Desktop links */}
+        {/* Desktop links — hidden on mobile via CSS */}
         <div className="nav-desktop">
           {links.map(([id,label])=>(
             <button key={id} onClick={()=>go(id)} style={{padding:"7px 14px",border:"none",
               background:page===id?"#f0fdf4":"none",color:page===id?"#059669":"#475569",
-              fontWeight:page===id?"700":"500",fontSize:"14px",borderRadius:"8px",cursor:"pointer"}}>
+              fontWeight:page===id?"700":"500",fontSize:"14px",borderRadius:"8px",cursor:"pointer",
+              fontFamily:"inherit"}}>
               {label}</button>))}
           <div style={{width:"1px",height:"20px",background:"#e2e8f0",margin:"0 6px"}}/>
           {isPro?(
@@ -1048,42 +1050,50 @@ function Nav({page,setPage,isPro,onUpgrade,onLogout}){
           ):(
             <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-green"
               style={{padding:"8px 18px",background:"linear-gradient(135deg,#059669,#047857)",
-              color:"#fff",border:"none",borderRadius:"8px",fontWeight:"700",fontSize:"14px",cursor:"pointer",
-              boxShadow:"0 2px 8px rgba(5,150,105,0.35)"}}>⭐ Get Pro</button>
-          )}
-        </div>
-        {/* Mobile burger */}
-        <button className="nav-burger" onClick={()=>setMenuOpen(o=>!o)} aria-label="Menu">
-          <div style={{width:"22px",display:"flex",flexDirection:"column",gap:"5px"}}>
-            <div style={{height:"2px",background:"#374151",borderRadius:"2px",
-              transform:menuOpen?"rotate(45deg) translate(5px,5px)":"none",transition:"transform 0.2s"}}/>
-            <div style={{height:"2px",background:"#374151",borderRadius:"2px",
-              opacity:menuOpen?0:1,transition:"opacity 0.2s"}}/>
-            <div style={{height:"2px",background:"#374151",borderRadius:"2px",
-              transform:menuOpen?"rotate(-45deg) translate(5px,-5px)":"none",transition:"transform 0.2s"}}/>
-          </div>
-        </button>
-      </div>
-      {/* Mobile dropdown */}
-      <div className={`nav-mobile ${menuOpen?"open":""}`}>
-        {links.map(([id,label])=>(
-          <button key={id} onClick={()=>go(id)} style={{padding:"12px 8px",border:"none",
-            background:"none",textAlign:"left",fontSize:"16px",fontWeight:"600",
-            color:page===id?"#059669":"#374151",cursor:"pointer",borderBottom:"1px solid #f1f5f9"}}>
-            {label}</button>))}
-        <div style={{marginTop:"14px"}}>
-          {isPro?(
-            <span onClick={()=>{onLogout();setMenuOpen(false);}} style={{display:"inline-block",
-              background:"#fef3c7",color:"#92400e",fontWeight:"700",fontSize:"13px",
-              padding:"8px 16px",borderRadius:"99px",cursor:"pointer"}}>⭐ PRO (tap to sign out)</span>
-          ):(
-            <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-green"
-              style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#059669,#047857)",
-              color:"#fff",border:"none",borderRadius:"10px",fontWeight:"700",fontSize:"15px",cursor:"pointer"}}>
+              color:"#fff",border:"none",borderRadius:"8px",fontWeight:"700",fontSize:"14px",
+              cursor:"pointer",boxShadow:"0 2px 8px rgba(5,150,105,0.35)",fontFamily:"inherit"}}>
               ⭐ Get Pro</button>
           )}
         </div>
+        {/* Hamburger — hidden on desktop via CSS */}
+        <button className="nav-burger" onClick={()=>setMenuOpen(o=>!o)}
+          aria-label="Menu" style={{fontFamily:"inherit"}}>
+          <div style={{width:"22px",display:"flex",flexDirection:"column",gap:"5px"}}>
+            {[0,1,2].map(i=>(
+              <div key={i} style={{height:"2px",background:"#374151",borderRadius:"2px",
+                transition:"all 0.2s",
+                transform:menuOpen&&i===0?"rotate(45deg) translate(5px,5px)":
+                          menuOpen&&i===2?"rotate(-45deg) translate(5px,-5px)":"none",
+                opacity:menuOpen&&i===1?0:1}}/>
+            ))}
+          </div>
+        </button>
       </div>
+      {/* Mobile dropdown — only shows when open */}
+      {menuOpen&&(
+        <div style={{background:"#fff",borderTop:"1px solid #e2e8f0",
+          boxShadow:"0 8px 24px rgba(0,0,0,0.08)",padding:"8px 24px 16px"}}>
+          {links.map(([id,label])=>(
+            <button key={id} onClick={()=>go(id)} style={{display:"block",width:"100%",
+              padding:"12px 8px",border:"none",background:"none",textAlign:"left",
+              fontSize:"16px",fontWeight:"600",color:page===id?"#059669":"#374151",
+              cursor:"pointer",borderBottom:"1px solid #f1f5f9",fontFamily:"inherit"}}>
+              {label}</button>))}
+          <div style={{marginTop:"12px"}}>
+            {isPro?(
+              <span onClick={()=>{onLogout();setMenuOpen(false);}} style={{display:"inline-block",
+                background:"#fef3c7",color:"#92400e",fontWeight:"700",fontSize:"13px",
+                padding:"8px 16px",borderRadius:"99px",cursor:"pointer"}}>⭐ PRO (tap to sign out)</span>
+            ):(
+              <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-green"
+                style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#059669,#047857)",
+                color:"#fff",border:"none",borderRadius:"10px",fontWeight:"700",
+                fontSize:"15px",cursor:"pointer",fontFamily:"inherit"}}>
+                ⭐ Get Pro</button>
+            )}
+          </div>
+        </div>
+      )}
     </nav>
   );
 }
