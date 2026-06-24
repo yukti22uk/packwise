@@ -197,26 +197,26 @@ function UpgradeModal({open,onClose,onUnlock}){
       <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"16px",
         maxWidth:"460px",width:"100%",padding:"28px",boxShadow:"0 20px 60px rgba(0,0,0,0.3)",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"8px"}}>
-          <h2 style={{margin:0,fontSize:"20px",fontWeight:"700",color:"#0f172a"}}>⭐ Upgrade to Pro</h2>
+          <h2 style={{margin:0,fontSize:"20px",fontWeight:"700",color:"#111111"}}>⭐ Upgrade to Pro</h2>
           <button onClick={onClose} style={{border:"none",background:"none",fontSize:"22px",
             cursor:"pointer",color:"#94a3b8",lineHeight:1}}>×</button>
         </div>
         <p style={{fontSize:"13px",color:"#64748b",marginTop:0}}>Unlock the features that save real freight money.</p>
 
-        <div style={{background:"#f0fdf4",borderRadius:"10px",padding:"14px",margin:"14px 0"}}>
-          <div style={{fontWeight:"700",color:"#166534",fontSize:"15px",marginBottom:"8px"}}>Pro includes:</div>
+        <div style={{background:"#fff1f2",borderRadius:"10px",padding:"14px",margin:"14px 0"}}>
+          <div style={{fontWeight:"700",color:"#991b1b",fontSize:"15px",marginBottom:"8px"}}>Pro includes:</div>
           {["🚚 Shipment Planner — multi-container for big orders",
             "💰 Cost comparison — find the cheapest container",
             "📄 Branded PDF loading plans for your warehouse",
             "📊 Unlimited bulk SKU upload"].map(t=>(
-            <div key={t} style={{fontSize:"13px",color:"#15803d",padding:"2px 0"}}>{t}</div>
+            <div key={t} style={{fontSize:"13px",color:"#b91c1c",padding:"2px 0"}}>{t}</div>
           ))}
         </div>
 
-        <div style={{textAlign:"center",fontSize:"22px",fontWeight:"800",color:"#0f172a",margin:"6px 0"}}>
+        <div style={{textAlign:"center",fontSize:"22px",fontWeight:"800",color:"#111111",margin:"6px 0"}}>
           {CONFIG.priceLabel}
         </div>
-        <button onClick={pay} style={{width:"100%",padding:"12px",background:"#059669",color:"#fff",
+        <button onClick={pay} style={{width:"100%",padding:"12px",background:"#dc2626",color:"#fff",
           border:"none",borderRadius:"10px",fontSize:"15px",fontWeight:"700",cursor:"pointer",marginBottom:"6px"}}>
           {CONFIG.paymentLink?"Pay & Get Pro":"Contact Us to Buy Pro"}
         </button>
@@ -233,7 +233,7 @@ function UpgradeModal({open,onClose,onUnlock}){
               border:"none",borderRadius:"8px",fontWeight:"600",cursor:"pointer"}}>Unlock</button>
           </div>
           {codeMsg&&<div style={{fontSize:"13px",marginTop:"8px",
-            color:codeMsg.startsWith("✅")?"#166534":"#dc2626"}}>{codeMsg}</div>}
+            color:codeMsg.startsWith("✅")?"#991b1b":"#dc2626"}}>{codeMsg}</div>}
         </div>
 
         {/* Early access email capture */}
@@ -244,11 +244,11 @@ function UpgradeModal({open,onClose,onUnlock}){
           <div style={{display:"flex",gap:"8px"}}>
             <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="your@email.com" type="email"
               style={{flex:1,border:"1px solid #d1d9e0",borderRadius:"8px",padding:"9px 12px",fontSize:"14px"}}/>
-            <button onClick={submitEmail} style={{padding:"9px 18px",background:"#fff",color:"#059669",
-              border:"1px solid #059669",borderRadius:"8px",fontWeight:"600",cursor:"pointer"}}>Notify Me</button>
+            <button onClick={submitEmail} style={{padding:"9px 18px",background:"#fff",color:"#dc2626",
+              border:"1px solid #dc2626",borderRadius:"8px",fontWeight:"600",cursor:"pointer"}}>Notify Me</button>
           </div>
           {emailMsg&&<div style={{fontSize:"13px",marginTop:"8px",
-            color:emailMsg.startsWith("✅")?"#166534":"#64748b"}}>{emailMsg}</div>}
+            color:emailMsg.startsWith("✅")?"#991b1b":"#64748b"}}>{emailMsg}</div>}
         </div>
       </div>
     </div>
@@ -259,16 +259,16 @@ function UpgradeModal({open,onClose,onUnlock}){
 function ProGate({onUpgrade,feature}){
   return(
     <div style={{...S.card,textAlign:"center",padding:"48px 32px",
-      background:"linear-gradient(135deg,#f0fdf4 0%,#eff6ff 100%)",border:"1px solid #bbf7d0"}}>
+      background:"linear-gradient(135deg,#fff1f2,#fff8f8)",border:"1px solid #fecaca"}}>
       <div style={{fontSize:"48px",marginBottom:"12px"}}>🔒</div>
-      <div style={{fontSize:"20px",fontWeight:"700",color:"#0f172a",marginBottom:"8px"}}>
+      <div style={{fontSize:"20px",fontWeight:"700",color:"#111111",marginBottom:"8px"}}>
         {feature} is a Pro feature
       </div>
       <div style={{fontSize:"14px",color:"#64748b",maxWidth:"440px",margin:"0 auto 20px",lineHeight:"1.6"}}>
         Upgrade to plan full shipments across multiple containers, compare costs to find the
         cheapest option, and export branded PDF loading plans for your warehouse team.
       </div>
-      <button onClick={onUpgrade} style={{padding:"12px 28px",background:"#059669",color:"#fff",
+      <button onClick={onUpgrade} style={{padding:"12px 28px",background:"#dc2626",color:"#fff",
         border:"none",borderRadius:"10px",fontSize:"15px",fontWeight:"700",cursor:"pointer"}}>
         ⭐ Upgrade to Pro
       </button>
@@ -296,7 +296,7 @@ function ContainerSelector({onChange,showWeight,vehicleOnly}){
       {!vehicleOnly&&<div style={{display:"flex",gap:"8px",marginBottom:"14px"}}>
         {["vehicle","pallet"].map(t=>(
           <button key={t} onClick={()=>setType(t)} style={{flex:1,padding:"8px",border:"none",borderRadius:"8px",cursor:"pointer",
-            fontWeight:"600",fontSize:"13px",background:type===t?"#059669":"#f1f5f9",color:type===t?"#fff":"#374151"}}>
+            fontWeight:"600",fontSize:"13px",background:type===t?"#dc2626":"#f1f5f9",color:type===t?"#fff":"#374151"}}>
             {t==="vehicle"?"🚛 Vehicle / Container":"📦 Pallet"}</button>))}
       </div>}
       {type==="pallet"&&!vehicleOnly&&(<>
@@ -326,7 +326,7 @@ function ContainerSelector({onChange,showWeight,vehicleOnly}){
 
 // ─── SVG 2D VIEWS ─────────────────────────────────────────────────────────────
 const RC={main:{fill:"#93c5fd",stroke:"#1d4ed8",label:"Main Grid"},l1:{fill:"#fdba74",stroke:"#ea580c",label:"Leftover 1 (side)"},
-  l2:{fill:"#86efac",stroke:"#16a34a",label:"Leftover 2 (front)"},l3:{fill:"#d8b4fe",stroke:"#7c3aed",label:"Leftover 3 (top)"}};
+  l2:{fill:"#f87171",stroke:"#dc2626",label:"Leftover 2 (front)"},l3:{fill:"#d8b4fe",stroke:"#7c3aed",label:"Leftover 3 (top)"}};
 function BoxGrid({offX,offY,nx,ny,bW,bH,sc,color,dimLabel}){
   if(!nx||!ny||!bW||!bH) return null;const cells=[];const total=nx*ny,skip=total>2000?Math.ceil(total/2000):1;
   for(let iy=0;iy<ny;iy++)for(let ix=0;ix<nx;ix++){if((iy*nx+ix)%skip!==0&&!(ix===0&&iy===0)) continue;
@@ -395,7 +395,7 @@ function IsoView2D({result}){const{cL,cW,cH,nx,ny,nz,boxL,boxW,boxH,usedL,usedW,
   const l3X=l3.nx*l3.boxL,l3Y=l3.ny*l3.boxW,l3Z=usedH+l3.nz*l3.boxH;
   return(<div style={{textAlign:"center"}}><div style={VL.viewTitle}>Isometric View</div>
     <svg width={svgW} height={svgH} style={{display:"block",margin:"0 auto"}}>
-      {l2.count>0&&blk(0,mY,0,l2X,l2Y,l2Z,"#bbf7d0","#86efac","#4ade80")}
+      {l2.count>0&&blk(0,mY,0,l2X,l2Y,l2Z,"#fecaca","#f87171","#f87171")}
       {l3.count>0&&blk(0,0,mZ,l3X,l3Y,l3Z,"#e9d5ff","#c084fc","#a855f7")}
       {l1.count>0&&blk(mX,0,0,l1X,l1Y,l1Z,"#fed7aa","#fb923c","#f97316")}
       {nx>0&&ny>0&&nz>0&&blk(0,0,0,mX,mY,mZ,"#bfdbfe","#60a5fa","#3b82f6")}
@@ -404,7 +404,7 @@ function IsoView2D({result}){const{cL,cW,cH,nx,ny,nz,boxL,boxW,boxH,usedL,usedW,
       {edge(cL,cW,0,cL,cW,cH)}{edge(cL,0,cH,cL,cW,cH)}{edge(0,cW,cH,cL,cW,cH)}{edge(0,cW,0,0,cW,cH,true)}
     </svg>
     <div style={{display:"flex",gap:"10px",justifyContent:"center",flexWrap:"wrap",marginTop:"6px"}}>
-      {[["#60a5fa","Main"],["#fb923c","L1"],["#86efac","L2"],["#c084fc","L3"]].map(([c,l])=>(
+      {[["#60a5fa","Main"],["#fb923c","L1"],["#f87171","L2"],["#c084fc","L3"]].map(([c,l])=>(
         <div key={l} style={{display:"flex",alignItems:"center",gap:"4px",fontSize:"11px",color:"#555"}}><div style={{width:"11px",height:"11px",background:c,borderRadius:"2px"}}/>{l}</div>))}</div></div>);}
 
 // ─── 3D VIEWER ────────────────────────────────────────────────────────────────
@@ -513,9 +513,9 @@ function BoxPackingTool(){
     <button style={S.btnPrimary} onClick={calc}>▶ Calculate & Visualise</button>
     {result&&(<>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"12px",margin:"20px 0 16px"}}>
-        {[["Effective Qty",result.effQty.toLocaleString(),"#f0fdf4","#166534"],
+        {[["Effective Qty",result.effQty.toLocaleString(),"#fff1f2","#991b1b"],
           ["Limited By",result.constraint,result.constraint==="Weight"?"#fff7ed":"#eff6ff",result.constraint==="Weight"?"#c2410c":"#1d4ed8"],
-          ["Volume Util.",(result.volUtil*100).toFixed(1)+"%",result.volUtil>=0.75?"#f0fdf4":result.volUtil>=0.5?"#fefce8":"#fef2f2",result.volUtil>=0.75?"#166534":result.volUtil>=0.5?"#854d0e":"#991b1b"],
+          ["Volume Util.",(result.volUtil*100).toFixed(1)+"%",result.volUtil>=0.75?"#fff1f2":result.volUtil>=0.5?"#fefce8":"#fef2f2",result.volUtil>=0.75?"#991b1b":result.volUtil>=0.5?"#854d0e":"#991b1b"],
           ["Total Weight",result.totalWeight!=null?money(result.totalWeight)+" kg":"—","#f8fafc","#374151"],
         ].map(([l,v,bg,col])=>(<div key={l} style={{background:bg,borderRadius:"10px",padding:"14px",textAlign:"center"}}>
           <div style={{fontSize:"16px",fontWeight:"700",color:col,wordBreak:"break-word"}}>{v}</div>
@@ -524,7 +524,7 @@ function BoxPackingTool(){
       <div style={{...S.card,marginBottom:"16px"}}><div style={S.cardTitle}>Packing Breakdown by Region (volume fit)</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px"}}>
           {[["#3b82f6","Main Grid",`${result.nx}×${result.ny}×${result.nz}`,result.nx*result.ny*result.nz],
-            ["#f97316","Leftover 1","Side gap",result.leftover1.count],["#22c55e","Leftover 2","Front gap",result.leftover2.count],
+            ["#f97316","Leftover 1","Side gap",result.leftover1.count],["#f87171","Leftover 2","Front gap",result.leftover2.count],
             ["#a855f7","Leftover 3","Top gap",result.leftover3.count]].map(([color,title,sub,cnt])=>(
             <div key={title} style={{background:"#f8fafc",borderRadius:"8px",padding:"12px",textAlign:"center",borderLeft:`4px solid ${color}`}}>
               <div style={{fontSize:"20px",fontWeight:"700",color:"#1e293b"}}>{cnt}</div>
@@ -533,14 +533,14 @@ function BoxPackingTool(){
       <div style={{display:"flex",gap:"10px",marginBottom:"16px",alignItems:"center",flexWrap:"wrap"}}>
         <div style={{display:"flex",gap:"6px",flex:1}}>
           {[["3d","🔄 3D Model"],["2d","📐 2D Views"]].map(([id,label])=>(
-            <button key={id} onClick={()=>setView(id)} style={{padding:"8px 18px",border:"none",borderRadius:"8px",cursor:"pointer",fontWeight:"600",fontSize:"13px",background:view===id?"#059669":"#f1f5f9",color:view===id?"#fff":"#374151"}}>{label}</button>))}</div>
+            <button key={id} onClick={()=>setView(id)} style={{padding:"8px 18px",border:"none",borderRadius:"8px",cursor:"pointer",fontWeight:"600",fontSize:"13px",background:view===id?"#dc2626":"#f1f5f9",color:view===id?"#fff":"#374151"}}>{label}</button>))}</div>
         <WAShare message={`📦 *PackWise Packing Result*\nContainer: ${fmtN(result.cL)}×${fmtN(result.cW)}×${fmtN(result.cH)} mm\nBox: ${fmtN(result.sl)}×${fmtN(result.sw)}×${fmtN(result.sh)} mm\n*Max boxes: ${result.effQty.toLocaleString()}*\nBest orientation: ${result.orient}\nSpace used: ${(result.volUtil*100).toFixed(1)}%\n\nCalculate your load free at packwise.netlify.app`}/>
       </div>
       {view==="3d"&&<div style={S.card}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}><div style={S.cardTitle}>🔄 3D Model</div><span style={{fontSize:"11px",color:"#94a3b8"}}>Drag to rotate · Scroll to zoom</span></div>
         <ThreeViewer result={result}/>
         <div style={{display:"flex",gap:"12px",flexWrap:"wrap",marginTop:"8px",justifyContent:"center"}}>
-          {[["#3b82f6","Main"],["#f97316","Leftover 1"],["#22c55e","Leftover 2"],["#a855f7","Leftover 3"],["#1e293b","Container"]].map(([c,l])=>(
+          {[["#3b82f6","Main"],["#f97316","Leftover 1"],["#f87171","Leftover 2"],["#a855f7","Leftover 3"],["#1e293b","Container"]].map(([c,l])=>(
             <div key={l} style={{display:"flex",alignItems:"center",gap:"4px",fontSize:"11px",color:"#555"}}><div style={{width:"11px",height:"11px",background:c,borderRadius:"2px"}}/>{l}</div>))}</div></div>}
       {view==="2d"&&<div style={S.card}><div style={S.cardTitle}>📐 2D Engineering Views</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"20px",alignItems:"start"}}>
@@ -625,9 +625,9 @@ function ShipmentPlanner(){
     <button style={S.btnPrimary} onClick={calc}>▶ Plan Shipment</button>
     {result&&(<>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"14px",margin:"20px 0 16px"}}>
-        {[["Containers Needed",result.containers.toLocaleString(),"#eff6ff","#1d4ed8"],["Units / Container",result.perContainer.toLocaleString(),"#f0fdf4","#166534"],
+        {[["Containers Needed",result.containers.toLocaleString(),"#eff6ff","#1d4ed8"],["Units / Container",result.perContainer.toLocaleString(),"#fff1f2","#991b1b"],
           ["Cost / Unit",result.costPerUnit!=null?money(result.costPerUnit):"—","#fff7ed","#c2410c"],
-          ["Volume Util.",(result.usedVol*100).toFixed(1)+"%",result.usedVol>=0.75?"#f0fdf4":"#fefce8",result.usedVol>=0.75?"#166534":"#854d0e"]].map(([l,v,bg,col])=>(
+          ["Volume Util.",(result.usedVol*100).toFixed(1)+"%",result.usedVol>=0.75?"#fff1f2":"#fefce8",result.usedVol>=0.75?"#991b1b":"#854d0e"]].map(([l,v,bg,col])=>(
           <div key={l} style={{background:bg,borderRadius:"10px",padding:"14px",textAlign:"center"}}>
             <div style={{fontSize:"20px",fontWeight:"700",color:col,wordBreak:"break-word"}}>{v}</div><div style={{fontSize:"11px",color:"#6b7a8d",marginTop:"4px"}}>{l}</div></div>))}</div>
       <div style={{display:"flex",gap:"12px",marginBottom:"16px",flexWrap:"wrap"}}>
@@ -640,15 +640,15 @@ function ShipmentPlanner(){
           <thead><tr>{["Vehicle","Units/Container","Containers Needed","Freight Cost Each","Total Cost","Cost/Unit"].map(h=>(
             <th key={h} style={{padding:"9px 12px",textAlign:"left",fontWeight:"600",fontSize:"11px",color:"#6b7a8d",textTransform:"uppercase",background:"#f8fafc",borderBottom:"1px solid #e8edf2",whiteSpace:"nowrap"}}>{h}</th>))}</tr></thead>
           <tbody>{compare.map((r,i)=>{const isCheapest=cheapest&&r.label===cheapest.label;
-            return(<tr key={i} style={{background:isCheapest?"#dcfce7":i%2===0?"#fff":"#fafbfc"}}>
+            return(<tr key={i} style={{background:isCheapest?"#fee2e2":i%2===0?"#fff":"#fafbfc"}}>
               <td style={{padding:"8px 12px",fontWeight:isCheapest?"700":"500"}}>{r.label}{isCheapest&&" ✅"}</td>
               <td style={{padding:"8px 12px",textAlign:"right"}}>{r.per.toLocaleString()}</td>
               <td style={{padding:"8px 12px",textAlign:"right"}}>{r.containers.toLocaleString()}</td>
               <td style={{padding:"8px 12px"}}><input type="number" min="0" value={freightByType[r.label]||""} placeholder="0" onChange={e=>updateFreight(r.label,e.target.value)} style={{width:"90px",border:"1px solid #d1d9e0",borderRadius:"6px",padding:"4px 8px",fontSize:"12px"}}/></td>
               <td style={{padding:"8px 12px",textAlign:"right"}}>{r.total>0?money(r.total):"—"}</td>
-              <td style={{padding:"8px 12px",textAlign:"right",fontWeight:"700",color:isCheapest?"#166534":"#374151"}}>{r.cpu!=null?money(r.cpu):"—"}</td></tr>);})}</tbody>
+              <td style={{padding:"8px 12px",textAlign:"right",fontWeight:"700",color:isCheapest?"#991b1b":"#374151"}}>{r.cpu!=null?money(r.cpu):"—"}</td></tr>);})}</tbody>
         </table></div>
-        {cheapest&&<div style={{marginTop:"12px",padding:"10px 14px",background:"#f0fdf4",borderRadius:"8px",fontSize:"13px",color:"#166534"}}>
+        {cheapest&&<div style={{marginTop:"12px",padding:"10px 14px",background:"#fff1f2",borderRadius:"8px",fontSize:"13px",color:"#991b1b"}}>
           ✅ Cheapest: <strong>{cheapest.label}</strong> at <strong>{money(cheapest.cpu)}</strong> per unit ({cheapest.containers} containers × {money(cheapest.fc)} each).</div>}
       </div>
       <div style={{...S.card,padding:"0",overflow:"hidden"}}>
@@ -659,7 +659,7 @@ function ShipmentPlanner(){
           <tbody>{Array.from({length:Math.min(result.containers,200)},(_,i)=>{const n=i+1,units=n<result.containers?result.perContainer:result.lastFill,fill=((units/result.perContainer)*100).toFixed(0);
             return(<tr key={i} style={{background:i%2===0?"#fff":"#fafbfc"}}>
               <td style={{padding:"7px 12px",fontWeight:"500"}}>#{n}</td><td style={{padding:"7px 12px",textAlign:"right"}}>{units.toLocaleString()}</td>
-              <td style={{padding:"7px 12px"}}><span style={{background:+fill>=90?"#dcfce7":+fill>=50?"#fef9c3":"#fee2e2",color:+fill>=90?"#166534":+fill>=50?"#854d0e":"#991b1b",padding:"2px 8px",borderRadius:"99px",fontSize:"11px",fontWeight:"600"}}>{fill}%</span></td>
+              <td style={{padding:"7px 12px"}}><span style={{background:+fill>=90?"#fee2e2":+fill>=50?"#fef9c3":"#fee2e2",color:+fill>=90?"#991b1b":+fill>=50?"#854d0e":"#991b1b",padding:"2px 8px",borderRadius:"99px",fontSize:"11px",fontWeight:"600"}}>{fill}%</span></td>
               <td style={{padding:"7px 12px",textAlign:"right"}}>{result.sku.weight>0?money(units*result.sku.weight)+" kg":"—"}</td></tr>);})}</tbody>
         </table>{result.containers>200&&<div style={{padding:"10px 18px",fontSize:"12px",color:"#9ca3af"}}>Showing 200 of {result.containers} — full list in PDF</div>}</div>
       </div>
@@ -717,7 +717,7 @@ function ContainerSkuTool({isPro,onUpgrade}){
           <div style={S.dropzone(dragOver)} onDragOver={e=>{e.preventDefault();setDragOver(true)}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);parseFile(e.dataTransfer.files[0])}} onClick={()=>document.getElementById("fi2").click()}>
             <div style={{fontSize:"28px",marginBottom:"6px"}}>📂</div><div style={{fontSize:"13px",fontWeight:"500",color:"#374151"}}>{fileName||"Drop Excel or click to browse"}</div>
             <div style={{fontSize:"11px",color:"#9ca3af",marginTop:"4px"}}>.xlsx or .xls</div>
-            {rawSkus&&<div style={{marginTop:"6px",fontSize:"12px",color:"#059669",fontWeight:"600"}}>✓ {skuCount.toLocaleString()} SKUs loaded</div>}
+            {rawSkus&&<div style={{marginTop:"6px",fontSize:"12px",color:"#dc2626",fontWeight:"600"}}>✓ {skuCount.toLocaleString()} SKUs loaded</div>}
             <input id="fi2" type="file" accept=".xlsx,.xls" style={{display:"none"}} onChange={e=>parseFile(e.target.files[0])}/></div>
           <div style={S.noteBox}><strong>Columns:</strong> SKU Name | L | W | H | Weight | Qty</div></div>
         <button style={S.btnPrimary} onClick={run}>▶ Calculate Container Fit</button>
@@ -727,12 +727,12 @@ function ContainerSkuTool({isPro,onUpgrade}){
         {error&&<div style={S.error}>⚠ {error}</div>}
         {capped&&<div style={{...S.card,background:"#fffbeb",border:"1px solid #fde68a",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontSize:"13px",color:"#92400e"}}>⚠ Free plan limited to {CONFIG.freeSkuLimit} SKUs. {skuCount.toLocaleString()} uploaded — only first {CONFIG.freeSkuLimit} processed.</span>
-          <button onClick={onUpgrade} style={{padding:"6px 14px",background:"#059669",color:"#fff",border:"none",borderRadius:"8px",fontWeight:"600",fontSize:"12px",cursor:"pointer",whiteSpace:"nowrap"}}>⭐ Go Pro</button></div>}
+          <button onClick={onUpgrade} style={{padding:"6px 14px",background:"#dc2626",color:"#fff",border:"none",borderRadius:"8px",fontWeight:"600",fontSize:"12px",cursor:"pointer",whiteSpace:"nowrap"}}>⭐ Go Pro</button></div>}
         {processing&&<div style={S.card}><div style={{fontSize:"13px",fontWeight:"500",color:"#374151",marginBottom:"8px"}}>Processing {Math.min(skuCount,isPro?skuCount:CONFIG.freeSkuLimit).toLocaleString()} SKUs... {progress}%</div>
-          <div style={{background:"#e5e7eb",borderRadius:"99px",height:"10px"}}><div style={{height:"10px",borderRadius:"99px",background:"#059669",width:`${progress}%`,transition:"width 0.2s"}}/></div></div>}
+          <div style={{background:"#e5e7eb",borderRadius:"99px",height:"10px"}}><div style={{height:"10px",borderRadius:"99px",background:"#dc2626",width:`${progress}%`,transition:"width 0.2s"}}/></div></div>}
         {results&&!processing&&(<>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"12px",marginBottom:"16px"}}>
-            {[["Total",results.length,"#f8fafc"],["≥75%",gC,"#f0fdf4"],["50–74%",oC,"#fefce8"],["<50%",lC,"#fef2f2"]].map(([l,v,bg])=>(
+            {[["Total",results.length,"#f8fafc"],["≥75%",gC,"#fff1f2"],["50–74%",oC,"#fefce8"],["<50%",lC,"#fef2f2"]].map(([l,v,bg])=>(
               <div key={l} style={{background:bg,borderRadius:"10px",padding:"12px",textAlign:"center",border:"1px solid rgba(0,0,0,0.06)"}}>
                 <div style={{fontSize:"20px",fontWeight:"700",color:"#1a2332"}}>{v}</div><div style={{fontSize:"11px",color:"#6b7a8d",marginTop:"2px"}}>{l}</div></div>))}</div>
           <button style={{...S.btnPrimary,marginBottom:"16px"}} onClick={exp}>⬇ Download Results as Excel</button>
@@ -755,7 +755,7 @@ function ContainerSkuTool({isPro,onUpgrade}){
   </div>);}
 
 function UtilBadge({val}){if(val==null||val==="")return<span style={{color:"#9ca3af",fontSize:"12px"}}>—</span>;
-  const pct=typeof val==="number"?val*100:parseFloat(val);const bg=pct>=75?"#dcfce7":pct>=50?"#fef9c3":"#fee2e2";const color=pct>=75?"#166534":pct>=50?"#854d0e":"#991b1b";
+  const pct=typeof val==="number"?val*100:parseFloat(val);const bg=pct>=75?"#fee2e2":pct>=50?"#fef9c3":"#fee2e2";const color=pct>=75?"#991b1b":pct>=50?"#854d0e":"#991b1b";
   return<span style={{background:bg,color,padding:"2px 8px",borderRadius:"99px",fontSize:"11px",fontWeight:"600"}}>{pct.toFixed(1)}%</span>;}
 
 const S={
@@ -765,11 +765,11 @@ const S={
   grid2:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"},grid3:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"12px"},
   label:{display:"block",fontSize:"11px",fontWeight:"600",color:"#6b7a8d",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:"4px"},
   input:{width:"100%",border:"1px solid #d1d9e0",borderRadius:"8px",padding:"8px 12px",fontSize:"14px",boxSizing:"border-box",outline:"none",fontFamily:"inherit"},
-  infoBox:{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:"8px",padding:"8px 12px",fontSize:"12px",color:"#166534",marginTop:"10px"},
-  dropzone:(d)=>({border:`2px dashed ${d?"#10b981":"#d1d9e0"}`,borderRadius:"10px",padding:"24px",textAlign:"center",cursor:"pointer",transition:"all 0.2s",background:d?"#f0fdf4":"#fafbfc"}),
+  infoBox:{background:"#fff1f2",border:"1px solid #fecaca",borderRadius:"8px",padding:"8px 12px",fontSize:"12px",color:"#991b1b",marginTop:"10px"},
+  dropzone:(d)=>({border:`2px dashed ${d?"#dc2626":"#d1d9e0"}`,borderRadius:"10px",padding:"24px",textAlign:"center",cursor:"pointer",transition:"all 0.2s",background:d?"#fff1f2":"#fafbfc"}),
   noteBox:{background:"#f8fafc",borderRadius:"8px",padding:"10px 12px",fontSize:"12px",color:"#6b7a8d",marginTop:"10px",lineHeight:"1.6"},
-  btnPrimary:{width:"100%",padding:"12px",background:"#059669",color:"#fff",border:"none",borderRadius:"10px",fontSize:"14px",fontWeight:"600",cursor:"pointer"},
-  btnSecondary:{width:"100%",padding:"10px",background:"#fff",color:"#059669",border:"1px solid #059669",borderRadius:"10px",fontSize:"13px",fontWeight:"500",cursor:"pointer"},
+  btnPrimary:{width:"100%",padding:"12px",background:"#dc2626",color:"#fff",border:"none",borderRadius:"10px",fontSize:"14px",fontWeight:"600",cursor:"pointer"},
+  btnSecondary:{width:"100%",padding:"10px",background:"#fff",color:"#dc2626",border:"1px solid #dc2626",borderRadius:"10px",fontSize:"13px",fontWeight:"500",cursor:"pointer"},
   error:{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:"10px",padding:"12px",fontSize:"13px",color:"#dc2626",marginBottom:"12px"},
 };
 
@@ -904,9 +904,9 @@ function TwoSKUTool(){
           {[["strict","🎯 Strict","Exact ratio (may leave gaps)"],
             ["balanced","⚖️ Balanced","Close to ratio, fills gaps"],
             ["maxfill","📦 Max Fill","Most boxes, ratio is a guide"]].map(([id,label,desc])=>(
-            <button key={id} onClick={()=>setPriority(id)} style={{flex:1,padding:"10px",border:priority===id?"2px solid #059669":"1px solid #d1d9e0",
-              borderRadius:"8px",cursor:"pointer",background:priority===id?"#f0fdf4":"#fff",textAlign:"center"}}>
-              <div style={{fontWeight:"700",fontSize:"13px",color:priority===id?"#166534":"#374151"}}>{label}</div>
+            <button key={id} onClick={()=>setPriority(id)} style={{flex:1,padding:"10px",border:priority===id?"2px solid #dc2626":"1px solid #d1d9e0",
+              borderRadius:"8px",cursor:"pointer",background:priority===id?"#fff1f2":"#fff",textAlign:"center"}}>
+              <div style={{fontWeight:"700",fontSize:"13px",color:priority===id?"#991b1b":"#374151"}}>{label}</div>
               <div style={{fontSize:"10px",color:"#6b7a8d",marginTop:"2px"}}>{desc}</div>
             </button>))}
         </div>
@@ -923,14 +923,14 @@ function TwoSKUTool(){
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"14px",margin:"20px 0 16px"}}>
         {[["SKU 1 Quantity",result.totalSKU1.toLocaleString(),"#eff6ff","#1d4ed8"],
           ["SKU 2 Quantity",result.totalSKU2.toLocaleString(),"#fff7ed","#c2410c"],
-          ["Total Boxes",result.total.toLocaleString(),"#f0fdf4","#166534"]].map(([l,v,bg,col])=>(
+          ["Total Boxes",result.total.toLocaleString(),"#fff1f2","#991b1b"]].map(([l,v,bg,col])=>(
           <div key={l} style={{background:bg,borderRadius:"10px",padding:"14px",textAlign:"center"}}>
             <div style={{fontSize:"24px",fontWeight:"700",color:col}}>{v}</div><div style={{fontSize:"12px",color:"#6b7a8d",marginTop:"4px"}}>{l}</div></div>))}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"14px",marginBottom:"16px"}}>
         {[["Target Ratio",`${result.r1}:${result.r2}`,"#eff6ff","#1d4ed8"],
           ["Achieved Ratio",`${result.totalSKU1}:${result.totalSKU2}`,"#f8fafc","#374151"],
-          ["Volume Utilization",(result.volUtil*100).toFixed(1)+"%",result.volUtil>=0.75?"#f0fdf4":result.volUtil>=0.5?"#fefce8":"#fef2f2",result.volUtil>=0.75?"#166534":result.volUtil>=0.5?"#854d0e":"#991b1b"],
+          ["Volume Utilization",(result.volUtil*100).toFixed(1)+"%",result.volUtil>=0.75?"#fff1f2":result.volUtil>=0.5?"#fefce8":"#fef2f2",result.volUtil>=0.75?"#991b1b":result.volUtil>=0.5?"#854d0e":"#991b1b"],
           ["Split Axis",`${result.axis} @ ${fmtN(result.pos)}`,"#f5f3ff","#6d28d9"]].map(([l,v,bg,col])=>(
           <div key={l} style={{background:bg,borderRadius:"10px",padding:"14px",textAlign:"center"}}>
             <div style={{fontSize:"16px",fontWeight:"700",color:col,wordBreak:"break-word"}}>{v}</div><div style={{fontSize:"12px",color:"#6b7a8d",marginTop:"4px"}}>{l}</div></div>))}
@@ -949,7 +949,7 @@ function TwoSKUTool(){
         </div></div>
       <div style={{display:"flex",gap:"6px",marginBottom:"16px"}}>
         {[["2d","📐 2D Views"],["3d","🔄 3D Model"]].map(([id,label])=>(
-          <button key={id} onClick={()=>setView(id)} style={{padding:"8px 18px",border:"none",borderRadius:"8px",cursor:"pointer",fontWeight:"600",fontSize:"13px",background:view===id?"#059669":"#f1f5f9",color:view===id?"#fff":"#374151"}}>{label}</button>))}
+          <button key={id} onClick={()=>setView(id)} style={{padding:"8px 18px",border:"none",borderRadius:"8px",cursor:"pointer",fontWeight:"600",fontSize:"13px",background:view===id?"#dc2626":"#f1f5f9",color:view===id?"#fff":"#374151"}}>{label}</button>))}
       </div>
       {view==="2d"&&<div style={S.card}><div style={S.cardTitle}>📐 2D Views — Two-SKU Arrangement</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"20px",alignItems:"start"}}>
@@ -1013,6 +1013,258 @@ function WAShare({message}){
   );
 }
 
+// ─── PACKWISE LOGO ────────────────────────────────────────────────────────────
+function PackWiseLogo({size=36}){
+  return(
+    <svg width={size} height={size} viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      {/* Isometric cube — top face (bright red) */}
+      <polygon points="18,3 33,11.5 18,20 3,11.5" fill="#dc2626"/>
+      {/* Left face (dark red) */}
+      <polygon points="3,11.5 18,20 18,33 3,24.5" fill="#7f1d1d"/>
+      {/* Right face (near black) */}
+      <polygon points="18,20 33,11.5 33,24.5 18,33" fill="#111111"/>
+      {/* Grid lines on top face suggesting stacked boxes */}
+      <line x1="18" y1="3" x2="18" y2="20" stroke="rgba(255,255,255,0.18)" strokeWidth="0.7"/>
+      <line x1="10.5" y1="7.3" x2="25.5" y2="15.7" stroke="rgba(255,255,255,0.13)" strokeWidth="0.7"/>
+      {/* Top edge highlight */}
+      <polyline points="3,11.5 18,3 33,11.5" stroke="rgba(255,255,255,0.28)" strokeWidth="0.9" fill="none"/>
+      {/* Inner small box on top — depth effect */}
+      <polygon points="18,7.5 25,11.5 18,15.5 11,11.5" fill="rgba(255,255,255,0.14)"/>
+    </svg>
+  );
+}
+
+// ─── BOX LOADING ANIMATION ───────────────────────────────────────────────────
+const ANIM_COLS=7, ANIM_ROWS=4, ANIM_TOTAL=ANIM_COLS*ANIM_ROWS;
+const BOX_COLORS=["#dc2626","#1a1a1a","#991b1b","#2d1111","#7f1d1d","#111111","#450a0a"];
+
+function BoxLoadingAnim(){
+  const[count,setCount]=useState(0);
+  const[paused,setPaused]=useState(false);
+  useEffect(()=>{
+    if(paused){
+      const t=setTimeout(()=>{setCount(0);setPaused(false);},2200);
+      return()=>clearTimeout(t);
+    }
+    if(count>=ANIM_TOTAL){setPaused(true);return;}
+    const t=setTimeout(()=>setCount(c=>c+1),72);
+    return()=>clearTimeout(t);
+  },[count,paused]);
+
+  return(
+    <div style={{position:"relative",userSelect:"none"}}>
+      {/* Container frame */}
+      <div style={{border:"2px solid #dc2626",borderRadius:"10px",padding:"14px",
+        background:"rgba(220,38,38,0.04)",position:"relative",overflow:"visible",
+        boxShadow:"0 0 40px rgba(220,38,38,0.12)"}}>
+        {/* Left door / flange */}
+        <div style={{position:"absolute",left:0,top:0,bottom:0,width:"18px",borderRadius:"8px 0 0 8px",
+          background:"linear-gradient(180deg,#dc2626,#7f1d1d)",opacity:0.7}}/>
+        {/* Box grid */}
+        <div style={{marginLeft:"20px",display:"grid",
+          gridTemplateColumns:`repeat(${ANIM_COLS},1fr)`,gap:"5px"}}>
+          {Array.from({length:ANIM_TOTAL},(_,i)=>(
+            <div key={i} style={{
+              height:"46px",borderRadius:"4px",
+              background:BOX_COLORS[i%BOX_COLORS.length],
+              opacity:i<count?1:0,
+              transform:i<count?"scale(1) translateY(0)":"scale(0.4) translateY(8px)",
+              transition:i<count?"opacity 0.22s ease,transform 0.22s ease":"none",
+              boxShadow:"inset 0 6px 0 rgba(255,255,255,0.07),inset 0 0 0 1px rgba(255,255,255,0.04)",
+            }}/>
+          ))}
+        </div>
+        {/* Status row */}
+        <div style={{display:"flex",justifyContent:"space-between",
+          marginTop:"10px",marginLeft:"20px",fontSize:"11px",fontWeight:"600"}}>
+          <span style={{color:"rgba(255,255,255,0.35)"}}>
+            📦 {Math.min(count,ANIM_TOTAL)}/{ANIM_TOTAL} boxes
+          </span>
+          <span style={{color:count>=ANIM_TOTAL?"#dc2626":"rgba(255,255,255,0.2)",
+            transition:"color 0.3s"}}>
+            {count>=ANIM_TOTAL?"✓ 100% utilized":"loading..."}
+          </span>
+        </div>
+      </div>
+      {/* Floating badges */}
+      <div style={{position:"absolute",top:"-12px",right:"-12px",
+        background:"#dc2626",color:"#fff",padding:"5px 12px",
+        borderRadius:"6px",fontSize:"11px",fontWeight:"700",
+        boxShadow:"0 4px 16px rgba(220,38,38,0.5)",animation:"pulse 2s ease infinite"}}>
+        ✓ Optimal layout
+      </div>
+      <div style={{position:"absolute",bottom:"-12px",left:"-12px",
+        background:"#111",color:"rgba(255,255,255,0.7)",padding:"5px 12px",
+        borderRadius:"6px",fontSize:"11px",fontWeight:"600",
+        border:"1px solid #333",boxShadow:"0 4px 12px rgba(0,0,0,0.4)"}}>
+        3D model included →
+      </div>
+    </div>
+  );
+}
+
+// ─── INTERACTIVE 3D HOMEPAGE DEMO ────────────────────────────────────────────
+const HOME_PRESETS=[
+  {name:"Tata Ace",   box:[300,200,150], container:[2100,1525,1600]},
+  {name:"20ft ISO",   box:[500,400,300], container:[5900,2350,2390]},
+  {name:"32ft SXL",   box:[600,400,300], container:[9750,2350,2700]},
+  {name:"Pallet",     box:[300,250,200], container:[1200,1000,1400]},
+];
+
+function HomeDemoViewer(){
+  const mountRef=useRef(null);
+  const cleanRef=useRef(null);
+  const[preset,setPreset]=useState(1);
+  const[result,setResult]=useState(null);
+
+  useEffect(()=>{
+    const p=HOME_PRESETS[preset];
+    const r=calcMixedDetailed(p.container[0],p.container[1],p.container[2],p.box[0],p.box[1],p.box[2]);
+    setResult({...r,volUtil:(r.total*p.box[0]*p.box[1]*p.box[2])/(p.container[0]*p.container[1]*p.container[2]),
+      preset:p});
+  },[preset]);
+
+  useEffect(()=>{
+    if(!result||!mountRef.current) return;
+    if(cleanRef.current){cleanRef.current();cleanRef.current=null;}
+    const t=setTimeout(()=>{
+      const el=mountRef.current;if(!el) return;
+      const W=el.clientWidth||700,H=340;
+      const{cL,cW,cH,nx,ny,nz,boxL,boxW,boxH,leftover1:l1,leftover2:l2,leftover3:l3}=result;
+      const scene=new THREE.Scene();scene.background=new THREE.Color(0x0f0f0f);
+      const camera=new THREE.PerspectiveCamera(45,W/H,0.01,100000);
+      const renderer=new THREE.WebGLRenderer({antialias:true});
+      renderer.setSize(W,H);renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+      el.appendChild(renderer.domElement);renderer.domElement.style.display="block";
+
+      scene.add(new THREE.AmbientLight(0xffffff,0.75));
+      const d1=new THREE.DirectionalLight(0xffffff,0.7);d1.position.set(5,8,5);scene.add(d1);
+      const d2=new THREE.DirectionalLight(0xff2222,0.25);d2.position.set(-3,-2,-3);scene.add(d2);
+
+      const regs=[
+        {col:0xdc2626,ox:0,oy:0,oz:0,rnx:nx,rny:ny,rnz:nz,bL:boxL,bW:boxW,bH:boxH},
+        {col:0x374151,ox:l1.offX,oy:l1.offY,oz:l1.offZ,rnx:l1.nx,rny:l1.ny,rnz:l1.nz,bL:l1.boxL,bW:l1.boxW,bH:l1.boxH},
+        {col:0x4b5563,ox:l2.offX,oy:l2.offY,oz:l2.offZ,rnx:l2.nx,rny:l2.ny,rnz:l2.nz,bL:l2.boxL,bW:l2.boxW,bH:l2.boxH},
+        {col:0x6b7280,ox:l3.offX,oy:l3.offY,oz:l3.offZ,rnx:l3.nx,rny:l3.ny,rnz:l3.nz,bL:l3.boxL,bW:l3.boxW,bH:l3.boxH},
+      ];
+      const tot=regs.reduce((s,r)=>s+(r.rnx||0)*(r.rny||0)*(r.rnz||0),0)||1;
+      const MAX_D=900;
+      regs.forEach(r=>{
+        if(!r.rnx||!r.rny||!r.rnz||!r.bL||!r.bW||!r.bH) return;
+        const total=r.rnx*r.rny*r.rnz,cap=Math.max(1,Math.round(MAX_D*(total/tot)));
+        const stride=total>cap?total/cap:1;const pos=[];let idx=0,next=0;
+        for(let iz=0;iz<r.rnz;iz++)for(let iy=0;iy<r.rny;iy++)for(let ix=0;ix<r.rnx;ix++){
+          const e=(ix===0||ix===r.rnx-1||iy===0||iy===r.rny-1||iz===0||iz===r.rnz-1);
+          if(e||idx>=next){pos.push([(r.ox||0)+ix*r.bL+r.bL/2,(r.oz||0)+iz*r.bH+r.bH/2,(r.oy||0)+iy*r.bW+r.bW/2]);
+            if(idx>=next) next+=stride;}idx++;}
+        const mesh=new THREE.InstancedMesh(new THREE.BoxGeometry(r.bL*0.86,r.bH*0.86,r.bW*0.86),
+          new THREE.MeshPhongMaterial({color:r.col,shininess:40,transparent:true,opacity:0.96}),pos.length);
+        mesh.count=pos.length;const dummy=new THREE.Object3D();
+        pos.forEach(([x,y,z],i)=>{dummy.position.set(x,y,z);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);});
+        mesh.instanceMatrix.needsUpdate=true;scene.add(mesh);});
+
+      const cw=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(cL,cH,cW)),
+        new THREE.LineBasicMaterial({color:0xdc2626}));
+      cw.position.set(cL/2,cH/2,cW/2);scene.add(cw);
+      const grid=new THREE.GridHelper(Math.max(cL,cW)*2.5,10,0x222222,0x1a1a1a);
+      grid.position.set(cL/2,-1,cW/2);scene.add(grid);
+
+      const center=new THREE.Vector3(cL/2,cH/2,cW/2);
+      const diag=Math.sqrt(cL*cL+cW*cW+cH*cH)||10;
+      let radius=diag*2.1,theta=Math.PI*0.3,phi=Math.PI*0.28;
+      let drag=false,prev={x:0,y:0};
+      const cv=renderer.domElement;cv.style.cursor="grab";
+
+      const onD=(e)=>{drag=true;prev={x:e.clientX,y:e.clientY};cv.style.cursor="grabbing";};
+      const onM=(e)=>{if(!drag)return;theta-=(e.clientX-prev.x)*0.006;
+        phi=Math.max(0.05,Math.min(1.5,phi+(e.clientY-prev.y)*0.006));prev={x:e.clientX,y:e.clientY};};
+      const onU=()=>{drag=false;cv.style.cursor="grab";};
+      const onW=(e)=>{e.preventDefault();radius=Math.max(diag*0.5,Math.min(diag*5,radius+e.deltaY*0.4));};
+      cv.addEventListener("mousedown",onD);window.addEventListener("mousemove",onM);
+      window.addEventListener("mouseup",onU);cv.addEventListener("wheel",onW,{passive:false});
+      const onRz=()=>{const nW=el.clientWidth||700;renderer.setSize(nW,H);camera.aspect=nW/H;camera.updateProjectionMatrix();};
+      window.addEventListener("resize",onRz);
+
+      let animId;
+      const loop=()=>{
+        animId=requestAnimationFrame(loop);
+        if(!drag) theta+=0.003; // auto-rotate when not dragging
+        camera.position.set(center.x+radius*Math.sin(phi)*Math.sin(theta),
+          center.y+radius*Math.cos(phi),center.z+radius*Math.sin(phi)*Math.cos(theta));
+        camera.lookAt(center);renderer.render(scene,camera);};loop();
+
+      cleanRef.current=()=>{cancelAnimationFrame(animId);
+        cv.removeEventListener("mousedown",onD);window.removeEventListener("mousemove",onM);
+        window.removeEventListener("mouseup",onU);cv.removeEventListener("wheel",onW);
+        window.removeEventListener("resize",onRz);
+        if(el.contains(cv))el.removeChild(cv);renderer.dispose();};
+    },120);
+    return()=>{clearTimeout(t);if(cleanRef.current){cleanRef.current();cleanRef.current=null;}};
+  },[result]);
+
+  return(
+    <div style={{background:"#0f0f0f",padding:"72px 24px",borderTop:"1px solid #1a1a1a"}}>
+      <div style={{maxWidth:"1200px",margin:"0 auto"}}>
+        <FadeIn style={{textAlign:"center",marginBottom:"32px"}}>
+          <div style={{fontSize:"12px",fontWeight:"700",color:"#f87171",letterSpacing:"0.1em",
+            textTransform:"uppercase",marginBottom:"10px"}}>Live interactive demo</div>
+          <h2 style={{fontSize:"36px",fontWeight:"900",color:"#fff",margin:"0 0 8px",letterSpacing:"-0.02em"}}>
+            See the 3D model — before you sign up
+          </h2>
+          <p style={{fontSize:"15px",color:"#9ca3af",margin:0}}>
+            Real packing algorithm. Real 3D model. Drag to rotate, scroll to zoom.
+          </p>
+        </FadeIn>
+        {/* Preset pills */}
+        <div style={{display:"flex",gap:"8px",justifyContent:"center",marginBottom:"20px",flexWrap:"wrap"}}>
+          {HOME_PRESETS.map((p,i)=>(
+            <button key={i} onClick={()=>setPreset(i)} style={{padding:"8px 20px",
+              border:`1.5px solid ${preset===i?"#dc2626":"#333"}`,
+              background:preset===i?"#dc2626":"transparent",
+              color:preset===i?"#fff":"#9ca3af",
+              borderRadius:"99px",cursor:"pointer",fontWeight:"700",fontSize:"13px",
+              fontFamily:"inherit",transition:"all 0.15s ease"}}>
+              {p.name}
+            </button>
+          ))}
+        </div>
+        {/* 3D canvas */}
+        <div ref={mountRef} style={{width:"100%",height:"340px",borderRadius:"14px",
+          overflow:"hidden",border:"1px solid #222",background:"#0f0f0f",
+          boxShadow:"0 0 60px rgba(220,38,38,0.08)"}}/>
+        {/* Stats row */}
+        {result&&(
+          <FadeIn style={{display:"flex",gap:"16px",justifyContent:"center",
+            marginTop:"20px",flexWrap:"wrap"}}>
+            {[
+              ["📦","Boxes Fit",result.total.toLocaleString()],
+              ["📐","Space Used",(result.volUtil*100).toFixed(1)+"%"],
+              ["🔄","Orientation",result.orient],
+              ["📦","Container",`${fmtN(result.preset.container[0])}mm`],
+            ].map(([icon,label,val])=>(
+              <div key={label} style={{textAlign:"center",padding:"14px 24px",background:"#1a1a1a",
+                borderRadius:"10px",border:"1px solid #222",minWidth:"140px"}}>
+                <div style={{fontSize:"22px",fontWeight:"900",color:label==="Space Used"?
+                  (result.volUtil>=0.75?"#dc2626":"#f87171"):"#fff",letterSpacing:"-0.02em"}}>{val}</div>
+                <div style={{fontSize:"11px",color:"#6b7280",marginTop:"4px",fontWeight:"600",
+                  textTransform:"uppercase",letterSpacing:"0.06em"}}>{icon} {label}</div>
+              </div>
+            ))}
+          </FadeIn>
+        )}
+        <div style={{textAlign:"center",marginTop:"24px"}}>
+          <p style={{fontSize:"12px",color:"#4b5563",margin:"0 0 4px"}}>
+            Drag to rotate · Scroll to zoom · Switch presets to see different containers
+          </p>
+          <p style={{fontSize:"12px",color:"#374151",margin:0}}>
+            This is a live calculation — the full tool runs free in your browser with any box & container size.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Nav ──
 function Nav({page,setPage,isPro,onUpgrade,onLogout}){
   const[menuOpen,setMenuOpen]=useState(false);
@@ -1027,18 +1279,17 @@ function Nav({page,setPage,isPro,onUpgrade,onLogout}){
         display:"flex",alignItems:"center",justifyContent:"space-between",height:"60px"}}>
         {/* Logo */}
         <div onClick={()=>go("home")} style={{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer",flexShrink:0}}>
-          <div style={{width:"34px",height:"34px",background:"linear-gradient(135deg,#059669,#0f172a)",
-            borderRadius:"8px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px"}}>📦</div>
+          <PackWiseLogo size={36}/>
           <div>
-            <div style={{fontWeight:"800",fontSize:"16px",color:"#0f172a",lineHeight:1}}>PackWise</div>
-            <div style={{fontSize:"10px",color:"#64748b",letterSpacing:"0.06em"}}>PACKING INTELLIGENCE</div>
+            <div style={{fontWeight:"900",fontSize:"17px",color:"#0f0f0f",lineHeight:1,letterSpacing:"-0.02em"}}>PackWise</div>
+            <div style={{fontSize:"10px",color:"#9ca3af",letterSpacing:"0.08em",fontWeight:"600"}}>PACKING INTELLIGENCE</div>
           </div>
         </div>
         {/* Desktop links — hidden on mobile via CSS */}
         <div className="nav-desktop">
           {links.map(([id,label])=>(
             <button key={id} onClick={()=>go(id)} style={{padding:"7px 14px",border:"none",
-              background:page===id?"#f0fdf4":"none",color:page===id?"#059669":"#475569",
+              background:page===id?"#fff1f2":"none",color:page===id?"#dc2626":"#475569",
               fontWeight:page===id?"700":"500",fontSize:"14px",borderRadius:"8px",cursor:"pointer",
               fontFamily:"inherit"}}>
               {label}</button>))}
@@ -1048,10 +1299,10 @@ function Nav({page,setPage,isPro,onUpgrade,onLogout}){
               color:"#92400e",fontWeight:"700",fontSize:"12px",padding:"6px 14px",
               borderRadius:"99px",cursor:"pointer",border:"1px solid #fde68a"}}>⭐ PRO</span>
           ):(
-            <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-green"
-              style={{padding:"8px 18px",background:"linear-gradient(135deg,#059669,#047857)",
+            <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-red"
+              style={{padding:"8px 18px",background:"linear-gradient(135deg,#dc2626,#b91c1c)",
               color:"#fff",border:"none",borderRadius:"8px",fontWeight:"700",fontSize:"14px",
-              cursor:"pointer",boxShadow:"0 2px 8px rgba(5,150,105,0.35)",fontFamily:"inherit"}}>
+              cursor:"pointer",boxShadow:"0 2px 8px rgba(220,38,38,0.35)",fontFamily:"inherit"}}>
               ⭐ Get Pro</button>
           )}
         </div>
@@ -1076,7 +1327,7 @@ function Nav({page,setPage,isPro,onUpgrade,onLogout}){
           {links.map(([id,label])=>(
             <button key={id} onClick={()=>go(id)} style={{display:"block",width:"100%",
               padding:"12px 8px",border:"none",background:"none",textAlign:"left",
-              fontSize:"16px",fontWeight:"600",color:page===id?"#059669":"#374151",
+              fontSize:"16px",fontWeight:"600",color:page===id?"#dc2626":"#374151",
               cursor:"pointer",borderBottom:"1px solid #f1f5f9",fontFamily:"inherit"}}>
               {label}</button>))}
           <div style={{marginTop:"12px"}}>
@@ -1085,8 +1336,8 @@ function Nav({page,setPage,isPro,onUpgrade,onLogout}){
                 background:"#fef3c7",color:"#92400e",fontWeight:"700",fontSize:"13px",
                 padding:"8px 16px",borderRadius:"99px",cursor:"pointer"}}>⭐ PRO (tap to sign out)</span>
             ):(
-              <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-green"
-                style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#059669,#047857)",
+              <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-red"
+                style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#dc2626,#b91c1c)",
                 color:"#fff",border:"none",borderRadius:"10px",fontWeight:"700",
                 fontSize:"15px",cursor:"pointer",fontFamily:"inherit"}}>
                 ⭐ Get Pro</button>
@@ -1106,9 +1357,8 @@ function Footer({setPage}){
         <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr",gap:"40px",marginBottom:"40px"}}>
           <div>
             <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"12px"}}>
-              <div style={{width:"32px",height:"32px",background:"linear-gradient(135deg,#059669,#34d399)",
-                borderRadius:"8px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"16px"}}>📦</div>
-              <div style={{fontWeight:"800",fontSize:"16px",color:"#fff"}}>PackWise</div>
+              <PackWiseLogo size={32}/>
+              <div style={{fontWeight:"900",fontSize:"17px",color:"#fff",letterSpacing:"-0.02em"}}>PackWise</div>
             </div>
             <p style={{fontSize:"13px",lineHeight:"1.7",maxWidth:"260px"}}>
               India's smart container loading calculator. Built for exporters, logistics teams,
@@ -1119,19 +1369,19 @@ function Footer({setPage}){
             <div style={{color:"#fff",fontWeight:"600",fontSize:"13px",marginBottom:"12px",textTransform:"uppercase",letterSpacing:"0.08em"}}>Tool</div>
             {[["tool","Box Packing"],["tool","Shipment Planner"],["tool","Two-SKU Calculator"],["tool","Container SKU"]].map(([pg,l])=>(
               <div key={l} onClick={()=>setPage(pg)} style={{fontSize:"13px",padding:"4px 0",cursor:"pointer",color:"#94a3b8"}}
-                onMouseEnter={e=>e.target.style.color="#34d399"} onMouseLeave={e=>e.target.style.color="#94a3b8"}>{l}</div>))}
+                onMouseEnter={e=>e.target.style.color="#f87171"} onMouseLeave={e=>e.target.style.color="#94a3b8"}>{l}</div>))}
           </div>
           <div>
             <div style={{color:"#fff",fontWeight:"600",fontSize:"13px",marginBottom:"12px",textTransform:"uppercase",letterSpacing:"0.08em"}}>Company</div>
             {[["about","About"],["pricing","Pricing"],["about","Contact"]].map(([pg,l])=>(
               <div key={l} onClick={()=>setPage(pg)} style={{fontSize:"13px",padding:"4px 0",cursor:"pointer",color:"#94a3b8"}}
-                onMouseEnter={e=>e.target.style.color="#34d399"} onMouseLeave={e=>e.target.style.color="#94a3b8"}>{l}</div>))}
+                onMouseEnter={e=>e.target.style.color="#f87171"} onMouseLeave={e=>e.target.style.color="#94a3b8"}>{l}</div>))}
           </div>
           <div>
             <div style={{color:"#fff",fontWeight:"600",fontSize:"13px",marginBottom:"12px",textTransform:"uppercase",letterSpacing:"0.08em"}}>Contact</div>
             <div style={{fontSize:"13px",lineHeight:"1.8"}}>
               <div style={{color:"#94a3b8"}}>Questions?</div>
-              <a href={`mailto:${CONFIG.contactEmail}`} style={{color:"#34d399",textDecoration:"none"}}>{CONFIG.contactEmail}</a>
+              <a href={`mailto:${CONFIG.contactEmail}`} style={{color:"#f87171",textDecoration:"none"}}>{CONFIG.contactEmail}</a>
             </div>
           </div>
         </div>
@@ -1172,52 +1422,69 @@ function HomePage({setPage,onUpgrade}){
   ];
   return(
     <div>
-      {/* Hero */}
-      <div style={{background:"linear-gradient(160deg,#0f172a 0%,#0d2b1a 60%,#064e3b 100%)",
-        padding:"90px 32px 100px",textAlign:"center",position:"relative",overflow:"hidden"}}>
-        {/* Background grid decoration */}
-        <div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at 1px 1px, rgba(52,211,153,0.12) 1px, transparent 0)",backgroundSize:"32px 32px",pointerEvents:"none"}}/>
-        <div style={{maxWidth:"820px",margin:"0 auto",position:"relative"}}>
-          <div style={{display:"inline-flex",alignItems:"center",gap:"8px",background:"rgba(52,211,153,0.12)",
-            border:"1px solid rgba(52,211,153,0.3)",borderRadius:"99px",padding:"6px 16px",
-            marginBottom:"24px",fontSize:"13px",color:"#34d399",fontWeight:"600"}}>
-            🇮🇳 Built for Indian exporters & logistics teams
-          </div>
-          <h1 style={{fontSize:"clamp(36px,6vw,64px)",fontWeight:"900",color:"#fff",
-            lineHeight:"1.1",margin:"0 0 20px",letterSpacing:"-0.02em"}}>
-            Stop guessing.<br/>
-            <span className="shimmer-text">
-              Load smarter.
-            </span>
-          </h1>
-          <p style={{fontSize:"clamp(16px,2.5vw,20px)",color:"#94a3b8",lineHeight:"1.7",
-            margin:"0 0 36px",maxWidth:"600px",marginLeft:"auto",marginRight:"auto"}}>
-            PackWise calculates the maximum boxes in any container or vehicle,
-            plans full shipments across multiple trucks, and exports loading plans
-            your warehouse team can follow — in seconds, not hours.
-          </p>
-          <div style={{display:"flex",gap:"14px",justifyContent:"center",flexWrap:"wrap"}}>
-            <button onClick={()=>setPage("tool")} style={{padding:"15px 32px",
-              background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",
-              borderRadius:"10px",fontSize:"16px",fontWeight:"700",cursor:"pointer",
-              boxShadow:"0 4px 24px rgba(5,150,105,0.4)"}}>
-              Try Free — No Sign-up →
-            </button>
-            <button onClick={()=>setPage("pricing")} style={{padding:"15px 32px",
-              background:"rgba(255,255,255,0.08)",color:"#fff",
-              border:"1px solid rgba(255,255,255,0.2)",borderRadius:"10px",
-              fontSize:"16px",fontWeight:"600",cursor:"pointer"}}>
-              See Pricing
-            </button>
-          </div>
-          <div style={{marginTop:"20px",fontSize:"13px",color:"#64748b"}}>
-            Free forever for single-container packing · Pro plan from {CONFIG.priceLabel}
+      {/* Hero — split layout */}
+      <div style={{background:"linear-gradient(160deg,#0f0f0f 0%,#1a0203 60%,#3f0609 100%)",
+        padding:"80px 24px 90px",position:"relative",overflow:"hidden"}}>
+        {/* Dot grid bg */}
+        <div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at 1px 1px, rgba(220,38,38,0.12) 1px, transparent 0)",backgroundSize:"32px 32px",pointerEvents:"none"}}/>
+        <div style={{maxWidth:"1200px",margin:"0 auto",position:"relative"}}>
+          <div className="rg-2c" style={{gap:"48px",alignItems:"center"}}>
+            {/* Left — text */}
+            <div>
+              <div style={{display:"inline-flex",alignItems:"center",gap:"8px",background:"rgba(220,38,38,0.12)",
+                border:"1px solid rgba(220,38,38,0.35)",borderRadius:"99px",padding:"6px 16px",
+                marginBottom:"24px",fontSize:"13px",color:"#f87171",fontWeight:"700"}}>
+                🇮🇳 Built for Indian exporters & logistics teams
+              </div>
+              <h1 style={{fontSize:"clamp(36px,5vw,60px)",fontWeight:"900",color:"#fff",
+                lineHeight:"1.08",margin:"0 0 20px",letterSpacing:"-0.03em"}}>
+                Stop guessing.<br/>
+                <span className="shimmer-red">Load smarter.</span>
+              </h1>
+              <p style={{fontSize:"clamp(15px,2vw,18px)",color:"#94a3b8",lineHeight:"1.7",
+                margin:"0 0 32px",maxWidth:"460px"}}>
+                PackWise calculates the maximum boxes in any container or vehicle,
+                plans full shipments, and exports loading plans your warehouse team
+                can follow — in seconds, not hours.
+              </p>
+              <div className="hero-btns" style={{display:"flex",gap:"12px",flexWrap:"wrap"}}>
+                <button onClick={()=>setPage("tool")} className="btn-red"
+                  style={{padding:"14px 28px",background:"linear-gradient(135deg,#dc2626,#b91c1c)",
+                  color:"#fff",border:"none",borderRadius:"10px",fontSize:"15px",fontWeight:"700",
+                  cursor:"pointer",boxShadow:"0 4px 24px rgba(220,38,38,0.4)",fontFamily:"inherit"}}>
+                  Try Free — No Sign-up →
+                </button>
+                <button onClick={()=>setPage("pricing")}
+                  style={{padding:"14px 28px",background:"rgba(255,255,255,0.07)",color:"#fff",
+                  border:"1px solid rgba(255,255,255,0.18)",borderRadius:"10px",
+                  fontSize:"15px",fontWeight:"600",cursor:"pointer",fontFamily:"inherit"}}>
+                  See Pricing
+                </button>
+              </div>
+              <div style={{marginTop:"16px",fontSize:"12px",color:"#4b5563"}}>
+                Free forever for single-container packing · Pro from {CONFIG.priceLabel}
+              </div>
+            </div>
+            {/* Right — animated box loading visualization */}
+            <div>
+              <div style={{marginBottom:"14px",fontSize:"11px",fontWeight:"700",color:"rgba(255,255,255,0.3)",
+                textTransform:"uppercase",letterSpacing:"0.1em",textAlign:"center"}}>
+                Live packing animation
+              </div>
+              <BoxLoadingAnim/>
+              <div style={{textAlign:"center",marginTop:"24px",fontSize:"12px",color:"#4b5563"}}>
+                32ft SXL · 7×4 grid · {ANIM_TOTAL} boxes · 100% utilized
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
+      {/* Interactive 3D Demo */}
+      <HomeDemoViewer/>
+
       {/* Stats bar */}
-      <div style={{background:"#f8fafc",borderBottom:"1px solid #e2e8f0"}}>
+      <div style={{background:"#fff",borderBottom:"1px solid #f1f5f9"}}>
         <div style={{maxWidth:"1200px",margin:"0 auto",padding:"0 24px"}} className="rg-4">
           {[
             {v:75,suf:"%",l:"of logistics firms still\nuse manual spreadsheets"},
@@ -1226,11 +1493,11 @@ function HomePage({setPage,onUpgrade}){
             {v:5,suf:"%",pre:"< ",l:"of Indian supply chains\nare digitized"},
           ].map((s,i)=>(
             <FadeIn key={i} style={{padding:"28px 20px",textAlign:"center"}}
-              className={`stat-right-border${i<3?" ":""}`}>
-              <div style={{fontSize:"32px",fontWeight:"900",color:"#059669",lineHeight:1}}>
+              className={`stat-sep${i<3?" ":""}`}>
+              <div style={{fontSize:"32px",fontWeight:"900",color:"#dc2626",lineHeight:1}}>
                 {s.pre&&s.pre}<CountUp value={s.v} suffix={s.suf}/>
               </div>
-              <div style={{fontSize:"12px",color:"#64748b",marginTop:"6px",lineHeight:"1.5",whiteSpace:"pre-line"}}>{s.l}</div>
+              <div style={{fontSize:"12px",color:"#6b7280",marginTop:"6px",lineHeight:"1.5",whiteSpace:"pre-line"}}>{s.l}</div>
             </FadeIn>
           ))}
         </div>
@@ -1240,9 +1507,9 @@ function HomePage({setPage,onUpgrade}){
       <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 24px 0"}}>
         <FadeIn className="rg-2c">
           <div>
-            <div style={{fontSize:"12px",fontWeight:"700",color:"#059669",letterSpacing:"0.1em",
+            <div style={{fontSize:"12px",fontWeight:"700",color:"#dc2626",letterSpacing:"0.1em",
               textTransform:"uppercase",marginBottom:"12px"}}>The problem</div>
-            <h2 style={{fontSize:"36px",fontWeight:"800",color:"#0f172a",lineHeight:"1.2",margin:"0 0 20px"}}>
+            <h2 style={{fontSize:"36px",fontWeight:"800",color:"#111111",lineHeight:"1.2",margin:"0 0 20px"}}>
               75% of logistics teams still plan loads in Excel
             </h2>
             <p style={{fontSize:"16px",color:"#475569",lineHeight:"1.8",marginBottom:"16px"}}>
@@ -1256,7 +1523,7 @@ function HomePage({setPage,onUpgrade}){
               types — and shows you exactly where every box goes.
             </p>
           </div>
-          <div style={{background:"linear-gradient(135deg,#f0fdf4,#eff6ff)",borderRadius:"16px",padding:"32px"}}>
+          <div style={{background:"linear-gradient(135deg,#fff1f2,#f8fafc)",borderRadius:"16px",padding:"32px"}}>
             {[["Before PackWise","After PackWise"],
               ["Guess how many boxes fit","Exact count in 10 seconds"],
               ["Try orientations manually","Best orientation found automatically"],
@@ -1273,7 +1540,7 @@ function HomePage({setPage,onUpgrade}){
                   textDecoration:i===0?"none":"line-through",textTransform:i===0?"uppercase":"none",
                   letterSpacing:i===0?"0.08em":"normal"}}>{a}</div>
                 <div style={{fontSize:i===0?"11px":"13px",fontWeight:i===0?"700":"600",
-                  color:i===0?"#64748b":"#059669",textTransform:i===0?"uppercase":"none",
+                  color:i===0?"#64748b":"#dc2626",textTransform:i===0?"uppercase":"none",
                   letterSpacing:i===0?"0.08em":"normal"}}>{b}</div>
               </div>
             ))}
@@ -1284,26 +1551,26 @@ function HomePage({setPage,onUpgrade}){
       {/* Features */}
       <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 24px 0"}}>
         <FadeIn style={{textAlign:"center",marginBottom:"48px"}}>
-          <div style={{fontSize:"12px",fontWeight:"700",color:"#059669",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>What's inside</div>
-          <h2 style={{fontSize:"36px",fontWeight:"800",color:"#0f172a",margin:"0 0 12px"}}>Four tools. One platform.</h2>
+          <div style={{fontSize:"12px",fontWeight:"700",color:"#dc2626",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>What's inside</div>
+          <h2 style={{fontSize:"36px",fontWeight:"800",color:"#111111",margin:"0 0 12px"}}>Four tools. One platform.</h2>
           <p style={{fontSize:"16px",color:"#64748b",maxWidth:"480px",margin:"0 auto"}}>Start free with single-container packing. Upgrade when you're ready to plan full shipments.</p>
         </FadeIn>
         <FadeIn className="rg-2e stagger">
           {features.map((f,i)=>(
             <div key={i} className="hover-lift" style={{background:"#fff",borderRadius:"14px",padding:"28px",
-              border:`1px solid ${f.free===true?"#bbf7d0":f.free===false?"#e2e8f0":"#fde68a"}`,
+              border:`1px solid ${f.free===true?"#fecaca":f.free===false?"#e2e8f0":"#fde68a"}`,
               position:"relative",boxShadow:"0 1px 4px rgba(0,0,0,0.05)"}}>
               <div style={{position:"absolute",top:"20px",right:"20px"}}>
-                {f.free===true&&<span style={{background:"#dcfce7",color:"#166534",fontSize:"11px",fontWeight:"700",padding:"3px 10px",borderRadius:"99px"}}>FREE</span>}
+                {f.free===true&&<span style={{background:"#fee2e2",color:"#991b1b",fontSize:"11px",fontWeight:"700",padding:"3px 10px",borderRadius:"99px"}}>FREE</span>}
                 {f.free===false&&<span style={{background:"#fef3c7",color:"#92400e",fontSize:"11px",fontWeight:"700",padding:"3px 10px",borderRadius:"99px"}}>⭐ PRO</span>}
                 {f.free==="limited"&&<span style={{background:"#fff7ed",color:"#c2410c",fontSize:"11px",fontWeight:"700",padding:"3px 10px",borderRadius:"99px"}}>FREE (10 SKUs)</span>}
               </div>
               <div style={{fontSize:"32px",marginBottom:"12px"}}>{f.icon}</div>
-              <h3 style={{fontSize:"18px",fontWeight:"700",color:"#0f172a",margin:"0 0 8px"}}>{f.title}</h3>
+              <h3 style={{fontSize:"18px",fontWeight:"700",color:"#111111",margin:"0 0 8px"}}>{f.title}</h3>
               <p style={{fontSize:"14px",color:"#64748b",lineHeight:"1.7",margin:0}}>{f.desc}</p>
-              <button onClick={()=>setPage("tool")} className="btn-green" style={{marginTop:"16px",padding:"8px 16px",
-                background:f.free===false?"linear-gradient(135deg,#059669,#047857)":"#f8fafc",
-                color:f.free===false?"#fff":"#059669",border:`1px solid ${f.free===false?"transparent":"#059669"}`,
+              <button onClick={()=>setPage("tool")} className="btn-red" style={{marginTop:"16px",padding:"8px 16px",
+                background:f.free===false?"linear-gradient(135deg,#dc2626,#b91c1c)":"#f8fafc",
+                color:f.free===false?"#fff":"#dc2626",border:`1px solid ${f.free===false?"transparent":"#dc2626"}`,
                 borderRadius:"8px",fontSize:"13px",fontWeight:"600",cursor:"pointer"}}>
                 {f.free===false?"Try with Pro →":"Try Free →"}
               </button>
@@ -1313,26 +1580,26 @@ function HomePage({setPage,onUpgrade}){
       </div>
 
       {/* How it works */}
-      <div style={{background:"#0f172a",margin:"80px 0 0",padding:"80px 24px"}}>
+      <div style={{background:"#111111",margin:"80px 0 0",padding:"80px 24px"}}>
         <div style={{maxWidth:"1200px",margin:"0 auto"}}>
           <FadeIn style={{textAlign:"center",marginBottom:"56px"}}>
-            <div style={{fontSize:"12px",fontWeight:"700",color:"#34d399",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>How it works</div>
+            <div style={{fontSize:"12px",fontWeight:"700",color:"#f87171",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>How it works</div>
             <h2 style={{fontSize:"36px",fontWeight:"800",color:"#fff",margin:0}}>From dimensions to loading plan in 4 steps</h2>
           </FadeIn>
           <FadeIn className="rg-steps stagger">
             {steps.map((s,i)=>(
-              <div key={i} style={{borderTop:"3px solid #059669",paddingTop:"24px"}}>
-                <div style={{fontSize:"42px",fontWeight:"900",color:"rgba(52,211,153,0.2)",lineHeight:1,marginBottom:"12px"}}>{s.n}</div>
+              <div key={i} style={{borderTop:"3px solid #dc2626",paddingTop:"24px"}}>
+                <div style={{fontSize:"42px",fontWeight:"900",color:"rgba(248,113,113,0.2)",lineHeight:1,marginBottom:"12px"}}>{s.n}</div>
                 <h3 style={{fontSize:"16px",fontWeight:"700",color:"#fff",margin:"0 0 10px"}}>{s.title}</h3>
                 <p style={{fontSize:"13px",color:"#94a3b8",lineHeight:"1.7",margin:0}}>{s.desc}</p>
               </div>
             ))}
           </FadeIn>
           <div style={{textAlign:"center",marginTop:"48px"}}>
-            <button onClick={()=>setPage("tool")} className="btn-green" style={{padding:"14px 32px",
-              background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",
+            <button onClick={()=>setPage("tool")} className="btn-red" style={{padding:"14px 32px",
+              background:"linear-gradient(135deg,#dc2626,#b91c1c)",color:"#fff",border:"none",
               borderRadius:"10px",fontSize:"15px",fontWeight:"700",cursor:"pointer",
-              boxShadow:"0 4px 20px rgba(5,150,105,0.4)"}}>
+              boxShadow:"0 4px 20px rgba(220,38,38,0.4)"}}>
               Open the Calculator →
             </button>
           </div>
@@ -1342,8 +1609,8 @@ function HomePage({setPage,onUpgrade}){
       {/* Who it's for */}
       <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 24px 0"}}>
         <FadeIn style={{textAlign:"center",marginBottom:"48px"}}>
-          <div style={{fontSize:"12px",fontWeight:"700",color:"#059669",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>Who it's for</div>
-          <h2 style={{fontSize:"36px",fontWeight:"800",color:"#0f172a",margin:0}}>Built for the people who actually load trucks</h2>
+          <div style={{fontSize:"12px",fontWeight:"700",color:"#dc2626",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>Who it's for</div>
+          <h2 style={{fontSize:"36px",fontWeight:"800",color:"#111111",margin:0}}>Built for the people who actually load trucks</h2>
         </FadeIn>
         <FadeIn className="rg-3 stagger">
           {[
@@ -1356,7 +1623,7 @@ function HomePage({setPage,onUpgrade}){
           ].map((c,i)=>(
             <div key={i} className="hover-lift hover-border" style={{background:"#f8fafc",borderRadius:"12px",padding:"24px",border:"1px solid #e2e8f0",transition:"border-color 0.2s"}}>
               <div style={{fontSize:"28px",marginBottom:"10px"}}>{c.icon}</div>
-              <h3 style={{fontSize:"16px",fontWeight:"700",color:"#0f172a",margin:"0 0 8px"}}>{c.title}</h3>
+              <h3 style={{fontSize:"16px",fontWeight:"700",color:"#111111",margin:"0 0 8px"}}>{c.title}</h3>
               <p style={{fontSize:"13px",color:"#64748b",lineHeight:"1.7",margin:0}}>{c.desc}</p>
             </div>
           ))}
@@ -1364,19 +1631,19 @@ function HomePage({setPage,onUpgrade}){
       </div>
 
       {/* Testimonials */}
-      <div style={{background:"#f0fdf4",margin:"80px 0 0",padding:"72px 24px"}}>
+      <div style={{background:"#fff1f2",margin:"80px 0 0",padding:"72px 24px"}}>
         <div style={{maxWidth:"1200px",margin:"0 auto"}}>
           <FadeIn style={{textAlign:"center",marginBottom:"48px"}}>
-            <h2 style={{fontSize:"32px",fontWeight:"800",color:"#0f172a",margin:"0 0 8px"}}>What users say</h2>
+            <h2 style={{fontSize:"32px",fontWeight:"800",color:"#111111",margin:"0 0 8px"}}>What users say</h2>
             <p style={{color:"#64748b",fontSize:"15px",margin:0}}>Early users from India's manufacturing and export clusters</p>
           </FadeIn>
           <FadeIn className="rg-3 stagger">
             {testimonials.map((t,i)=>(
               <div key={i} className="hover-lift" style={{background:"#fff",borderRadius:"14px",padding:"28px",
-                boxShadow:"0 2px 12px rgba(0,0,0,0.06)",border:"1px solid #dcfce7"}}>
-                <div style={{fontSize:"32px",color:"#059669",lineHeight:1,marginBottom:"14px"}}>"</div>
+                boxShadow:"0 2px 12px rgba(0,0,0,0.06)",border:"1px solid #fee2e2"}}>
+                <div style={{fontSize:"32px",color:"#dc2626",lineHeight:1,marginBottom:"14px"}}>"</div>
                 <p style={{fontSize:"14px",color:"#374151",lineHeight:"1.8",margin:"0 0 20px",fontStyle:"italic"}}>{t.q}</p>
-                <div style={{fontWeight:"700",fontSize:"14px",color:"#0f172a"}}>{t.name}</div>
+                <div style={{fontWeight:"700",fontSize:"14px",color:"#111111"}}>{t.name}</div>
                 <div style={{fontSize:"12px",color:"#64748b"}}>{t.role}</div>
               </div>
             ))}
@@ -1386,17 +1653,17 @@ function HomePage({setPage,onUpgrade}){
 
       {/* CTA */}
       <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 32px 0"}}>
-        <div style={{background:"linear-gradient(135deg,#0f172a,#064e3b)",borderRadius:"20px",
+        <div style={{background:"linear-gradient(135deg,#0f172a,#3f0609)",borderRadius:"20px",
           padding:"64px 48px",textAlign:"center",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at 1px 1px, rgba(52,211,153,0.08) 1px, transparent 0)",backgroundSize:"28px 28px"}}/>
+          <div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at 1px 1px, rgba(248,113,113,0.08) 1px, transparent 0)",backgroundSize:"28px 28px"}}/>
           <div style={{position:"relative"}}>
             <h2 style={{fontSize:"36px",fontWeight:"900",color:"#fff",margin:"0 0 16px"}}>Start packing smarter today</h2>
             <p style={{fontSize:"16px",color:"#94a3b8",margin:"0 0 32px"}}>Free forever for single-container packing. No sign-up, no software to install.</p>
             <div style={{display:"flex",gap:"14px",justifyContent:"center",flexWrap:"wrap"}}>
               <button onClick={()=>setPage("tool")} style={{padding:"14px 32px",
-                background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",
+                background:"linear-gradient(135deg,#dc2626,#b91c1c)",color:"#fff",border:"none",
                 borderRadius:"10px",fontSize:"16px",fontWeight:"700",cursor:"pointer",
-                boxShadow:"0 4px 20px rgba(5,150,105,0.4)"}}>
+                boxShadow:"0 4px 20px rgba(220,38,38,0.4)"}}>
                 Open Free Calculator →
               </button>
               <button onClick={()=>setPage("pricing")} style={{padding:"14px 32px",
@@ -1420,41 +1687,41 @@ function PricingPage({onUpgrade,setPage}){
   return(
     <div style={{maxWidth:"1000px",margin:"0 auto",padding:"72px 32px 0"}}>
       <div style={{textAlign:"center",marginBottom:"56px"}}>
-        <div style={{fontSize:"12px",fontWeight:"700",color:"#059669",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>Simple pricing</div>
-        <h1 style={{fontSize:"42px",fontWeight:"900",color:"#0f172a",margin:"0 0 14px"}}>Pay for what saves you money</h1>
+        <div style={{fontSize:"12px",fontWeight:"700",color:"#dc2626",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>Simple pricing</div>
+        <h1 style={{fontSize:"42px",fontWeight:"900",color:"#111111",margin:"0 0 14px"}}>Pay for what saves you money</h1>
         <p style={{fontSize:"18px",color:"#64748b",maxWidth:"500px",margin:"0 auto"}}>Start free. Upgrade when your orders grow beyond a single container.</p>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"24px",maxWidth:"800px",margin:"0 auto"}}>
         {/* Free */}
         <div style={{background:"#fff",borderRadius:"16px",padding:"32px",border:"1px solid #e2e8f0",boxShadow:"0 2px 12px rgba(0,0,0,0.04)"}}>
           <div style={{fontSize:"14px",fontWeight:"700",color:"#64748b",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:"8px"}}>Free</div>
-          <div style={{fontSize:"42px",fontWeight:"900",color:"#0f172a",lineHeight:1}}>₹0</div>
+          <div style={{fontSize:"42px",fontWeight:"900",color:"#111111",lineHeight:1}}>₹0</div>
           <div style={{fontSize:"13px",color:"#94a3b8",marginBottom:"24px"}}>forever</div>
           <button onClick={()=>setPage("tool")} style={{width:"100%",padding:"12px",background:"#f1f5f9",color:"#374151",border:"none",borderRadius:"10px",fontSize:"14px",fontWeight:"600",cursor:"pointer",marginBottom:"24px"}}>
             Start Free →
           </button>
           {freeFeat.map(f=>(
             <div key={f} style={{display:"flex",gap:"10px",alignItems:"flex-start",padding:"7px 0",borderBottom:"1px solid #f8fafc"}}>
-              <span style={{color:"#059669",fontWeight:"700",flexShrink:0}}>✓</span>
+              <span style={{color:"#dc2626",fontWeight:"700",flexShrink:0}}>✓</span>
               <span style={{fontSize:"14px",color:"#374151"}}>{f}</span>
             </div>
           ))}
         </div>
         {/* Pro */}
-        <div className="pro-glow" style={{background:"linear-gradient(160deg,#0f172a,#0d2b1a)",borderRadius:"16px",padding:"32px",border:"1px solid #059669",boxShadow:"0 8px 32px rgba(5,150,105,0.25)",position:"relative",overflow:"hidden"}}>
+        <div className="pro-glow" style={{background:"linear-gradient(160deg,#0f0f0f,#1c0203)",borderRadius:"16px",padding:"32px",border:"1px solid #dc2626",boxShadow:"0 8px 32px rgba(220,38,38,0.25)",position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",top:"16px",right:"16px",background:"#fbbf24",color:"#78350f",fontSize:"11px",fontWeight:"800",padding:"4px 10px",borderRadius:"99px"}}>MOST POPULAR</div>
-          <div style={{fontSize:"14px",fontWeight:"700",color:"#34d399",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:"8px"}}>Pro</div>
+          <div style={{fontSize:"14px",fontWeight:"700",color:"#f87171",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:"8px"}}>Pro</div>
           <div style={{fontSize:"42px",fontWeight:"900",color:"#fff",lineHeight:1}}>{CONFIG.priceLabel.split(" / ")[0]}</div>
           <div style={{fontSize:"13px",color:"#94a3b8",marginBottom:"24px"}}>per month · cancel anytime</div>
           <button onClick={onUpgrade} style={{width:"100%",padding:"12px",
-            background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",
+            background:"linear-gradient(135deg,#dc2626,#b91c1c)",color:"#fff",border:"none",
             borderRadius:"10px",fontSize:"14px",fontWeight:"700",cursor:"pointer",marginBottom:"24px",
-            boxShadow:"0 4px 16px rgba(5,150,105,0.4)"}}>
+            boxShadow:"0 4px 16px rgba(220,38,38,0.4)"}}>
             {CONFIG.paymentLink?"Get Pro Now →":"Contact Us to Upgrade →"}
           </button>
           {proFeat.map(f=>(
             <div key={f} style={{display:"flex",gap:"10px",alignItems:"flex-start",padding:"7px 0",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
-              <span style={{color:"#34d399",fontWeight:"700",flexShrink:0}}>✓</span>
+              <span style={{color:"#f87171",fontWeight:"700",flexShrink:0}}>✓</span>
               <span style={{fontSize:"14px",color:"#cbd5e1"}}>{f}</span>
             </div>
           ))}
@@ -1462,7 +1729,7 @@ function PricingPage({onUpgrade,setPage}){
       </div>
       {/* FAQ */}
       <div style={{maxWidth:"700px",margin:"64px auto 0"}}>
-        <h2 style={{fontSize:"28px",fontWeight:"800",color:"#0f172a",textAlign:"center",marginBottom:"32px"}}>Common questions</h2>
+        <h2 style={{fontSize:"28px",fontWeight:"800",color:"#111111",textAlign:"center",marginBottom:"32px"}}>Common questions</h2>
         {[
           ["Do I need to install anything?","No. PackWise runs entirely in your browser. No downloads, no setup, no IT department."],
           ["Can I try Pro before paying?","Yes — click 'Get Pro' and contact us for a 7-day free trial."],
@@ -1472,7 +1739,7 @@ function PricingPage({onUpgrade,setPage}){
           ["Do you have India-specific vehicles?","Yes — Tata Ace, 19ft, 20ft, 22ft, 32ft SXL/MXL, and 40ft ISO containers are all preset."],
         ].map(([q,a],i)=>(
           <div key={i} style={{borderBottom:"1px solid #e2e8f0",padding:"20px 0"}}>
-            <div style={{fontWeight:"700",color:"#0f172a",fontSize:"15px",marginBottom:"8px"}}>{q}</div>
+            <div style={{fontWeight:"700",color:"#111111",fontSize:"15px",marginBottom:"8px"}}>{q}</div>
             <div style={{fontSize:"14px",color:"#64748b",lineHeight:"1.7"}}>{a}</div>
           </div>
         ))}
@@ -1487,8 +1754,8 @@ function AboutPage({setPage}){
     <div style={{maxWidth:"900px",margin:"0 auto",padding:"72px 32px 0"}}>
       {/* Hero */}
       <div style={{marginBottom:"64px"}}>
-        <div style={{fontSize:"12px",fontWeight:"700",color:"#059669",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"12px"}}>Our story</div>
-        <h1 style={{fontSize:"42px",fontWeight:"900",color:"#0f172a",lineHeight:"1.1",margin:"0 0 24px"}}>
+        <div style={{fontSize:"12px",fontWeight:"700",color:"#dc2626",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"12px"}}>Our story</div>
+        <h1 style={{fontSize:"42px",fontWeight:"900",color:"#111111",lineHeight:"1.1",margin:"0 0 24px"}}>
           Built because loading a truck shouldn't need a logistics degree
         </h1>
         <p style={{fontSize:"18px",color:"#475569",lineHeight:"1.8",marginBottom:"16px"}}>
@@ -1505,8 +1772,8 @@ function AboutPage({setPage}){
       </div>
 
       {/* Mission */}
-      <div style={{background:"linear-gradient(135deg,#f0fdf4,#eff6ff)",borderRadius:"16px",padding:"40px",marginBottom:"64px"}}>
-        <h2 style={{fontSize:"24px",fontWeight:"800",color:"#0f172a",margin:"0 0 16px"}}>Our mission</h2>
+      <div style={{background:"linear-gradient(135deg,#fff1f2,#f8fafc)",borderRadius:"16px",padding:"40px",marginBottom:"64px"}}>
+        <h2 style={{fontSize:"24px",fontWeight:"800",color:"#111111",margin:"0 0 16px"}}>Our mission</h2>
         <p style={{fontSize:"16px",color:"#374151",lineHeight:"1.8",margin:0}}>
           To give every Indian exporter, small manufacturer, and logistics team
           the same load-planning intelligence that large companies pay enterprise
@@ -1517,7 +1784,7 @@ function AboutPage({setPage}){
 
       {/* What we solve */}
       <div style={{marginBottom:"64px"}}>
-        <h2 style={{fontSize:"32px",fontWeight:"800",color:"#0f172a",margin:"0 0 32px"}}>The problems we solve</h2>
+        <h2 style={{fontSize:"32px",fontWeight:"800",color:"#111111",margin:"0 0 32px"}}>The problems we solve</h2>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"24px"}}>
           {[
             {icon:"📐",title:"Space waste",desc:"Manual planning wastes 15–25% of container space on average. PackWise finds the optimal box orientation across all 6 rotations and fills leftover gaps automatically."},
@@ -1530,7 +1797,7 @@ function AboutPage({setPage}){
             <div key={i} style={{display:"flex",gap:"14px",padding:"20px",background:"#f8fafc",borderRadius:"12px",border:"1px solid #e2e8f0"}}>
               <div style={{fontSize:"28px",flexShrink:0}}>{c.icon}</div>
               <div>
-                <div style={{fontWeight:"700",color:"#0f172a",marginBottom:"6px"}}>{c.title}</div>
+                <div style={{fontWeight:"700",color:"#111111",marginBottom:"6px"}}>{c.title}</div>
                 <div style={{fontSize:"13px",color:"#64748b",lineHeight:"1.7"}}>{c.desc}</div>
               </div>
             </div>
@@ -1539,7 +1806,7 @@ function AboutPage({setPage}){
       </div>
 
       {/* India focus */}
-      <div style={{background:"#0f172a",borderRadius:"16px",padding:"40px",marginBottom:"64px"}}>
+      <div style={{background:"#0f0f0f",borderRadius:"16px",padding:"40px",marginBottom:"64px"}}>
         <h2 style={{fontSize:"24px",fontWeight:"800",color:"#fff",margin:"0 0 16px"}}>🇮🇳 Built for India</h2>
         <p style={{fontSize:"15px",color:"#94a3b8",lineHeight:"1.8",marginBottom:"20px"}}>
           India's logistics cost runs at 14–18% of GDP — almost double the global benchmark.
@@ -1554,14 +1821,14 @@ function AboutPage({setPage}){
             "Targeting exporter clusters: Morbi, Tirupur, Rajkot, Ludhiana",
             "Built to replace Excel, not replace your logistics team"].map((t,i)=>(
             <div key={i} style={{display:"flex",gap:"10px",fontSize:"13px",color:"#cbd5e1"}}>
-              <span style={{color:"#34d399",flexShrink:0}}>✓</span>{t}</div>
+              <span style={{color:"#f87171",flexShrink:0}}>✓</span>{t}</div>
           ))}
         </div>
       </div>
 
       {/* Algorithm note */}
       <div style={{marginBottom:"64px"}}>
-        <h2 style={{fontSize:"28px",fontWeight:"800",color:"#0f172a",margin:"0 0 16px"}}>How the algorithm works</h2>
+        <h2 style={{fontSize:"28px",fontWeight:"800",color:"#111111",margin:"0 0 16px"}}>How the algorithm works</h2>
         <p style={{fontSize:"15px",color:"#475569",lineHeight:"1.8",marginBottom:"12px"}}>
           PackWise uses a <strong>mixed-orientation guillotine heuristic</strong> — a practical
           algorithm proven in logistics software. It tries all 6 possible box orientations
@@ -1584,15 +1851,15 @@ function AboutPage({setPage}){
 
       {/* Contact */}
       <div style={{background:"#f8fafc",borderRadius:"16px",padding:"40px",textAlign:"center",marginBottom:"40px"}}>
-        <h2 style={{fontSize:"24px",fontWeight:"800",color:"#0f172a",margin:"0 0 12px"}}>Get in touch</h2>
+        <h2 style={{fontSize:"24px",fontWeight:"800",color:"#111111",margin:"0 0 12px"}}>Get in touch</h2>
         <p style={{fontSize:"15px",color:"#64748b",margin:"0 0 20px"}}>Questions, feedback, or want a demo for your team?</p>
         <a href={`mailto:${CONFIG.contactEmail}`} style={{display:"inline-block",padding:"12px 28px",
-          background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",borderRadius:"10px",
+          background:"linear-gradient(135deg,#dc2626,#b91c1c)",color:"#fff",borderRadius:"10px",
           fontWeight:"700",fontSize:"15px",textDecoration:"none"}}>
           Email Us →
         </a>
         <div style={{marginTop:"20px"}}>
-          <button onClick={()=>setPage("pricing")} style={{background:"none",border:"none",color:"#059669",fontWeight:"600",fontSize:"14px",cursor:"pointer"}}>
+          <button onClick={()=>setPage("pricing")} style={{background:"none",border:"none",color:"#dc2626",fontWeight:"600",fontSize:"14px",cursor:"pointer"}}>
             See pricing →
           </button>
         </div>
@@ -1610,7 +1877,7 @@ function ToolPage({isPro,setIsPro,modalOpen,setModalOpen}){
     <div>
       <UpgradeModal open={modalOpen} onClose={()=>setModalOpen(false)} onUnlock={unlock}/>
       {/* Tool sub-nav */}
-      <div style={{background:"linear-gradient(135deg,#0f172a 0%,#0d2b1a 100%)",padding:"20px 32px 0"}}>
+      <div style={{background:"linear-gradient(135deg,#0f172a 0%,#1c0203 100%)",padding:"20px 32px 0"}}>
         <div style={{maxWidth:"1200px",margin:"0 auto"}}>
           <p style={{color:"#94a3b8",fontSize:"12px",margin:"0 0 14px"}}>
             Box packing · Two-SKU pallet · Shipment planner · Container SKU bulk calculator
