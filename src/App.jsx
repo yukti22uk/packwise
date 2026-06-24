@@ -1549,7 +1549,7 @@ function HomePage({setPage,onUpgrade}){
           <h1 style={{fontSize:"clamp(36px,6vw,64px)",fontWeight:"900",color:"#fff",
             lineHeight:"1.1",margin:"0 0 20px",letterSpacing:"-0.02em"}}>
             Stop guessing.<br/>
-            <span className="shimmer-text">
+            <span className="shimmer-theme">
               Load smarter.
             </span>
           </h1>
