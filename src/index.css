@@ -105,3 +105,31 @@ input:focus,select:focus{outline:2px solid #be185d;outline-offset:1px;border-col
 
 /* ─── SKU TABLE ─── */
 .sku-row:hover{background:#fdf2f8!important;}
+
+/* ─── MISSING UTILITY CLASSES ─── */
+.hover-border:hover{border-color:#be185d!important;}
+.rg-2c  {display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;}
+.rg-2e  {display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+.rg-3   {display:grid;grid-template-columns:repeat(3,1fr);gap:20px;}
+.rg-4   {display:grid;grid-template-columns:repeat(4,1fr);}
+.stagger>*{opacity:0;transform:translateY(20px);transition:opacity .5s ease,transform .5s ease;}
+.stagger.in>*:nth-child(1){opacity:1;transform:none;transition-delay:0ms;}
+.stagger.in>*:nth-child(2){opacity:1;transform:none;transition-delay:80ms;}
+.stagger.in>*:nth-child(3){opacity:1;transform:none;transition-delay:160ms;}
+.stagger.in>*:nth-child(4){opacity:1;transform:none;transition-delay:240ms;}
+.stagger.in>*:nth-child(5){opacity:1;transform:none;transition-delay:320ms;}
+.stagger.in>*:nth-child(6){opacity:1;transform:none;transition-delay:400ms;}
+.sku-row:hover{background:#fdf2f8!important;}
+
+@media(max-width:960px){
+  .rg-2c {grid-template-columns:1fr;gap:28px;}
+  .rg-2e {grid-template-columns:1fr;}
+  .rg-3  {grid-template-columns:1fr 1fr;}
+  .rg-4  {grid-template-columns:1fr 1fr;}
+  .rg-steps{grid-template-columns:1fr 1fr;gap:20px;}
+}
+@media(max-width:600px){
+  .rg-3  {grid-template-columns:1fr;}
+  .rg-2e {grid-template-columns:1fr;}
+  .rg-steps{grid-template-columns:1fr;}
+}
