@@ -151,6 +151,22 @@ function calcMultiSKU(cL,cW,cH,skus,opt={}){
     tryAxis(cH,(off,len)=>({L:cL,W:cW,H:len,off:{x:0,y:0,z:off}})),
   ];
   const best=attempts.reduce((a,b)=>a.score>b.score?a:b);
+
+  // Apply weight constraint: if total fitted weight exceeds maxWeight,
+  // scale back each region proportionally by weight budget fraction
+  if(opt.maxWeight>0){
+    const totalWt=best.regs.reduce((s,r)=>s+(r.weight||0)*r.fitted,0);
+    if(totalWt>opt.maxWeight&&totalWt>0){
+      const scale=opt.maxWeight/totalWt;
+      best.regs.forEach(r=>{
+        r.fitted=Math.floor(r.fitted*scale);
+        r.fillRate=Math.min(1,r.fitted/Math.max(1,r.targetQty));
+        r.weightConstrained=true;
+      });
+      best.total=best.regs.reduce((s,r)=>s+r.fitted,0);
+    }
+  }
+
   return{...best,cL,cW,cH,regions:best.regs};
 }
 
@@ -262,7 +278,8 @@ function UpgradeModal({open,onClose,onUnlock}){
 
         <div style={{background:"#f0fdf4",borderRadius:"10px",padding:"14px",margin:"14px 0"}}>
           <div style={{fontWeight:"700",color:"#166534",fontSize:"15px",marginBottom:"8px"}}>Pro includes:</div>
-          {["🚚 Shipment Planner — multi-container for big orders",
+          {["🗃️ Multi-SKU Planner — pack 2–8 SKUs per container",
+            "🚚 Shipment Planner — multi-container for big orders",
             "💰 Cost comparison — find the cheapest container",
             "📄 Branded PDF loading plans for your warehouse",
             "📊 Unlimited bulk SKU upload"].map(t=>(
@@ -560,7 +577,7 @@ function BoxPackingTool(){
     if(wt>0&&maxWt>0){wtQty=Math.floor(maxWt/wt);if(wtQty<volQty){effQty=wtQty;constraint="Weight";}}
     setResult({...r,volQty,wtQty,effQty,constraint,volUtil:(effQty*sln*swn*shn)/(bl*bw*bh),totalWeight:wt>0?effQty*wt:null});};
   return(<div>
-    <div style={S.sectionDesc}>Select container → enter box dimensions → add optional weight & stacking constraints → calculate. Shows 3D + 2D views with leftovers and effective quantity.</div>
+    <div style={S.sectionDesc}>Enter one box size and select a container or pallet — the calculator finds the maximum quantity using all 6 orientations, shows a rotatable 3D model, 2D engineering views, and leftover region breakdown.</div>
     <ContainerSelector onChange={(L,W,H,wt)=>{setBl(L);setBw(W);setBh(H);setMaxWt(wt);}} showWeight={true}/>
     <div style={S.card}><div style={S.cardTitle}>📦 Small Box Dimensions</div>
       <div style={S.grid3}>{[["Length",sl,setSl],["Width",sw,setSw],["Height",sh,setSh]].map(([l,v,s])=>(
@@ -763,7 +780,7 @@ function ContainerSkuTool({isPro,onUpgrade}){
     ws["!cols"]=[{wch:18},{wch:10},{wch:10},{wch:10},{wch:16},{wch:22}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"SKU List");XLSX.writeFile(wb,"SKU_Template.xlsx");};
   const gC=results?results.filter(r=>!r.error&&r.volUtil>=0.75).length:0;const oC=results?results.filter(r=>!r.error&&r.volUtil>=0.5&&r.volUtil<0.75).length:0;const lC=results?results.filter(r=>!r.error&&r.volUtil<0.5).length:0;
   return(<div>
-    <div style={S.sectionDesc}>Upload a list of SKUs with dimensions and weight. Finds maximum quantity per SKU constrained by volume and weight, with Excel download.{!isPro&&<span style={{color:"#c2410c"}}> Free plan processes up to {CONFIG.freeSkuLimit} SKUs.</span>}</div>
+    <div style={S.sectionDesc}>Upload an Excel file with multiple SKUs — each with dimensions and weight. Get the maximum quantity per SKU constrained by both volume and weight. Download full results as Excel.{!isPro&&<span style={{color:"#c2410c"}}> Free plan processes up to {CONFIG.freeSkuLimit} SKUs.</span>}</div>
     <div style={{display:"grid",gridTemplateColumns:"320px 1fr",gap:"20px",alignItems:"start"}}>
       <div>
         <div style={S.card}><div style={S.cardTitle}>🗃️ Container Details</div>
@@ -813,28 +830,28 @@ function ContainerSkuTool({isPro,onUpgrade}){
 
 // ─── MULTI-SKU PLANNER (PRO) ──────────────────────────────────────────────────
 function MultiSKUTool(){
-  const[bl,setBl]=useState(0);const[bw,setBw]=useState(0);const[bh,setBh]=useState(0);const[contName,setContName]=useState("");
+  const[bl,setBl]=useState(0);const[bw,setBw]=useState(0);const[bh,setBh]=useState(0);const[contName,setContName]=useState("");const[maxWt,setMaxWt]=useState(0);
   const[noStack,setNoStack]=useState(false);const[lockHeight,setLockHeight]=useState(false);const[maxStack,setMaxStack]=useState("");
   const[skuRows,setSkuRows]=useState([
-    {id:1,name:"SKU 1",L:"",W:"",H:"",targetQty:""},
-    {id:2,name:"SKU 2",L:"",W:"",H:"",targetQty:""},
+    {id:1,name:"SKU 1",L:"",W:"",H:"",targetQty:"",weight:""},
+    {id:2,name:"SKU 2",L:"",W:"",H:"",targetQty:"",weight:""},
   ]);
   const[result,setResult]=useState(null);const[error,setError]=useState("");const[view,setView]=useState("table");
   const nextId=useRef(3);
 
   const addRow=()=>{
-    setSkuRows(r=>[...r,{id:nextId.current++,name:`SKU ${nextId.current-1}`,L:"",W:"",H:"",targetQty:""}]);};
+    setSkuRows(r=>[...r,{id:nextId.current++,name:`SKU ${nextId.current-1}`,L:"",W:"",H:"",targetQty:"",weight:""}]);};
   const removeRow=(id)=>setSkuRows(r=>r.filter(row=>row.id!==id));
   const updateRow=(id,field,val)=>setSkuRows(r=>r.map(row=>row.id===id?{...row,[field]:val}:row));
 
   const calc=()=>{
     if(bl<=0||bw<=0||bh<=0){setError("Select a container / enter dimensions.");return;}
-    const skus=skuRows.map(r=>({...r,L:parseFloat(r.L)||0,W:parseFloat(r.W)||0,H:parseFloat(r.H)||0,targetQty:parseInt(r.targetQty)||0}));
+    const skus=skuRows.map(r=>({...r,L:parseFloat(r.L)||0,W:parseFloat(r.W)||0,H:parseFloat(r.H)||0,targetQty:parseInt(r.targetQty)||0,weight:parseFloat(r.weight)||0}));
     const valid=skus.filter(s=>s.L>0&&s.W>0&&s.H>0&&s.targetQty>0);
     if(valid.length<2){setError("Enter at least 2 SKUs with all dimensions and target quantity.");return;}
     if(valid.length>8){setError("Maximum 8 SKUs supported.");return;}
     setError("");
-    const opt={noStack,lockHeight,maxStack:parseInt(maxStack)||0};
+    const opt={noStack,lockHeight,maxStack:parseInt(maxStack)||0,maxWeight:maxWt};
     const r=calcMultiSKU(bl,bw,bh,valid,opt);
     setResult(r?{...r,skuCount:valid.length}:null);
   };
@@ -875,7 +892,7 @@ function MultiSKUTool(){
       how many of each SKU fits. Supports stacking and orientation constraints.
     </div>
 
-    <ContainerSelector onChange={(L,W,H,wt,name)=>{setBl(L);setBw(W);setBh(H);setContName(name);}}/>
+    <ContainerSelector onChange={(L,W,H,wt,name)=>{setBl(L);setBw(W);setBh(H);setMaxWt(wt);setContName(name);}} showWeight={true}/>
 
     {/* SKU table */}
     <div style={S.card}>
@@ -888,16 +905,16 @@ function MultiSKUTool(){
         </button>
       </div>
       {/* Table header */}
-      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1.5fr 40px",gap:"8px",
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1.5fr 1fr 40px",gap:"8px",
         marginBottom:"8px",padding:"0 4px"}}>
-        {["SKU Name","Length","Width","Height","Target Qty",""].map(h=>(
+        {["SKU Name","Length","Width","Height","Target Qty","Wt/Box (kg)",""].map(h=>(
           <div key={h} style={S.label}>{h}</div>
         ))}
       </div>
       {/* Rows */}
       {skuRows.map((row,idx)=>(
         <div key={row.id} className="sku-row" style={{display:"grid",
-          gridTemplateColumns:"2fr 1fr 1fr 1fr 1.5fr 40px",gap:"8px",
+          gridTemplateColumns:"2fr 1fr 1fr 1fr 1.5fr 1fr 40px",gap:"8px",
           marginBottom:"8px",padding:"6px 4px",borderRadius:"8px",transition:"background 0.15s"}}>
           <input style={{...S.input,borderColor:MULTI_LABELS[idx%MULTI_LABELS.length]+"55"}}
             value={row.name} onChange={e=>updateRow(row.id,"name",e.target.value)}
@@ -908,6 +925,8 @@ function MultiSKUTool(){
           ))}
           <input style={S.input} type="number" min="0"
             value={row.targetQty} onChange={e=>updateRow(row.id,"targetQty",e.target.value)} placeholder="qty"/>
+          <input style={S.input} type="number" min="0" step="any"
+            value={row.weight||""} onChange={e=>updateRow(row.id,"weight",e.target.value)} placeholder="kg"/>
           <button onClick={()=>removeRow(row.id)} disabled={skuRows.length<=2}
             style={{background:"none",border:"1px solid #e2e8f0",borderRadius:"6px",cursor:"pointer",
             color:"#9ca3af",fontSize:"16px",fontFamily:"inherit",
@@ -916,6 +935,7 @@ function MultiSKUTool(){
       ))}
       <div style={{...S.noteBox,marginTop:"8px"}}>
         <strong>Tip:</strong> Target Qty is your order quantity. The planner allocates container space proportionally and reports the actual fitted quantity.
+        Weight per box is optional — enter it to apply the container's weight limit.
         Max 8 SKUs · Container divided into {skuRows.filter(r=>parseFloat(r.L)>0).length||"N"} regions
       </div>
     </div>
@@ -933,7 +953,7 @@ function MultiSKUTool(){
           ["Total Boxes Fitted",result.total.toLocaleString(),"#f0fdf4","#166534"],
           ["Volume Utilization",(result.volUtil*100).toFixed(1)+"%",result.volUtil>=0.75?"#f0fdf4":result.volUtil>=0.5?"#fef9c3":"#fef2f2",result.volUtil>=0.75?"#166534":result.volUtil>=0.5?"#854d0e":"#991b1b"],
           ["SKUs Packed",`${result.regions.filter(r=>r.fitted>0).length} / ${result.regions.length}`,"#eff6ff","#1d4ed8"],
-          ["Fully Filled",`${result.regions.filter(r=>r.fillRate>=1).length} / ${result.regions.length}`,"#fdf2f8","#be185d"],
+          ["Limited By",result.regions.some(r=>r.weightConstrained)?"Weight":"Volume",result.regions.some(r=>r.weightConstrained)?"#fff7ed":"#f0fdf4",result.regions.some(r=>r.weightConstrained)?"#c2410c":"#166534"],
         ].map(([l,v,bg,col])=>(
           <div key={l} style={{background:bg,borderRadius:"10px",padding:"14px",textAlign:"center"}}>
             <div style={{fontSize:"22px",fontWeight:"800",color:col,letterSpacing:"-0.02em"}}>{v}</div>
@@ -1579,7 +1599,7 @@ function Footer({setPage}){
           </div>
           <div>
             <div style={{color:"#fff",fontWeight:"600",fontSize:"13px",marginBottom:"12px",textTransform:"uppercase",letterSpacing:"0.08em"}}>Tool</div>
-            {[["tool","Box Packing"],["tool","Shipment Planner"],["tool","Two-SKU Calculator"],["tool","Container SKU"]].map(([pg,l])=>(
+            {[["tool","Single SKU Calculator"],["tool","Multi-SKU Planner"],["tool","Shipment Planner"],["tool","Bulk SKU Calculator"]].map(([pg,l])=>(
               <div key={l} onClick={()=>setPage(pg)} style={{fontSize:"13px",padding:"4px 0",cursor:"pointer",color:"#94a3b8"}}
                 onMouseEnter={e=>e.target.style.color="#34d399"} onMouseLeave={e=>e.target.style.color="#94a3b8"}>{l}</div>))}
           </div>
@@ -1616,10 +1636,10 @@ function HomePage({setPage,onUpgrade}){
     {v:"< 5%",l:"of Indian supply chains\nare digitized"},
   ];
   const features=[
-    {icon:"📦",title:"Box Packing Calculator",desc:"Enter box and container dimensions. Get the maximum quantity in the best orientation, with a rotatable 3D model and full 2D engineering views — top, side, and isometric.",free:true},
-    {icon:"⚖️",title:"Two-SKU Pallet/Container",desc:"Pack two different product sizes together in one container while respecting a quantity ratio. Supports fragile, this-side-up, and stacking-limit constraints.",free:false},
-    {icon:"🚚",title:"Shipment Planner",desc:"Enter your full order quantity. Get the number of containers needed, a per-container loading manifest, cost-per-unit comparison across vehicle types, and a branded PDF loading plan.",free:false},
-    {icon:"🗃️",title:"Container SKU Calculator",desc:"Upload an Excel file with hundreds of SKUs. Get maximum quantity per SKU in seconds — constrained by both volume and weight. Download results as Excel.",free:"limited"},
+    {icon:"📦",title:"Single SKU Calculator",desc:"Enter one box size and a container. Instantly see the maximum quantity in the best orientation, with a rotatable 3D model and full 2D engineering views — top, side, and isometric.",free:true},
+    {icon:"🗃️",title:"Multi-SKU Planner",desc:"Pack 2–8 different box sizes together in one container simultaneously. Each SKU gets an allocated region. Respects weight limits, fragile, this-side-up, and stacking constraints.",free:false},
+    {icon:"🚚",title:"Shipment Planner",desc:"Enter your total order quantity. Get containers needed, per-container manifest, cost-per-unit comparison across all vehicle types, and a branded PDF loading plan for your warehouse team.",free:false},
+    {icon:"🗃️",title:"Bulk SKU Calculator",desc:"Upload an Excel file with hundreds of SKUs. Get maximum quantity per SKU in seconds — constrained by both volume and weight. Download the full results as Excel.",free:"limited"},
   ];
   const steps=[
     {n:"01",title:"Select your container",desc:"Choose from Indian vehicles (Tata Ace, 19ft, 32ft SXL, 40ft ISO, and more) or enter custom dimensions. Or select a pallet base size."},
@@ -1893,8 +1913,8 @@ function HomePage({setPage,onUpgrade}){
 
 // ── Pricing page ──
 function PricingPage({onUpgrade,setPage}){
-  const freeFeat=["Box packing calculator","3D model + 2D engineering views","Weight & stacking constraints","All vehicle & pallet presets","Container SKU (up to 10 SKUs)"];
-  const proFeat=["Everything in Free","⚖️ Two-SKU Pallet/Container","🚚 Shipment Planner — multi-container","💰 Cost comparison across vehicles","📄 Branded PDF loading plan export","Unlimited Container SKU upload","Priority email support"];
+  const freeFeat=["Single SKU Calculator — unlimited","3D model + 2D engineering views","Weight & stacking constraints","All vehicle & pallet presets","Bulk SKU Calculator (up to 10 SKUs)"];
+  const proFeat=["Everything in Free","🗃️ Multi-SKU Planner — 2 to 8 SKUs per container","🚚 Shipment Planner — multi-container","💰 Cost comparison across vehicles","📄 Branded PDF loading plan export","Unlimited Bulk SKU upload","Priority email support"];
   return(
     <div style={{maxWidth:"1000px",margin:"0 auto",padding:"72px 32px 0"}}>
       <div style={{textAlign:"center",marginBottom:"56px"}}>
@@ -1946,7 +1966,7 @@ function PricingPage({onUpgrade,setPage}){
           ["Can I try Pro before paying?","Yes — click 'Get Pro' and contact us for a 7-day free trial."],
           ["What units does it use?","Millimetres by default. As long as you're consistent (all mm or all cm), the result is accurate."],
           ["Is my data safe?","Everything runs in your browser — we never see your box sizes or shipping data. Nothing is sent to our servers."],
-          ["Can I export the results?","The Shipment Planner (Pro) exports a branded PDF loading plan. Container SKU exports an Excel file."],
+          ["Can I export the results?","The Shipment Planner (Pro) exports a branded PDF loading plan. The Bulk SKU Calculator exports an Excel file. The Multi-SKU Planner also exports Excel."],
           ["Do you have India-specific vehicles?","Yes — Tata Ace, 19ft, 20ft, 22ft, 32ft SXL/MXL, and 40ft ISO containers are all preset."],
         ].map(([q,a],i)=>(
           <div key={i} style={{borderBottom:"1px solid #e2e8f0",padding:"20px 0"}}>
@@ -2003,7 +2023,7 @@ function AboutPage({setPage}){
             {icon:"⚖️",title:"Ignored constraints",desc:"Fragile items, weight limits, this-side-up labels — these get ignored in manual planning. PackWise enforces them in the calculation."},
             {icon:"📋",title:"No loading instructions",desc:"Even with good planning, warehouse staff load by eye. A printed PDF loading plan cuts errors and loading time significantly."},
             {icon:"🚛",title:"Wrong vehicle choice",desc:"Is a 32ft SXL or two 22ft trucks cheaper for your order? The cost comparison tool answers this immediately."},
-            {icon:"📊",title:"SKU-level blindness",desc:"Businesses with hundreds of SKUs don't know which products are most space-efficient. The Container SKU tool reveals this across your whole catalog."},
+            {icon:"📊",title:"SKU-level blindness",desc:"Businesses with hundreds of SKUs don't know which products are most space-efficient. The Bulk SKU Calculator reveals this across your whole catalog."},
           ].map((c,i)=>(
             <div key={i} style={{display:"flex",gap:"14px",padding:"20px",background:"#f8fafc",borderRadius:"12px",border:"1px solid #e2e8f0"}}>
               <div style={{fontSize:"28px",flexShrink:0}}>{c.icon}</div>
@@ -2083,7 +2103,7 @@ function AboutPage({setPage}){
 function ToolPage({isPro,setIsPro,modalOpen,setModalOpen}){
   const[tab,setTab]=useState("box");
   const unlock=()=>{setIsPro(true);try{localStorage.setItem("pp_pro","true");}catch(e){}setTimeout(()=>setModalOpen(false),1200);};
-  const tabs=[["box","📦 Box Packing",false],["multisku","🗃️ Multi-SKU Planner",true],["twosku","⚖️ Two-SKU Pallet/Container",true],["shipment","🚚 Shipment Planner",true],["sku","🗃️ Container SKU",false]];
+  const tabs=[["box","📦 Single SKU Calculator",false],["multisku","🗃️ Multi-SKU Planner",true],["shipment","🚚 Shipment Planner",true],["sku","🗃️ Bulk SKU Calculator",false]];
   return(
     <div>
       <UpgradeModal open={modalOpen} onClose={()=>setModalOpen(false)} onUnlock={unlock}/>
@@ -2091,7 +2111,7 @@ function ToolPage({isPro,setIsPro,modalOpen,setModalOpen}){
       <div style={{background:"linear-gradient(135deg,#0f172a 0%,#0d2b1a 100%)",padding:"20px 32px 0"}}>
         <div style={{maxWidth:"1200px",margin:"0 auto"}}>
           <p style={{color:"#94a3b8",fontSize:"12px",margin:"0 0 14px"}}>
-            Box packing · Two-SKU pallet · Shipment planner · Container SKU bulk calculator
+            Single SKU · Multi-SKU planner · Shipment planner · Bulk SKU calculator
           </p>
           <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
             {tabs.map(([id,label,pro])=>(
@@ -2109,7 +2129,6 @@ function ToolPage({isPro,setIsPro,modalOpen,setModalOpen}){
         <div style={{maxWidth:"1200px",margin:"0 auto"}}>
           {tab==="box"&&<BoxPackingTool/>}
           {tab==="multisku"&&(isPro?<MultiSKUTool/>:<ProGate feature="Multi-SKU Planner" onUpgrade={()=>setModalOpen(true)}/>)}
-          {tab==="twosku"&&(isPro?<TwoSKUTool/>:<ProGate feature="Two-SKU Pallet/Container Calculator" onUpgrade={()=>setModalOpen(true)}/>)}
           {tab==="shipment"&&(isPro?<ShipmentPlanner/>:<ProGate feature="Shipment Planner" onUpgrade={()=>setModalOpen(true)}/>)}
           {tab==="sku"&&<ContainerSkuTool isPro={isPro} onUpgrade={()=>setModalOpen(true)}/>}
         </div>
