@@ -1,6 +1,6 @@
 // ─── CONSTRAINTS PANEL ───────────────────────────────────────────────────────
 import { useState, useRef, useEffect } from 'react';
-import { S } from './styles.js';
+import { S } from './styles.jsx';
 function ConstraintsPanel({weight,setWeight,noStack,setNoStack,lockHeight,setLockHeight,maxStack,setMaxStack,hideWeight}){
   return(<div style={S.card}><div style={S.cardTitle}>⚙️ Constraints (optional)</div>
     <div style={{display:"grid",gridTemplateColumns:hideWeight?"1fr":"1fr 1fr",gap:"12px",marginBottom:"12px"}}>
