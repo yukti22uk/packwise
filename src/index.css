@@ -133,3 +133,116 @@ input:focus,select:focus{outline:2px solid #be185d;outline-offset:1px;border-col
   .rg-2e {grid-template-columns:1fr;}
   .rg-steps{grid-template-columns:1fr;}
 }
+
+/* ─── MOBILE FIXES ──────────────────────────────────────────────────────────
+   Comprehensive responsive fixes for phones (< 640px)
+   All tool inputs, tables, and result cards stack to single column.
+─────────────────────────────────────────────────────────────────────────── */
+
+/* Result stat cards — 2×2 grid on mobile */
+@media(max-width:640px){
+  /* 4-col result grids → 2-col */
+  div[style*="repeat(4,1fr)"],
+  div[style*="repeat(4, 1fr)"]{
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+  }
+  /* 3-col input grids → 1-col */
+  div[style*="1fr 1fr 1fr"]{
+    grid-template-columns: 1fr !important;
+  }
+  /* Section padding */
+  div[style*="padding:\"24px 32px"],
+  div[style*='padding:"24px 32px']{
+    padding: 16px !important;
+  }
+  /* Hero CTA buttons */
+  .hero-btns > button {
+    width: 100% !important;
+    text-align: center;
+  }
+}
+
+/* ─── SKU TABLE MOBILE ───────────────────────────────────────────────────── */
+@media(max-width:720px){
+  /* SKU table rows scroll horizontally */
+  .sku-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Manifest tables */
+  .manifest-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ─── TOOL TABS MOBILE ───────────────────────────────────────────────────── */
+@media(max-width:640px){
+  /* Tab bar scrolls horizontally */
+  .tab-bar {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap !important;
+    padding-bottom: 2px;
+  }
+  .tab-bar button {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+}
+
+/* ─── CARD PADDING MOBILE ────────────────────────────────────────────────── */
+@media(max-width:640px){
+  .pw-card {
+    padding: 16px !important;
+    border-radius: 10px !important;
+  }
+  /* Input full width */
+  input[type="number"],
+  input[type="text"],
+  select {
+    font-size: 16px !important; /* prevent iOS zoom on focus */
+  }
+  /* 3D viewer height */
+  .three-viewer-wrap {
+    height: 240px !important;
+  }
+}
+
+/* ─── HOMEPAGE MOBILE ────────────────────────────────────────────────────── */
+@media(max-width:640px){
+  /* Hero: stack text + animation */
+  .rg-2c {
+    grid-template-columns: 1fr !important;
+    gap: 32px !important;
+  }
+  /* Hide box animation on very small screens to save space */
+  .hero-anim-col { display: none; }
+  /* Stats: 2x2 */
+  .rg-4 { grid-template-columns: 1fr 1fr !important; }
+  /* Feature cards: 1 col */
+  .rg-2e { grid-template-columns: 1fr !important; }
+  /* Testimonials: 1 col */
+  .rg-3 { grid-template-columns: 1fr !important; }
+  /* Steps: 1 col */
+  .rg-steps { grid-template-columns: 1fr !important; }
+  /* Page content padding */
+  .px-page { padding: 40px 16px 0 !important; }
+}
+
+/* ─── COMPARISON TABLE MOBILE ────────────────────────────────────────────── */
+@media(max-width:640px){
+  .comparison-table {
+    font-size: 11px !important;
+  }
+  .comparison-table th,
+  .comparison-table td {
+    padding: 6px 8px !important;
+  }
+}
+
+/* ─── PREVENT HORIZONTAL OVERFLOW ───────────────────────────────────────── */
+body { overflow-x: hidden; }
+* { max-width: 100%; }
+img, svg { max-width: 100%; height: auto; }
