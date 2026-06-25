@@ -16,7 +16,6 @@ import ThreeViewer from '../components/ThreeViewer.jsx';
 import WAShare from '../components/WAShare.jsx';
 import AIFillButton from '../components/AIFillButton.jsx';
 import { TopView2D, SideView2D, IsoView2D } from '../components/Views2D.jsx';
-import { CONFIG } from '../config.js';
 function ContainerSkuTool({isPro,onUpgrade}){
   const[cL,setCL]=useState("");const[cW,setCW]=useState("");const[cH,setCH]=useState("");const[cMaxWt,setCMaxWt]=useState("");
   const[fileName,setFileName]=useState("");const[results,setResults]=useState(null);const[error,setError]=useState("");
