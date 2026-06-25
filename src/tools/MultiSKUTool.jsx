@@ -9,7 +9,7 @@ import { bestFitDetailed, calcMixedDetailed, effectivePerContainer, calcMixed } 
 import { MULTI_PALETTE, MULTI_LABELS, calcMultiSKU, calcMultiSKUShipment } from '../algorithms/multiSku.js';
 import { runKMeans } from '../algorithms/kmeans.js';
 import { fmtN, money } from '../algorithms/utils.js';
-import { S, UtilBadge } from '../components/styles.js';
+import { S, UtilBadge } from '../components/styles.jsx';
 import ContainerSelector from '../components/ContainerSelector.jsx';
 import ConstraintsPanel from '../components/ConstraintsPanel.jsx';
 import ThreeViewer from '../components/ThreeViewer.jsx';
