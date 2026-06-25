@@ -3,7 +3,7 @@
 // Step 2: Upload Order data → AI maps columns → full analytics → 6-sheet Excel
 import { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { S } from '../components/styles.js';
+import { S } from '../components/styles.jsx';
 
 // ─── CLAUDE API CALL ─────────────────────────────────────────────────────────
 async function claudeCall(prompt, maxTokens = 1500) {
