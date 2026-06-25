@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect } from "react";
 import * as THREE from "three";
 import * as XLSX from "xlsx";
@@ -216,7 +215,85 @@ function calcMultiSKUShipment(cL,cW,cH,maxWt,skus,opt={}){
     totalShipped,totalOrdered,avgUtil,shipped,skus};
 }
 
-// Two-SKU guillotine split with constraint support.
+// ─── K-MEANS SKU GROUPER ──────────────────────────────────────────────────────
+// Groups N SKUs into k clusters by (L,W,H) proximity.
+// Returns k groups each with a weighted-centroid representative box size.
+
+function kDist(a,b,mL,mW,mH){
+  const dl=(a.L-b.L)/Math.max(1,mL),dw=(a.W-b.W)/Math.max(1,mW),dh=(a.H-b.H)/Math.max(1,mH);
+  return dl*dl+dw*dw+dh*dh; // squared distance (no sqrt needed for comparisons)
+}
+
+function runKMeans(points,k,maxIter=120){
+  // points = [{L,W,H,qty,weight,name}, ...]
+  if(!points.length||k<1) return[];
+  k=Math.min(k,points.length);
+
+  const mL=Math.max(...points.map(p=>p.L))||1;
+  const mW=Math.max(...points.map(p=>p.W))||1;
+  const mH=Math.max(...points.map(p=>p.H))||1;
+
+  // K-means++ initialisation: spread starting centroids
+  const centroids=[{...points[Math.floor(Math.random()*points.length)]}];
+  while(centroids.length<k){
+    // Pick next centroid with probability proportional to squared distance from nearest centroid
+    const dists=points.map(p=>Math.min(...centroids.map(c=>kDist(p,c,mL,mW,mH))));
+    const total=dists.reduce((a,b)=>a+b,0)||1;
+    let r=Math.random()*total;
+    for(let j=0;j<points.length;j++){r-=dists[j];if(r<=0){centroids.push({...points[j]});break;}}
+    if(centroids.length<k) centroids.push({...points[points.length-1]}); // safety
+  }
+
+  const assign=new Int32Array(points.length);
+
+  for(let iter=0;iter<maxIter;iter++){
+    // Assignment step
+    let changed=false;
+    for(let i=0;i<points.length;i++){
+      let best=0,bestD=Infinity;
+      for(let j=0;j<k;j++){const d=kDist(points[i],centroids[j],mL,mW,mH);if(d<bestD){bestD=d;best=j;}}
+      if(assign[i]!==best){assign[i]=best;changed=true;}
+    }
+    if(!changed) break;
+
+    // Update step — weighted centroid (weight by qty)
+    for(let j=0;j<k;j++){
+      let sL=0,sW=0,sH=0,sQ=0;
+      for(let i=0;i<points.length;i++){
+        if(assign[i]!==j) continue;
+        const q=points[i].qty||1;sL+=points[i].L*q;sW+=points[i].W*q;sH+=points[i].H*q;sQ+=q;
+      }
+      if(sQ>0){centroids[j]={L:sL/sQ,W:sW/sQ,H:sH/sQ};}
+    }
+  }
+
+  // Build result groups
+  const groups=[];
+  for(let j=0;j<k;j++){
+    const members=points.filter((_,i)=>assign[i]===j);
+    if(!members.length) continue;
+    const totalQty=members.reduce((s,p)=>s+(p.qty||1),0);
+    const totalWt=members.reduce((s,p)=>s+(p.weight||0)*(p.qty||1),0);
+    // Representative box: weighted centroid rounded to nearest mm
+    const repL=Math.max(1,Math.round(members.reduce((s,p)=>s+p.L*(p.qty||1),0)/totalQty));
+    const repW=Math.max(1,Math.round(members.reduce((s,p)=>s+p.W*(p.qty||1),0)/totalQty));
+    const repH=Math.max(1,Math.round(members.reduce((s,p)=>s+p.H*(p.qty||1),0)/totalQty));
+    const avgWt=totalWt/totalQty;
+    // Accuracy: avg distance from centroid to members (as % of container diagonal)
+    const avgErr=members.reduce((s,p)=>{
+      const dl=Math.abs(p.L-repL)/mL,dw=Math.abs(p.W-repW)/mW,dh=Math.abs(p.H-repH)/mH;
+      return s+Math.sqrt(dl*dl+dw*dw+dh*dh);
+    },0)/members.length;
+    groups.push({id:j+1,repL,repW,repH,totalQty,avgWt,skuCount:members.length,members,
+      accuracy:Math.max(0,100-Math.round(avgErr*100))});
+  }
+
+  // Sort groups by representative box volume ascending
+  groups.sort((a,b)=>a.repL*a.repW*a.repH-b.repL*b.repW*b.repH);
+  groups.forEach((g,i)=>{g.id=i+1;g.name=`Group ${i+1}`;});
+  return groups;
+}
+
 // priority: "strict" = honour ratio exactly (may waste space)
 //           "balanced" = stay close to ratio but fill gaps (default)
 //           "maxfill" = pack as many boxes as possible, ratio is a soft guide
@@ -1219,7 +1296,7 @@ function ContainerSkuTool({isPro,onUpgrade}){
   </div>);}
 
 // ─── MULTI-SKU PLANNER (PRO) ──────────────────────────────────────────────────
-function MultiSKUTool(){
+function MultiSKUTool({preset,onPresetUsed}){
   const[bl,setBl]=useState(0);const[bw,setBw]=useState(0);const[bh,setBh]=useState(0);const[contName,setContName]=useState("");const[maxWt,setMaxWt]=useState(0);
   const[noStack,setNoStack]=useState(false);const[lockHeight,setLockHeight]=useState(false);const[maxStack,setMaxStack]=useState("");
   const[skuRows,setSkuRows]=useState([
@@ -1228,6 +1305,15 @@ function MultiSKUTool(){
   ]);
   const[result,setResult]=useState(null);const[error,setError]=useState("");const[view,setView]=useState("table");
   const nextId=useRef(3);
+
+  // Apply preset from SKU Grouper
+  useEffect(()=>{
+    if(!preset||!preset.length) return;
+    setSkuRows(preset.map((r,i)=>({...r,id:i+1})));
+    nextId.current=preset.length+1;
+    setResult(null);setError("");
+    if(onPresetUsed) onPresetUsed();
+  },[preset]);
 
   const addRow=()=>{
     setSkuRows(r=>[...r,{id:nextId.current++,name:`SKU ${nextId.current-1}`,L:"",W:"",H:"",targetQty:"",weight:""}]);};
@@ -1652,6 +1738,278 @@ function TwoSKUTool(){
     </>))}
   </div>);}
 
+// ─── SKU GROUPER TOOL ─────────────────────────────────────────────────────────
+function SKUGrouperTool({onSendToMultiSKU}){
+  const[rawSkus,setRawSkus]=useState(null);
+  const[fileName,setFileName]=useState("");
+  const[k,setK]=useState(8);
+  const[groups,setGroups]=useState(null);
+  const[processing,setProcessing]=useState(false);
+  const[error,setError]=useState("");
+  const[dragOver,setDragOver]=useState(false);
+  const[expandedGroup,setExpandedGroup]=useState(null);
+  const[sent,setSent]=useState(false);
+
+  const parseFile=(file)=>{
+    if(!file)return;
+    setFileName(file.name);setError("");setGroups(null);setSent(false);
+    const reader=new FileReader();
+    reader.onload=(e)=>{
+      try{
+        const wb=XLSX.read(e.target.result,{type:"array"});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const raw=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
+        // Auto-detect header row
+        let dataStart=0;
+        for(let i=0;i<Math.min(raw.length,20);i++){
+          const row=raw[i].map(c=>String(c).toLowerCase());
+          if(row.some(c=>c.includes("sku")||c.includes("name")||c.includes("length")||c.includes("width"))){
+            dataStart=i+1;break;
+          }
+        }
+        const skus=[];
+        for(let i=dataStart;i<raw.length;i++){
+          const r=raw[i];
+          if(!r[0]&&!r[1])continue;
+          const L=parseFloat(r[1])||0,W=parseFloat(r[2])||0,H=parseFloat(r[3])||0;
+          if(L<=0||W<=0||H<=0)continue; // skip invalid
+          skus.push({name:String(r[0]||`Row ${i+1}`).trim(),L,W,H,
+            weight:parseFloat(r[4])||0,qty:Math.max(1,parseInt(r[5])||1)});
+        }
+        if(skus.length<2){setError("Need at least 2 valid SKUs with dimensions.");return;}
+        setRawSkus(skus);
+      }catch(err){setError("Could not read file. Please check the format.");}
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const runGrouping=()=>{
+    if(!rawSkus){setError("Upload a file first.");return;}
+    setProcessing(true);setGroups(null);setSent(false);
+    // Defer to let UI update
+    setTimeout(()=>{
+      try{
+        const result=runKMeans(rawSkus,k);
+        setGroups(result);
+        setExpandedGroup(null);
+      }catch(err){setError("Grouping failed: "+err.message);}
+      setProcessing(false);
+    },30);
+  };
+
+  const exportExcel=()=>{
+    if(!groups)return;
+    const wb=XLSX.utils.book_new();
+    // Sheet 1: Group summary
+    const summaryHeaders=["Group","Rep L (mm)","Rep W (mm)","Rep H (mm)","SKU Count","Total Qty","Avg Wt/Box (kg)","Accuracy %"];
+    const summaryRows=groups.map(g=>[g.name,g.repL,g.repW,g.repH,g.skuCount,g.totalQty,g.avgWt>0?g.avgWt.toFixed(2):"",g.accuracy+"%"]);
+    const ws1=XLSX.utils.aoa_to_sheet([["SKU GROUPER RESULTS"],[],["File:",fileName],["Groups:",k],[],summaryHeaders,...summaryRows]);
+    ws1["!cols"]=[{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:18},{wch:12}];
+    XLSX.utils.book_append_sheet(wb,ws1,"Group Summary");
+    // Sheet 2: Full detail
+    const detailHeaders=["SKU Name","Length","Width","Height","Weight","Qty","Assigned Group","Group Rep L","Group Rep W","Group Rep H"];
+    const detailRows=groups.flatMap(g=>g.members.map(m=>[m.name,m.L,m.W,m.H,m.weight||"",m.qty||1,g.name,g.repL,g.repW,g.repH]));
+    const ws2=XLSX.utils.aoa_to_sheet([detailHeaders,...detailRows]);
+    ws2["!cols"]=[{wch:20},{wch:10},{wch:10},{wch:10},{wch:10},{wch:8},{wch:14},{wch:14},{wch:14},{wch:14}];
+    XLSX.utils.book_append_sheet(wb,ws2,"SKU Detail");
+    XLSX.writeFile(wb,"SKU_Groups.xlsx");
+  };
+
+  const sendToMultiSKU=()=>{
+    if(!groups||!onSendToMultiSKU)return;
+    const rows=groups.slice(0,8).map((g,i)=>({
+      id:i+1,name:g.name,
+      L:String(g.repL),W:String(g.repW),H:String(g.repH),
+      weight:g.avgWt>0?String(Math.round(g.avgWt*10)/10):"",
+      targetQty:String(g.totalQty),
+    }));
+    onSendToMultiSKU(rows);
+    setSent(true);
+  };
+
+  const sizes=["XS","S","M","L","XL","XXL","3XL","4XL"];
+
+  return(<div>
+    <div style={S.sectionDesc}>
+      Upload a list of up to 50,000 SKUs with dimensions. The grouper clusters them into
+      2–8 representative box sizes using K-means — then sends the groups directly to the
+      Multi-SKU Planner or Shipment Planner for full container planning.
+    </div>
+
+    {/* Upload area */}
+    <div style={S.card}>
+      <div style={S.cardTitle}>📂 Upload SKU List</div>
+      <div onDragOver={e=>{e.preventDefault();setDragOver(true);}}
+        onDragLeave={()=>setDragOver(false)}
+        onDrop={e=>{e.preventDefault();setDragOver(false);parseFile(e.dataTransfer.files[0]);}}
+        onClick={()=>document.getElementById("grouper-upload").click()}
+        style={{border:`2px dashed ${dragOver?"#be185d":"#d1d9e0"}`,borderRadius:"10px",
+          padding:"32px",textAlign:"center",cursor:"pointer",
+          background:dragOver?"#fdf2f8":"#fafbfc",transition:"all 0.2s"}}>
+        <input id="grouper-upload" type="file" accept=".xlsx,.xls,.csv" style={{display:"none"}}
+          onChange={e=>{parseFile(e.target.files[0]);e.target.value="";}}/>
+        <div style={{fontSize:"32px",marginBottom:"8px"}}>📊</div>
+        <div style={{fontWeight:"700",color:"#374151",marginBottom:"4px"}}>
+          {fileName?fileName:"Drop Excel / CSV file here or click to browse"}
+        </div>
+        <div style={{fontSize:"12px",color:"#9ca3af"}}>
+          Required columns: SKU Name · Length (mm) · Width (mm) · Height (mm) · Weight (kg) [optional] · Qty [optional]
+        </div>
+      </div>
+
+      {/* Template download hint */}
+      <div style={{...S.noteBox,marginTop:"12px"}}>
+        <strong>Column order:</strong> A=SKU Name, B=Length, C=Width, D=Height, E=Weight per box (kg), F=Quantity.
+        A header row is detected automatically. Rows with zero or missing dimensions are skipped.
+        Supports up to 50,000 SKUs.
+      </div>
+    </div>
+
+    {/* k selector + run */}
+    <div style={S.card}>
+      <div style={S.cardTitle}>⚙️ Grouping Settings</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"20px",alignItems:"end"}}>
+        <div>
+          <label style={S.label}>Number of Groups: <strong style={{color:"#be185d"}}>{k}</strong></label>
+          <input type="range" min="2" max="8" step="1" value={k} onChange={e=>setK(+e.target.value)}
+            style={{width:"100%",marginTop:"8px",accentColor:"#be185d"}}/>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:"11px",color:"#9ca3af",marginTop:"4px"}}>
+            <span>2 groups</span><span>8 groups (max for Multi-SKU Planner)</span>
+          </div>
+          <div style={{...S.noteBox,marginTop:"8px",fontSize:"12px"}}>
+            {rawSkus?`${rawSkus.length.toLocaleString()} SKUs loaded · ${k} representative sizes will be computed`:"Upload a file to see SKU count"}
+          </div>
+        </div>
+        <div>
+          <div style={{fontSize:"12px",color:"#6b7280",marginBottom:"8px"}}>
+            The algorithm uses <strong>K-means clustering</strong> on box dimensions (L×W×H),
+            weighted by quantity. Each group gets a representative box size — the weighted average
+            of all SKUs in that cluster.
+          </div>
+          {error&&<div style={S.error}>⚠ {error}</div>}
+          <button style={{...S.btnPrimary,width:"100%",opacity:(!rawSkus||processing)?0.6:1}}
+            onClick={runGrouping} disabled={!rawSkus||processing}>
+            {processing?"⏳ Grouping...":"▶ Group SKUs"}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    {/* Results */}
+    {groups&&groups.length>0&&(<>
+      {/* Summary */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"14px",margin:"0 0 16px"}}>
+        {[["SKUs Loaded",(rawSkus?.length||0).toLocaleString(),"#eff6ff","#1d4ed8"],
+          ["Groups Created",groups.length.toLocaleString(),"#f0fdf4","#166534"],
+          ["Total Qty",groups.reduce((s,g)=>s+g.totalQty,0).toLocaleString(),"#fff7ed","#c2410c"],
+          ["Avg Accuracy",groups.reduce((s,g)=>s+g.accuracy,0)/groups.length|0+"%","#fdf2f8","#be185d"],
+        ].map(([l,v,bg,col])=>(
+          <div key={l} style={{background:bg,borderRadius:"10px",padding:"14px",textAlign:"center"}}>
+            <div style={{fontSize:"22px",fontWeight:"800",color:col}}>{v}</div>
+            <div style={{fontSize:"11px",color:"#6b7a8d",marginTop:"4px"}}>{l}</div>
+          </div>))}
+      </div>
+
+      {/* Action buttons */}
+      <div style={{display:"flex",gap:"10px",marginBottom:"16px",flexWrap:"wrap"}}>
+        <button onClick={sendToMultiSKU}
+          style={{...S.btnPrimary,flex:2,background:sent?"#166534":"#be185d",
+          boxShadow:`0 4px 16px rgba(${sent?"22,163,74":"190,24,93"},0.35)`}}>
+          {sent?"✓ Sent to Multi-SKU Planner!":"→ Use in Multi-SKU Planner"}
+        </button>
+        <button onClick={exportExcel}
+          style={{flex:1,padding:"10px 18px",border:"1px solid #bbf7d0",borderRadius:"8px",
+          cursor:"pointer",fontWeight:"600",fontSize:"13px",background:"#f0fdf4",
+          color:"#166534",fontFamily:"inherit"}}>
+          ⬇ Download Excel
+        </button>
+      </div>
+      {sent&&<div style={{...S.noteBox,marginBottom:"16px",background:"#f0fdf4",borderColor:"#bbf7d0",color:"#166534"}}>
+        ✓ Groups pre-filled in Multi-SKU Planner. Click the <strong>Multi-SKU Planner</strong> tab to continue.
+      </div>}
+
+      {/* Groups table */}
+      <div style={{...S.card,padding:"0",overflow:"hidden"}}>
+        <div style={{padding:"12px 18px",borderBottom:"1px solid #f1f5f9",fontWeight:"700",fontSize:"13px"}}>
+          {groups.length} Size Groups — click any row to see member SKUs
+        </div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
+            <thead><tr>
+              {["Group","Rep Box (L×W×H mm)","SKU Count","Total Qty","Avg Wt/Box","Accuracy","Volume"].map(h=>(
+                <th key={h} style={{padding:"10px 14px",textAlign:"left",fontWeight:"600",fontSize:"11px",
+                  color:"#6b7a8d",textTransform:"uppercase",letterSpacing:"0.05em",
+                  background:"#f8fafc",borderBottom:"1px solid #e2e8f0",whiteSpace:"nowrap"}}>{h}</th>))}
+            </tr></thead>
+            <tbody>
+              {groups.map((g,i)=>{
+                const isOpen=expandedGroup===i;
+                const vol=g.repL*g.repW*g.repH;
+                return(<>
+                  <tr key={i} onClick={()=>setExpandedGroup(isOpen?null:i)}
+                    style={{cursor:"pointer",background:isOpen?"#fdf2f8":i%2===0?"#fff":"#fafbfc",
+                    borderLeft:`3px solid ${MULTI_LABELS[i%MULTI_LABELS.length]}`}}>
+                    <td style={{padding:"10px 14px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                        <div style={{width:"14px",height:"14px",borderRadius:"3px",
+                          background:MULTI_LABELS[i%MULTI_LABELS.length],flexShrink:0}}/>
+                        <div>
+                          <div style={{fontWeight:"700",color:"#111827"}}>{g.name}</div>
+                          <div style={{fontSize:"10px",color:"#9ca3af"}}>{sizes[i]||"XL"} size</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{padding:"10px 14px",fontWeight:"600",color:"#374151",fontVariantNumeric:"tabular-nums"}}>
+                      {fmtN(g.repL)} × {fmtN(g.repW)} × {fmtN(g.repH)}
+                    </td>
+                    <td style={{padding:"10px 14px",color:"#374151"}}>{g.skuCount.toLocaleString()}</td>
+                    <td style={{padding:"10px 14px",fontWeight:"600",color:"#374151"}}>{g.totalQty.toLocaleString()}</td>
+                    <td style={{padding:"10px 14px",color:"#6b7280"}}>{g.avgWt>0?g.avgWt.toFixed(2)+" kg":"—"}</td>
+                    <td style={{padding:"10px 14px"}}>
+                      <span style={{background:g.accuracy>=90?"#dcfce7":g.accuracy>=70?"#fef9c3":"#fdf2f8",
+                        color:g.accuracy>=90?"#166534":g.accuracy>=70?"#854d0e":"#831843",
+                        padding:"2px 8px",borderRadius:"99px",fontSize:"11px",fontWeight:"700"}}>
+                        {g.accuracy}%
+                      </span>
+                    </td>
+                    <td style={{padding:"10px 14px",color:"#9ca3af",fontSize:"12px"}}>
+                      {(vol/1e6).toFixed(3)} L
+                    </td>
+                  </tr>
+                  {/* Expanded member list */}
+                  {isOpen&&(
+                    <tr key={`exp-${i}`}>
+                      <td colSpan={7} style={{padding:"0",borderBottom:"1px solid #f1f5f9"}}>
+                        <div style={{background:"#fdf2f8",padding:"12px 18px"}}>
+                          <div style={{fontSize:"12px",fontWeight:"700",color:"#be185d",marginBottom:"8px"}}>
+                            {g.skuCount} SKUs in {g.name} — showing first 50
+                          </div>
+                          <div style={{display:"flex",flexWrap:"wrap",gap:"6px",maxHeight:"120px",overflowY:"auto"}}>
+                            {g.members.slice(0,50).map((m,j)=>(
+                              <span key={j} style={{background:"#fff",border:"1px solid #fbcfe8",
+                                borderRadius:"6px",padding:"2px 8px",fontSize:"11px",color:"#831843"}}>
+                                {m.name} ({fmtN(m.L)}×{fmtN(m.W)}×{fmtN(m.H)})
+                              </span>))}
+                            {g.skuCount>50&&<span style={{fontSize:"11px",color:"#9ca3af",padding:"2px 8px"}}>
+                              +{g.skuCount-50} more — see Excel export</span>}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>);})}
+            </tbody>
+          </table>
+        </div>
+        <div style={{padding:"10px 18px",borderTop:"1px solid #f1f5f9",background:"#f8fafc",
+          fontSize:"12px",color:"#9ca3af",display:"flex",justifyContent:"space-between"}}>
+          <span>Accuracy = how closely each SKU's actual size matches its group's representative size</span>
+          <span>Higher groups = larger box volume</span>
+        </div>
+      </div>
+    </>)}
+  </div>);}
+
 // ─── WEBSITE PAGES ────────────────────────────────────────────────────────────
 
 // ─── UTILITY COMPONENTS ───────────────────────────────────────────────────────
@@ -1989,7 +2347,7 @@ function Footer({setPage}){
           </div>
           <div>
             <div style={{color:"#fff",fontWeight:"600",fontSize:"13px",marginBottom:"12px",textTransform:"uppercase",letterSpacing:"0.08em"}}>Tool</div>
-            {[["tool","Single SKU Calculator"],["tool","Multi-SKU Planner"],["tool","Shipment Planner"],["tool","Bulk SKU Calculator"]].map(([pg,l])=>(
+            {[["tool","Single SKU Calculator"],["tool","Multi-SKU Planner"],["tool","Shipment Planner"],["tool","Bulk SKU Calculator"],["tool","SKU Grouper"]].map(([pg,l])=>(
               <div key={l} onClick={()=>setPage(pg)} style={{fontSize:"13px",padding:"4px 0",cursor:"pointer",color:"#94a3b8"}}
                 onMouseEnter={e=>e.target.style.color="#34d399"} onMouseLeave={e=>e.target.style.color="#94a3b8"}>{l}</div>))}
           </div>
@@ -2030,6 +2388,7 @@ function HomePage({setPage,onUpgrade}){
     {icon:"🗃️",title:"Multi-SKU Planner",desc:"Pack 2–8 different box sizes together in one container simultaneously. Each SKU gets an allocated region. Respects weight limits, fragile, this-side-up, and stacking constraints.",free:false},
     {icon:"🚚",title:"Shipment Planner",desc:"Enter your total order quantity. Get containers needed, per-container manifest, cost-per-unit comparison across all vehicle types, and a branded PDF loading plan for your warehouse team.",free:false},
     {icon:"🗃️",title:"Bulk SKU Calculator",desc:"Upload an Excel file with hundreds of SKUs. Get maximum quantity per SKU in seconds — constrained by both volume and weight. Download the full results as Excel.",free:"limited"},
+    {icon:"🔀",title:"SKU Grouper",desc:"Upload 10,000+ SKUs and automatically cluster them into 2–8 representative box size groups using K-means. One click sends the groups to the Multi-SKU Planner for full container planning.",free:true},
   ];
   const steps=[
     {n:"01",title:"Select your container",desc:"Choose from Indian vehicles (Tata Ace, 19ft, 32ft SXL, 40ft ISO, and more) or enter custom dimensions. Or select a pallet base size."},
@@ -2492,8 +2851,16 @@ function AboutPage({setPage}){
 // ── Tool page wrapper ──
 function ToolPage({isPro,setIsPro,modalOpen,setModalOpen}){
   const[tab,setTab]=useState("box");
+  const[multiSKUPreset,setMultiSKUPreset]=useState(null);
   const unlock=()=>{setIsPro(true);try{localStorage.setItem("pp_pro","true");}catch(e){}setTimeout(()=>setModalOpen(false),1200);};
-  const tabs=[["box","📦 Single SKU Calculator",false],["multisku","🗃️ Multi-SKU Planner",true],["shipment","🚚 Shipment Planner",true],["sku","🗃️ Bulk SKU Calculator",false]];
+  const tabs=[
+    ["box","📦 Single SKU Calculator",false],
+    ["multisku","🗃️ Multi-SKU Planner",true],
+    ["shipment","🚚 Shipment Planner",true],
+    ["sku","🗃️ Bulk SKU Calculator",false],
+    ["grouper","🔀 SKU Grouper",false],
+  ];
+  const handleSendToMultiSKU=(rows)=>{setMultiSKUPreset(rows);setTab("multisku");};
   return(
     <div>
       <UpgradeModal open={modalOpen} onClose={()=>setModalOpen(false)} onUnlock={unlock}/>
@@ -2501,7 +2868,7 @@ function ToolPage({isPro,setIsPro,modalOpen,setModalOpen}){
       <div style={{background:"linear-gradient(135deg,#0f172a 0%,#0d2b1a 100%)",padding:"20px 32px 0"}}>
         <div style={{maxWidth:"1200px",margin:"0 auto"}}>
           <p style={{color:"#94a3b8",fontSize:"12px",margin:"0 0 14px"}}>
-            Single SKU · Multi-SKU planner · Shipment planner · Bulk SKU calculator
+            Single SKU · Multi-SKU planner · Shipment planner · Bulk SKU calculator · SKU grouper
           </p>
           <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
             {tabs.map(([id,label,pro])=>(
@@ -2518,9 +2885,10 @@ function ToolPage({isPro,setIsPro,modalOpen,setModalOpen}){
       <div style={{background:"#f0fdf4",minHeight:"60vh",padding:"24px 32px 0"}}>
         <div style={{maxWidth:"1200px",margin:"0 auto"}}>
           {tab==="box"&&<BoxPackingTool/>}
-          {tab==="multisku"&&(isPro?<MultiSKUTool/>:<ProGate feature="Multi-SKU Planner" onUpgrade={()=>setModalOpen(true)}/>)}
+          {tab==="multisku"&&(isPro?<MultiSKUTool preset={multiSKUPreset} onPresetUsed={()=>setMultiSKUPreset(null)}/>:<ProGate feature="Multi-SKU Planner" onUpgrade={()=>setModalOpen(true)}/>)}
           {tab==="shipment"&&(isPro?<ShipmentPlanner/>:<ProGate feature="Shipment Planner" onUpgrade={()=>setModalOpen(true)}/>)}
           {tab==="sku"&&<ContainerSkuTool isPro={isPro} onUpgrade={()=>setModalOpen(true)}/>}
+          {tab==="grouper"&&<SKUGrouperTool onSendToMultiSKU={handleSendToMultiSKU}/>}
         </div>
       </div>
     </div>
