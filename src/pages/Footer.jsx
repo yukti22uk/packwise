@@ -1,4 +1,5 @@
 // ─── FOOTER ──────────────────────────────────────────────────────────────────
+import { CONFIG } from '../config.js';
 import PackWiseLogo from '../components/PackWiseLogo.jsx';
 function Footer({setPage}){
   return(
