@@ -14,7 +14,7 @@ import ContainerSelector from '../components/ContainerSelector.jsx';
 import ConstraintsPanel from '../components/ConstraintsPanel.jsx';
 import ThreeViewer from '../components/ThreeViewer.jsx';
 import WAShare from '../components/WAShare.jsx';
-import AIFillButton from '../components/AIFillButton.jsx';
+import TemplateDownload from '../components/TemplateDownload.jsx';
 import { TopView2D, SideView2D, IsoView2D } from '../components/Views2D.jsx';
 function ContainerSkuTool({isPro,onUpgrade}){
   const[cL,setCL]=useState("");const[cW,setCW]=useState("");const[cH,setCH]=useState("");const[cMaxWt,setCMaxWt]=useState("");
@@ -66,17 +66,7 @@ function ContainerSkuTool({isPro,onUpgrade}){
             {rawSkus&&<div style={{marginTop:"6px",fontSize:"12px",color:"#059669",fontWeight:"600"}}>✓ {skuCount.toLocaleString()} SKUs loaded</div>}
             <input id="fi2" type="file" accept=".xlsx,.xls" style={{display:"none"}} onChange={e=>parseFile(e.target.files[0])}/></div>
           <div style={S.noteBox}><strong>Columns:</strong> SKU Name | L | W | H | Weight | Qty</div>
-          <div style={{marginTop:"10px",display:"flex",alignItems:"center",gap:"8px"}}>
-            <span style={{fontSize:"11px",color:"#9ca3af"}}>Non-standard layout?</span>
-            <AIFillButton mode="bulk" label="🤖 AI Detect Columns" onFill={(data)=>{
-              if(data?.columnMap){
-                const m=data.columnMap;
-                setError("");
-                alert(`✓ Column layout detected:\nName: ${m.nameCol||'A'} | L: ${m.lCol||'B'} | W: ${m.wCol||'C'} | H: ${m.hCol||'D'} | Weight: ${m.weightCol||'E'} | Qty: ${m.qtyCol||'F'}\n\nNote: For non-standard columns, re-upload your file after rearranging columns to match the standard order: Name, L, W, H, Weight, Qty.\n\nPro tip: Your column mapping has been logged in the browser console.`);
-                console.log('AI detected column map:', data.columnMap);
-              }
-            }}/>
-          </div></div>
+          <TemplateDownload mode="bulk"/></div>
         <button style={S.btnPrimary} onClick={run}>▶ Calculate Container Fit</button>
         <button style={{...S.btnSecondary,marginTop:"10px"}} onClick={dlT}>⬇ Download Template</button>
       </div>
