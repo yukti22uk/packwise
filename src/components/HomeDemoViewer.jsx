@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { calcMixedDetailed } from '../algorithms/packing.js';
 import { fmtN } from '../algorithms/utils.js';
+import FadeIn from './FadeIn.jsx';
 // ─── INTERACTIVE 3D HOMEPAGE DEMO ────────────────────────────────────────────
 const HOME_PRESETS=[
   {name:"Tata Ace",  box:[300,200,150],container:[2100,1525,1600]},
