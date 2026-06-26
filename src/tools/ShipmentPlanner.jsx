@@ -14,7 +14,7 @@ import ContainerSelector from '../components/ContainerSelector.jsx';
 import ConstraintsPanel from '../components/ConstraintsPanel.jsx';
 import ThreeViewer from '../components/ThreeViewer.jsx';
 import WAShare from '../components/WAShare.jsx';
-import TemplateDownload from '../components/TemplateDownload.jsx';
+import PasteFromExcel from '../components/PasteFromExcel.jsx';
 import { TopView2D, SideView2D, IsoView2D } from '../components/Views2D.jsx';
 function ShipmentPlanner(){
   // ── Shared state ──
@@ -220,7 +220,7 @@ function ShipmentPlanner(){
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px",gap:"8px",flexWrap:"wrap"}}>
           <div style={S.cardTitle}>📦 SKUs to Ship</div>
           <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
-            <TemplateDownload mode="shipment"/>
+            <PasteFromExcel mode="shipment" onFill={(rows)=>{setSkuRows(rows.slice(0,8).map(r=>({...r,qty:r.qty||r.targetQty||''})));nextId.current=rows.length+1;setMultiResult(null);}}/>
             <button onClick={addSkuRow} disabled={skuRows.length>=8}
               style={{padding:"7px 14px",background:"#f0fdf4",border:"1px solid #bbf7d0",
               borderRadius:"8px",fontSize:"13px",fontWeight:"600",color:"#166534",cursor:"pointer",fontFamily:"inherit"}}>
