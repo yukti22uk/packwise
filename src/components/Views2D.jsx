@@ -1,5 +1,6 @@
 // ─── 2D ENGINEERING VIEWS ────────────────────────────────────────────────────
 import { useState, useRef, useEffect } from 'react';
+import { fmtN } from '../algorithms/utils.js';
 const RC={main:{fill:"#93c5fd",stroke:"#1d4ed8",label:"Main Grid"},l1:{fill:"#fdba74",stroke:"#ea580c",label:"Leftover 1 (side)"},
   l2:{fill:"#86efac",stroke:"#16a34a",label:"Leftover 2 (front)"},l3:{fill:"#d8b4fe",stroke:"#7c3aed",label:"Leftover 3 (top)"}};
 function BoxGrid({offX,offY,nx,ny,bW,bH,sc,color,dimLabel}){
