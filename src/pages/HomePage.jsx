@@ -19,6 +19,7 @@ function HomePage({setPage,onUpgrade}){
     {icon:"🚚",title:"Shipment Planner",desc:"Enter your total order quantity. Get containers needed, per-container manifest, cost-per-unit comparison across all vehicle types, and a branded PDF loading plan for your warehouse team.",free:false},
     {icon:"🗃️",title:"Bulk SKU Calculator",desc:"Upload an Excel file with hundreds of SKUs. Get maximum quantity per SKU in seconds — constrained by both volume and weight. Download the full results as Excel.",free:"limited"},
     {icon:"🔀",title:"SKU Grouper",desc:"Upload 10,000+ SKUs and automatically cluster them into 2–8 representative box size groups using K-means. One click sends the groups to the Multi-SKU Planner for full container planning.",free:true},
+    {icon:"📊",title:"Order Analyser",desc:"Upload Master SKU data and Order data in any format. AI maps columns automatically, flags anomalies, and produces a 6-sheet Excel report — ABC analysis, FMS classification, and ABC-FMS matrix.",free:false},
   ];
   const steps=[
     {n:"01",title:"Select your container",desc:"Choose from Indian vehicles (Tata Ace, 19ft, 32ft SXL, 40ft ISO, and more) or enter custom dimensions. Or select a pallet base size."},
@@ -162,7 +163,7 @@ function HomePage({setPage,onUpgrade}){
       <div style={{maxWidth:"1200px",margin:"0 auto",padding:"80px 24px 0"}}>
         <FadeIn style={{textAlign:"center",marginBottom:"48px"}}>
           <div style={{fontSize:"12px",fontWeight:"700",color:"#059669",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"10px"}}>What's inside</div>
-          <h2 style={{fontSize:"36px",fontWeight:"800",color:"#0f172a",margin:"0 0 12px"}}>Four tools. One platform.</h2>
+          <h2 style={{fontSize:"36px",fontWeight:"800",color:"#0f172a",margin:"0 0 12px"}}>Six tools. One platform.</h2>
           <p style={{fontSize:"16px",color:"#64748b",maxWidth:"480px",margin:"0 auto"}}>Start free with single-container packing. Upgrade when you're ready to plan full shipments.</p>
         </FadeIn>
         <FadeIn className="rg-2e stagger">
