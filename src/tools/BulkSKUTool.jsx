@@ -14,7 +14,7 @@ import ContainerSelector from '../components/ContainerSelector.jsx';
 import ConstraintsPanel from '../components/ConstraintsPanel.jsx';
 import ThreeViewer from '../components/ThreeViewer.jsx';
 import WAShare from '../components/WAShare.jsx';
-import TemplateDownload from '../components/TemplateDownload.jsx';
+import PasteFromExcel from '../components/PasteFromExcel.jsx';
 import { TopView2D, SideView2D, IsoView2D } from '../components/Views2D.jsx';
 function ContainerSkuTool({isPro,onUpgrade}){
   const[cL,setCL]=useState("");const[cW,setCW]=useState("");const[cH,setCH]=useState("");const[cMaxWt,setCMaxWt]=useState("");
@@ -66,7 +66,7 @@ function ContainerSkuTool({isPro,onUpgrade}){
             {rawSkus&&<div style={{marginTop:"6px",fontSize:"12px",color:"#059669",fontWeight:"600"}}>✓ {skuCount.toLocaleString()} SKUs loaded</div>}
             <input id="fi2" type="file" accept=".xlsx,.xls" style={{display:"none"}} onChange={e=>parseFile(e.target.files[0])}/></div>
           <div style={S.noteBox}><strong>Columns:</strong> SKU Name | L | W | H | Weight | Qty</div>
-          <TemplateDownload mode="bulk"/></div>
+          <PasteFromExcel mode="bulk" onFill={(rows)=>{setRawSkus(rows.map(r=>({name:r.name,sl:parseFloat(r.L)||0,sw:parseFloat(r.W)||0,sh:parseFloat(r.H)||0,swt:parseFloat(r.weight)||0,qtyAvail:parseFloat(r.qty)||0})));setSkuCount(rows.length);}}/></div>
         <button style={S.btnPrimary} onClick={run}>▶ Calculate Container Fit</button>
         <button style={{...S.btnSecondary,marginTop:"10px"}} onClick={dlT}>⬇ Download Template</button>
       </div>
