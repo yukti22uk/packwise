@@ -1,6 +1,7 @@
 // ─── CONTAINER SELECTOR ──────────────────────────────────────────────────────
 import { useState, useRef, useEffect } from 'react';
 import { PALLET_BASES, VEHICLES, VEHICLES_WITH_CUSTOM } from '../data/presets.js';
+import { S } from './styles.jsx';
 function ContainerSelector({onChange,showWeight,vehicleOnly}){
   const[type,setType]=useState("vehicle");
   const[palletIdx,setPalletIdx]=useState(0);const[palletH,setPalletH]=useState("");
