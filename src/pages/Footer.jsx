@@ -18,7 +18,7 @@ function Footer({setPage}){
           </div>
           <div>
             <div style={{color:"#fff",fontWeight:"600",fontSize:"13px",marginBottom:"12px",textTransform:"uppercase",letterSpacing:"0.08em"}}>Tool</div>
-            {[["tool","Single SKU Calculator"],["tool","Multi-SKU Planner"],["tool","Shipment Planner"],["tool","Bulk SKU Calculator"],["tool","SKU Grouper"]].map(([pg,l])=>(
+            {[["tool","Single SKU Calculator"],["tool","Multi-SKU Planner"],["tool","Shipment Planner"],["tool","Bulk SKU Calculator"],["tool","SKU Grouper"],["tool","Order Analyser"]].map(([pg,l])=>(
               <div key={l} onClick={()=>setPage(pg)} style={{fontSize:"13px",padding:"4px 0",cursor:"pointer",color:"#94a3b8"}}
                 onMouseEnter={e=>e.target.style.color="#34d399"} onMouseLeave={e=>e.target.style.color="#94a3b8"}>{l}</div>))}
           </div>
