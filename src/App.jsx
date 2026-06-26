@@ -41,26 +41,6 @@ class ErrorBoundary extends Component {
   }
 }
 
-// ── Algorithm Disclaimer Banner ───────────────────────────────────────────────
-function DisclaimerBar(){
-  const[hidden,setHidden]=useState(false);
-  useEffect(()=>{try{if(localStorage.getItem('pw_disc'))setHidden(true);}catch(e){}}, []);
-  if(hidden) return null;
-  return(
-    <div style={{background:'#fffbeb',borderBottom:'1px solid #fde68a',
-      padding:'8px 24px',display:'flex',justifyContent:'space-between',
-      alignItems:'center',gap:'12px',fontSize:'12px',color:'#92400e'}}>
-      <span>
-        ⚠️ <strong>Results are estimates</strong> based on rectangular packing.
-        Actual loading may vary. Verify dimensions and weight limits before dispatch.
-      </span>
-      <button onClick={()=>{setHidden(true);try{localStorage.setItem('pw_disc','1');}catch(e){}}}
-        style={{background:'none',border:'none',cursor:'pointer',color:'#92400e',
-        fontWeight:'700',fontSize:'16px',lineHeight:1,flexShrink:0}}>✕</button>
-    </div>
-  );
-}
-
 // ── Analytics (privacy-friendly, no cookies) ──────────────────────────────────
 function trackEvent(name, props={}){
   // Uses Plausible if installed, otherwise console (dev mode)
@@ -99,7 +79,6 @@ export default function App(){
       background:'#f0fdf4',minHeight:'100vh'}}>
       <Nav page={page} setPage={setPage} isPro={isPro}
         onUpgrade={openUpgrade} onLogout={logout}/>
-      <DisclaimerBar/>
       <main>
         <ErrorBoundary key={page}>
           <div className="page-enter">
