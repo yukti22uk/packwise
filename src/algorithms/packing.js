@@ -1,4 +1,5 @@
 // ─── CORE PACKING ALGORITHMS ─────────────────────────────────────────────────
+import { fmtN } from './utils.js';
 function getPerms(sl,sw,sh,lockHeight){
   if(lockHeight) return [[sl,sw,sh],[sw,sl,sh]];
   return [[sl,sw,sh],[sl,sh,sw],[sw,sl,sh],[sw,sh,sl],[sh,sl,sw],[sh,sw,sl]];
