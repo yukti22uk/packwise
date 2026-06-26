@@ -1,5 +1,6 @@
 // ─── PRO GATE ────────────────────────────────────────────────────────────────
 import { useState, useRef, useEffect } from 'react';
+import { S } from './styles.jsx';
 function ProGate({onUpgrade,feature}){
   return(
     <div style={{...S.card,textAlign:"center",padding:"48px 32px",
