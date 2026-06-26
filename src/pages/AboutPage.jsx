@@ -1,4 +1,5 @@
 // ─── ABOUT PAGE ──────────────────────────────────────────────────────────────
+import { CONFIG } from '../config.js';
 function AboutPage({setPage}){
   return(
     <div style={{maxWidth:"900px",margin:"0 auto",padding:"72px 32px 0"}}>
