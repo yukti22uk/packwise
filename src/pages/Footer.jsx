@@ -1,6 +1,6 @@
 // ─── FOOTER ──────────────────────────────────────────────────────────────────
 import { CONFIG } from '../config.js';
-import PackWiseLogo from '../components/PackWiseLogo.jsx';
+import DensiCubeLogo from '../components/DensiCubeLogo.jsx';
 function Footer({setPage,onToolSelect}){
   const goToTool=(tab)=>{if(onToolSelect)onToolSelect(tab);else setPage("tool");};
   return(
@@ -9,8 +9,8 @@ function Footer({setPage,onToolSelect}){
         <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr",gap:"40px",marginBottom:"40px"}}>
           <div>
             <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"12px"}}>
-              <PackWiseLogo size={32}/>
-              <div style={{fontWeight:"900",fontSize:"17px",color:"#fff",letterSpacing:"-0.02em"}}>PackWise</div>
+              <DensiCubeLogo size={32}/>
+              <div style={{fontWeight:"900",fontSize:"17px",color:"#fff",letterSpacing:"-0.02em"}}>DensiCube</div>
             </div>
             <p style={{fontSize:"13px",lineHeight:"1.7",maxWidth:"260px"}}>
               India's smart container loading calculator. Built for exporters, logistics teams,
@@ -39,7 +39,7 @@ function Footer({setPage,onToolSelect}){
         </div>
         <div style={{borderTop:"1px solid #1e293b",paddingTop:"24px",display:"flex",
           justifyContent:"space-between",alignItems:"center",fontSize:"12px",flexWrap:"wrap",gap:"12px"}}>
-          <div>© {new Date().getFullYear()} PackWise. Built for Indian exporters and logistics teams.</div>
+          <div>© {new Date().getFullYear()} DensiCube. Built for Indian exporters and logistics teams.</div>
           <div style={{color:"#64748b"}}>Results are estimates. Verify before dispatch.</div>
         </div>
       </div>
