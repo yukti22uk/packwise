@@ -146,7 +146,7 @@ function parseOrderData(text, masterMap) {
 }
 
 // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
-function exportReport(mAnom, analysis, "") {
+function exportReport(mAnom, analysis) {
   const wb = XLSX.utils.book_new();
   const { anomalies, orderSummary, skuSummary, abcData, fmsData, matrix } = analysis;
   const today = new Date().toLocaleDateString();
@@ -546,7 +546,7 @@ export default function OrderAnalyserTool() {
               </table>
             </div>
 
-            <button onClick={() => exportReport(mAnom, analysis, "")}
+            <button onClick={() => exportReport(mAnom, analysis)}
               style={{ ...S.btnPrimary, background:'linear-gradient(135deg,#be185d,#9d174d)' }}>
               ⬇ Download 6-Sheet Excel Report
             </button>
