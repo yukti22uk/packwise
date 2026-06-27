@@ -6,7 +6,7 @@ export default function TemplateDownload({ mode = 'multisku' }) {
   const templates = {
     multisku: {
       label: '⬇ Download SKU Template',
-      filename: 'PackWise_MultiSKU_Template.xlsx',
+      filename: 'DensiCube_MultiSKU_Template.xlsx',
       headers: ['SKU Name', 'Length (mm)', 'Width (mm)', 'Height (mm)', 'Weight per Box (kg)', 'Target Qty'],
       examples: [
         ['Product A', 300, 200, 150, 2.5, 1000],
@@ -17,7 +17,7 @@ export default function TemplateDownload({ mode = 'multisku' }) {
     },
     shipment: {
       label: '⬇ Download Shipment Template',
-      filename: 'PackWise_Shipment_Template.xlsx',
+      filename: 'DensiCube_Shipment_Template.xlsx',
       headers: ['SKU Name', 'Length (mm)', 'Width (mm)', 'Height (mm)', 'Weight per Box (kg)', 'Qty to Ship'],
       examples: [
         ['Ceramic Tile Box', 400, 300, 200, 6.0, 5000],
@@ -28,7 +28,7 @@ export default function TemplateDownload({ mode = 'multisku' }) {
     },
     bulk: {
       label: '⬇ Download Bulk SKU Template',
-      filename: 'PackWise_BulkSKU_Template.xlsx',
+      filename: 'DensiCube_BulkSKU_Template.xlsx',
       headers: ['SKU Name', 'Length (mm)', 'Width (mm)', 'Height (mm)', 'Weight per Box (kg)', 'Available Qty'],
       examples: [
         ['SKU-001', 300, 200, 150, 2.5, 1000],
@@ -46,7 +46,7 @@ export default function TemplateDownload({ mode = 'multisku' }) {
   const download = () => {
     const wb = XLSX.utils.book_new();
     const data = [
-      ['PackWise — ' + t.filename.replace('PackWise_','').replace('_Template.xlsx','').replace(/_/g,' ')],
+      ['DensiCube — ' + t.filename.replace('DensiCube_','').replace('_Template.xlsx','').replace(/_/g,' ')],
       [''],
       ['Instructions: Fill in your data below. Do not change column headers. All dimensions in mm.'],
       [''],
