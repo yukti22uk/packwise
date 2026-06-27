@@ -84,7 +84,16 @@ const WELCOME = {
 export default function PackWiseBot({ onNavigate }) {
   const [open,     setOpen]    = useState(false);
   const [messages, setMessages]= useState([WELCOME]);
-  const [phase,    setPhase]   = useState('problems'); // 'problems' | 'done'
+  const [phase,    setPhase]   = useState('problems');
+
+  // Auto-open on first visit, then remember preference
+  useEffect(() => {
+    const seen = localStorage.getItem('pw_bot_seen');
+    if (!seen) {
+      setTimeout(() => setOpen(true), 1200);
+      localStorage.setItem('pw_bot_seen', '1');
+    }
+  }, []); // 'problems' | 'done'
   const bottomRef = useRef(null);
 
   useEffect(() => {
