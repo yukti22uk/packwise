@@ -1,6 +1,6 @@
 // ─── NAV ─────────────────────────────────────────────────────────────────────
 import { useState, useRef, useEffect } from 'react';
-import PackWiseLogo from '../components/PackWiseLogo.jsx';
+import DensiCubeLogo from '../components/DensiCubeLogo.jsx';
 function Nav({page,setPage,isPro,onUpgrade,onLogout}){
   const[menuOpen,setMenuOpen]=useState(false);
   const links=[["home","Home"],["tool","Calculator"],["pricing","Pricing"],["about","About"]];
@@ -12,10 +12,10 @@ function Nav({page,setPage,isPro,onUpgrade,onLogout}){
       <div style={{maxWidth:"1200px",margin:"0 auto",padding:"0 24px",
         display:"flex",alignItems:"center",justifyContent:"space-between",height:"60px"}}>
         <div onClick={()=>go("home")} style={{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer",flexShrink:0}}>
-          <PackWiseLogo size={36}/>
+          <DensiCubeLogo size={36}/>
           <div>
-            <div style={{fontWeight:"900",fontSize:"17px",color:"#111827",lineHeight:1,letterSpacing:"-0.02em"}}>PackWise</div>
-            <div style={{fontSize:"10px",color:"#6b7280",letterSpacing:"0.08em",fontWeight:"600"}}>PACKING INTELLIGENCE</div>
+            <div style={{fontWeight:"900",fontSize:"17px",color:"#111827",lineHeight:1,letterSpacing:"-0.02em"}}>DensiCube</div>
+            <div style={{fontSize:"10px",color:"#6b7280",letterSpacing:"0.08em",fontWeight:"600"}}>CONTAINER INTELLIGENCE</div>
           </div>
         </div>
         <div className="nav-desktop">
