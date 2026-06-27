@@ -89,7 +89,7 @@ export default function App(){
       <main>
         <ErrorBoundary key={page}>
           <div className="page-enter">
-            {page==='home'    && <HomePage    setPage={setPage} onUpgrade={openUpgrade}/>}
+            {page==='home'    && <HomePage    setPage={setPage} onUpgrade={openUpgrade} onToolSelect={handleBotNavigate}/>}
             {page==='tool'    && <ToolPage    isPro={isPro} setIsPro={setIsPro}
                                    modalOpen={modalOpen} setModalOpen={setModalOpen}
                                    initialTab={botTab} onTabMounted={()=>setBotTab(null)}/>}
@@ -98,7 +98,7 @@ export default function App(){
           </div>
         </ErrorBoundary>
       </main>
-      <Footer setPage={setPage}/>
+      <Footer setPage={setPage} onToolSelect={handleBotNavigate}/>
       <PackWiseBot onNavigate={handleBotNavigate}/>
     </div>
   );
