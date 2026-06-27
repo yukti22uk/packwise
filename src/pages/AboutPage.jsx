@@ -10,7 +10,7 @@ function AboutPage({setPage}){
           Built because loading a truck shouldn't need a logistics degree
         </h1>
         <p style={{fontSize:"18px",color:"#475569",lineHeight:"1.8",marginBottom:"16px"}}>
-          PackWise was built out of a simple frustration: India has millions of exporters,
+          DensiCube was built out of a simple frustration: India has millions of exporters,
           warehouse managers, and freight teams — and most of them are still figuring out
           container loading with a tape measure and a spreadsheet.
         </p>
@@ -38,9 +38,9 @@ function AboutPage({setPage}){
         <h2 style={{fontSize:"32px",fontWeight:"800",color:"#0f172a",margin:"0 0 32px"}}>The problems we solve</h2>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"24px"}}>
           {[
-            {icon:"📐",title:"Space waste",desc:"Manual planning wastes 15–25% of container space on average. PackWise finds the optimal box orientation across all 6 rotations and fills leftover gaps automatically."},
-            {icon:"💸",title:"Unnecessary freight cost",desc:"Booking an extra container because you can't calculate exactly how many fit is expensive. PackWise tells you before the truck arrives."},
-            {icon:"⚖️",title:"Ignored constraints",desc:"Fragile items, weight limits, this-side-up labels — these get ignored in manual planning. PackWise enforces them in the calculation."},
+            {icon:"📐",title:"Space waste",desc:"Manual planning wastes 15–25% of container space on average. DensiCube finds the optimal box orientation across all 6 rotations and fills leftover gaps automatically."},
+            {icon:"💸",title:"Unnecessary freight cost",desc:"Booking an extra container because you can't calculate exactly how many fit is expensive. DensiCube tells you before the truck arrives."},
+            {icon:"⚖️",title:"Ignored constraints",desc:"Fragile items, weight limits, this-side-up labels — these get ignored in manual planning. DensiCube enforces them in the calculation."},
             {icon:"📋",title:"No loading instructions",desc:"Even with good planning, warehouse staff load by eye. A printed PDF loading plan cuts errors and loading time significantly."},
             {icon:"🚛",title:"Wrong vehicle choice",desc:"Is a 32ft SXL or two 22ft trucks cheaper for your order? The cost comparison tool answers this immediately."},
             {icon:"📊",title:"SKU-level blindness",desc:"Businesses with hundreds of SKUs don't know which products are most space-efficient. The Bulk SKU Calculator reveals this across your whole catalog."},
@@ -61,7 +61,7 @@ function AboutPage({setPage}){
         <h2 style={{fontSize:"24px",fontWeight:"800",color:"#fff",margin:"0 0 16px"}}>🇮🇳 Built for India</h2>
         <p style={{fontSize:"15px",color:"#94a3b8",lineHeight:"1.8",marginBottom:"20px"}}>
           India's logistics cost runs at 14–18% of GDP — almost double the global benchmark.
-          Part of that gap is inefficient loading. PackWise is designed specifically for the
+          Part of that gap is inefficient loading. DensiCube is designed specifically for the
           Indian market, with:
         </p>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>
@@ -81,7 +81,7 @@ function AboutPage({setPage}){
       <div style={{marginBottom:"64px"}}>
         <h2 style={{fontSize:"28px",fontWeight:"800",color:"#0f172a",margin:"0 0 16px"}}>How the algorithm works</h2>
         <p style={{fontSize:"15px",color:"#475569",lineHeight:"1.8",marginBottom:"12px"}}>
-          PackWise uses a <strong>mixed-orientation guillotine heuristic</strong> — a practical
+          DensiCube uses a <strong>mixed-orientation guillotine heuristic</strong> — a practical
           algorithm proven in logistics software. It tries all 6 possible box orientations
           for the main grid, then fills the three leftover regions (side gap, front gap, top gap)
           with the best-fit orientation for each.
@@ -94,7 +94,7 @@ function AboutPage({setPage}){
         </p>
         <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"10px",padding:"16px 20px",fontSize:"13px",color:"#92400e",lineHeight:"1.7"}}>
           <strong>Honest note:</strong> Container loading is an NP-hard problem — no algorithm
-          finds the perfect answer every time. PackWise gives a very good practical solution
+          finds the perfect answer every time. DensiCube gives a very good practical solution
           that consistently beats manual planning. Treat the output as a strong plan, not an
           absolute guarantee. Verify dimensions before dispatch.
         </div>
