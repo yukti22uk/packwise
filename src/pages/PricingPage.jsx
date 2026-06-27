@@ -2,7 +2,19 @@
 import { CONFIG } from '../config.js';
 function PricingPage({onUpgrade,setPage}){
   const freeFeat=["Single SKU Calculator — unlimited","3D model + 2D engineering views","Weight & stacking constraints","All vehicle & pallet presets","Bulk SKU Calculator (up to 10 SKUs)"];
-  const proFeat=["Everything in Free","🗃️ Multi-SKU Planner — 2 to 8 SKUs per container","🚚 Shipment Planner — multi-container","💰 Cost comparison across vehicles","📄 Branded PDF loading plan export","Unlimited Bulk SKU upload","Priority email support"];
+  const proFeat=[
+    "Everything in Free",
+    "🗃️ Multi-SKU Planner — pack 2–8 different box sizes in one container",
+    "🚚 Shipment Planner — plan full shipments across multiple trucks",
+    "💰 Cost comparison across all vehicle types",
+    "📋 Per-container manifest for every truck in your shipment",
+    "📄 Branded PDF loading plan export for your warehouse team",
+    "📊 Order Analyser — ABC analysis, FMS classification & ABC-FMS matrix",
+    "📊 Anomaly detection — missing dimensions, zero qty, duplicate SKUs",
+    "📊 6-sheet Excel report ready to share with your supply chain team",
+    "Unlimited Bulk SKU upload (free plan limited to 10 SKUs)",
+    "Priority email support",
+  ];
   return(
     <div style={{maxWidth:"1000px",margin:"0 auto",padding:"72px 32px 0"}}>
       <div style={{textAlign:"center",marginBottom:"56px"}}>
