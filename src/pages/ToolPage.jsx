@@ -8,9 +8,13 @@ import MultiSKUTool from '../tools/MultiSKUTool.jsx';
 import ContainerSkuTool from '../tools/BulkSKUTool.jsx';
 import SKUGrouperTool from '../tools/SKUGrouperTool.jsx';
 import OrderAnalyserTool from '../tools/OrderAnalyserTool.jsx';
-function ToolPage({isPro,setIsPro,modalOpen,setModalOpen}){
-  const[tab,setTab]=useState("box");
+function ToolPage({isPro,setIsPro,modalOpen,setModalOpen,initialTab,onTabMounted}){
+  const[tab,setTab]=useState(initialTab||"box");
   const[multiSKUPreset,setMultiSKUPreset]=useState(null);
+
+  useEffect(()=>{
+    if(initialTab){setTab(initialTab);if(onTabMounted)onTabMounted();}
+  },[initialTab]);
   const unlock=()=>{setIsPro(true);try{localStorage.setItem("pp_pro","true");}catch(e){}setTimeout(()=>setModalOpen(false),1200);};
   const tabs=[
     ["box","📦 Single SKU Calculator",false],
