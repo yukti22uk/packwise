@@ -5,7 +5,6 @@
 import { useState } from 'react';
 import * as XLSX from 'xlsx';
 import { S } from '../components/styles.jsx';
-import { CONFIG } from '../config.js';
 
 // ─── PARSE PASTED TSV ────────────────────────────────────────────────────────
 function parseTSV(text) {
@@ -147,7 +146,7 @@ function parseOrderData(text, masterMap) {
 }
 
 // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
-function exportReport(mAnom, analysis, narrative) {
+function exportReport(mAnom, analysis, "") {
   const wb = XLSX.utils.book_new();
   const { anomalies, orderSummary, skuSummary, abcData, fmsData, matrix } = analysis;
   const today = new Date().toLocaleDateString();
@@ -159,7 +158,7 @@ function exportReport(mAnom, analysis, narrative) {
   const allAnom = [...mAnom.map(a=>({...a,src:'Master'})), ...anomalies.map(a=>({...a,src:'Order'}))];
 
   XLSX.utils.book_append_sheet(wb, ws([
-    ['PACKWISE — DATA ANOMALY REPORT'], ['Generated:', today], ['Total issues:', allAnom.length], [],
+    ['DENSICUBE — DATA ANOMALY REPORT'], ['Generated:', today], ['Total issues:', allAnom.length], [],
     ['Source','Row','SKU','Field','Issue','Severity'],
     ...(allAnom.length ? allAnom.map(a=>[a.src,a.row,a.sku,a.field,a.issue,a.sev]) : [['—','—','—','—','No issues found','—']]),
     [], ['SUMMARY'],
@@ -226,10 +225,9 @@ function exportReport(mAnom, analysis, narrative) {
     ['C-Fast','Many small orders — review minimum order quantities'],
     ['C-Slow','Candidates for rationalisation or consolidation'],
   ];
-  if (narrative) matRows.push([], ['AI EXECUTIVE SUMMARY'], [narrative]);
   XLSX.utils.book_append_sheet(wb, ws(matRows, [16,35,35,35]), '6. ABC-FMS Matrix');
 
-  XLSX.writeFile(wb, `PackWise_Analysis_${today.replace(/\//g,'-')}.xlsx`);
+  XLSX.writeFile(wb, `DensiCube_Analysis_${today.replace(/\//g,'-')}.xlsx`);
 }
 
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
@@ -243,9 +241,7 @@ export default function OrderAnalyserTool() {
 
   const [oText,     setOText]    = useState('');
   const [analysis,  setAnalysis] = useState(null);
-  const [narrative, setNarrative]= useState('');
   const [oError,    setOError]   = useState('');
-  const [narLoading,setNarLoading]=useState(false);
 
   // ── Step 1: Process master SKU ─────────────────────────────────────────────
   const processMaster = () => {
@@ -274,37 +270,6 @@ export default function OrderAnalyserTool() {
     setAnalysis(result);
   };
 
-  // ── AI narrative (optional) ────────────────────────────────────────────────
-  const getNarrative = async () => {
-    if (!analysis || !CONFIG.anthropicKey || CONFIG.anthropicKey.includes('YOUR-KEY')) {
-      setNarrative('Add your Anthropic API key in config.js to enable AI summaries.');
-      return;
-    }
-    setNarLoading(true);
-    try {
-      const { orderSummary, skuSummary, abcData, fmsData } = analysis;
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': CONFIG.anthropicKey,
-          'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 500,
-          messages: [{ role: 'user', content:
-            `Write a 3-paragraph executive summary for a logistics manager:
-- Total lines: ${orderSummary.reduce((s,r)=>s+r.lines,0).toLocaleString()}
-- Total qty: ${orderSummary.reduce((s,r)=>s+r.totalQty,0).toLocaleString()}
-- Order types: ${orderSummary.map(r=>`${r.orderType} (${r.lines} lines)`).join(', ')}
-- Distinct SKUs: ${skuSummary.length}
-- ABC-A SKUs: ${abcData.filter(r=>r.abc==='A').length} (top 70% of volume)
-- Fast-moving SKUs: ${fmsData.filter(r=>r.fms==='Fast').length}
-- Anomalies: ${[...mAnom,...analysis.anomalies].length}
-- Top 5 by volume: ${abcData.slice(0,5).map(r=>r.sku).join(', ')}
-Plain business English. Packing/shipping priorities and 2-3 recommendations. Under 200 words.` }] }),
-      });
-      const d = await r.json();
-      setNarrative(d.content?.[0]?.text || '');
-    } catch { setNarrative('Could not generate summary. Check your API key.'); }
-    setNarLoading(false);
-  };
 
   // ── Shared helpers ─────────────────────────────────────────────────────────
   const sev = s => <span style={{ background:s==='High'?'#fee2e2':'#fef9c3',
@@ -581,24 +546,7 @@ Plain business English. Packing/shipping priorities and 2-3 recommendations. Und
               </table>
             </div>
 
-            {/* AI narrative */}
-            {!narrative && (
-              <button onClick={getNarrative} disabled={narLoading}
-                style={{ ...S.btnSecondary, width:'100%', marginBottom:'12px',
-                  background:narLoading?'#f1f5f9':'#f5f3ff',
-                  color:narLoading?'#9ca3af':'#6d28d9', border:'1px solid #ddd6fe' }}>
-                {narLoading ? '⏳ Generating...' : '🤖 Generate AI Executive Summary (optional)'}
-              </button>
-            )}
-            {narrative && (
-              <div style={{ background:'#f5f3ff', border:'1px solid #ddd6fe', borderRadius:'8px',
-                padding:'14px', marginBottom:'12px', fontSize:'13px', color:'#374151', lineHeight:'1.7' }}>
-                <div style={{ fontWeight:'700', color:'#6d28d9', marginBottom:'6px' }}>🤖 Executive Summary</div>
-                {narrative}
-              </div>
-            )}
-
-            <button onClick={() => exportReport(mAnom, analysis, narrative)}
+            <button onClick={() => exportReport(mAnom, analysis, "")}
               style={{ ...S.btnPrimary, background:'linear-gradient(135deg,#be185d,#9d174d)' }}>
               ⬇ Download 6-Sheet Excel Report
             </button>
