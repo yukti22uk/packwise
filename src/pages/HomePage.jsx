@@ -6,7 +6,8 @@ import CountUp from '../components/CountUp.jsx';
 import PackWiseLogo from '../components/PackWiseLogo.jsx';
 import BoxLoadingAnim, { ANIM_TOTAL } from '../components/BoxLoadingAnim.jsx';
 import HomeDemoViewer from '../components/HomeDemoViewer.jsx';
-function HomePage({setPage,onUpgrade}){
+function HomePage({setPage,onUpgrade,onToolSelect}){
+  const goToTool=(tab)=>{if(onToolSelect)onToolSelect(tab);else setPage("tool");};
   const stats=[
     {v:"75%",l:"of logistics firms still\nuse manual spreadsheets"},
     {v:"15–25%",l:"space wasted with\nmanual planning"},
@@ -14,12 +15,12 @@ function HomePage({setPage,onUpgrade}){
     {v:"< 5%",l:"of Indian supply chains\nare digitized"},
   ];
   const features=[
-    {icon:"📦",title:"Single SKU Calculator",desc:"Enter one box size and a container. Instantly see the maximum quantity in the best orientation, with a rotatable 3D model and full 2D engineering views — top, side, and isometric.",free:true},
-    {icon:"🗃️",title:"Multi-SKU Planner",desc:"Pack 2–8 different box sizes together in one container simultaneously. Each SKU gets an allocated region. Respects weight limits, fragile, this-side-up, and stacking constraints.",free:false},
-    {icon:"🚚",title:"Shipment Planner",desc:"Enter your total order quantity. Get containers needed, per-container manifest, cost-per-unit comparison across all vehicle types, and a branded PDF loading plan for your warehouse team.",free:false},
-    {icon:"🗃️",title:"Bulk SKU Calculator",desc:"Upload an Excel file with hundreds of SKUs. Get maximum quantity per SKU in seconds — constrained by both volume and weight. Download the full results as Excel.",free:"limited"},
-    {icon:"🔀",title:"SKU Grouper",desc:"Upload 10,000+ SKUs and automatically cluster them into 2–8 representative box size groups using K-means. One click sends the groups to the Multi-SKU Planner for full container planning.",free:true},
-    {icon:"📊",title:"Order Analyser",desc:"Upload Master SKU data and Order data in any format. AI maps columns automatically, flags anomalies, and produces a 6-sheet Excel report — ABC analysis, FMS classification, and ABC-FMS matrix.",free:false},
+    {icon:"📦",title:"Single SKU Calculator",tab:"box",desc:"Enter one box size and a container. Instantly see the maximum quantity in the best orientation, with a rotatable 3D model and full 2D engineering views — top, side, and isometric.",free:true},
+    {icon:"🗃️",title:"Multi-SKU Planner",tab:"multisku",desc:"Pack 2–8 different box sizes together in one container simultaneously. Each SKU gets an allocated region. Respects weight limits, fragile, this-side-up, and stacking constraints.",free:false},
+    {icon:"🚚",title:"Shipment Planner",tab:"shipment",desc:"Enter your total order quantity. Get containers needed, per-container manifest, cost-per-unit comparison across all vehicle types, and a branded PDF loading plan for your warehouse team.",free:false},
+    {icon:"🗃️",title:"Bulk SKU Calculator",tab:"sku",desc:"Upload an Excel file with hundreds of SKUs. Get maximum quantity per SKU in seconds — constrained by both volume and weight. Download the full results as Excel.",free:"limited"},
+    {icon:"🔀",title:"SKU Grouper",tab:"grouper",desc:"Upload 10,000+ SKUs and automatically cluster them into 2–8 representative box size groups using K-means. One click sends the groups to the Multi-SKU Planner for full container planning.",free:true},
+    {icon:"📊",title:"Order Analyser",tab:"analyser",desc:"Upload Master SKU data and Order data in any format. AI maps columns automatically, flags anomalies, and produces a 6-sheet Excel report — ABC analysis, FMS classification, and ABC-FMS matrix.",free:false},
   ];
   const steps=[
     {n:"01",title:"Select your container",desc:"Choose from Indian vehicles (Tata Ace, 19ft, 32ft SXL, 40ft ISO, and more) or enter custom dimensions. Or select a pallet base size."},
@@ -60,7 +61,7 @@ function HomePage({setPage,onUpgrade}){
                 can follow — in seconds, not hours.
               </p>
               <div className="hero-btns" style={{display:"flex",gap:"12px",flexWrap:"wrap"}}>
-                <button onClick={()=>setPage("tool")} className="btn-primary"
+                <button onClick={()=>goToTool("box")} className="btn-primary"
                   style={{padding:"14px 28px",background:"linear-gradient(135deg,#be185d,#9d174d)",
                   color:"#fff",border:"none",borderRadius:"10px",fontSize:"15px",fontWeight:"700",
                   cursor:"pointer",boxShadow:"0 4px 24px rgba(190,24,93,0.4)",fontFamily:"inherit"}}>
@@ -179,7 +180,7 @@ function HomePage({setPage,onUpgrade}){
               <div style={{fontSize:"32px",marginBottom:"12px"}}>{f.icon}</div>
               <h3 style={{fontSize:"18px",fontWeight:"700",color:"#0f172a",margin:"0 0 8px"}}>{f.title}</h3>
               <p style={{fontSize:"14px",color:"#64748b",lineHeight:"1.7",margin:0}}>{f.desc}</p>
-              <button onClick={()=>setPage("tool")} className="btn-primary" style={{marginTop:"16px",padding:"8px 16px",
+              <button onClick={()=>goToTool(f.tab)} className="btn-primary" style={{marginTop:"16px",padding:"8px 16px",
                 background:f.free===false?"linear-gradient(135deg,#059669,#047857)":"#f8fafc",
                 color:f.free===false?"#fff":"#059669",border:`1px solid ${f.free===false?"transparent":"#059669"}`,
                 borderRadius:"8px",fontSize:"13px",fontWeight:"600",cursor:"pointer"}}>
@@ -207,7 +208,7 @@ function HomePage({setPage,onUpgrade}){
             ))}
           </FadeIn>
           <div style={{textAlign:"center",marginTop:"48px"}}>
-            <button onClick={()=>setPage("tool")} className="btn-primary" style={{padding:"14px 32px",
+            <button onClick={()=>goToTool("box")} className="btn-primary" style={{padding:"14px 32px",
               background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",
               borderRadius:"10px",fontSize:"15px",fontWeight:"700",cursor:"pointer",
               boxShadow:"0 4px 20px rgba(5,150,105,0.4)"}}>
@@ -271,7 +272,7 @@ function HomePage({setPage,onUpgrade}){
             <h2 style={{fontSize:"36px",fontWeight:"900",color:"#fff",margin:"0 0 16px"}}>Start packing smarter today</h2>
             <p style={{fontSize:"16px",color:"#94a3b8",margin:"0 0 32px"}}>Free forever for single-container packing. No sign-up, no software to install.</p>
             <div style={{display:"flex",gap:"14px",justifyContent:"center",flexWrap:"wrap"}}>
-              <button onClick={()=>setPage("tool")} style={{padding:"14px 32px",
+              <button onClick={()=>goToTool("box")} style={{padding:"14px 32px",
                 background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",
                 borderRadius:"10px",fontSize:"16px",fontWeight:"700",cursor:"pointer",
                 boxShadow:"0 4px 20px rgba(5,150,105,0.4)"}}>
