@@ -14,6 +14,7 @@ import ContainerSelector from '../components/ContainerSelector.jsx';
 import ConstraintsPanel from '../components/ConstraintsPanel.jsx';
 import ThreeViewer from '../components/ThreeViewer.jsx';
 import WAShare from '../components/WAShare.jsx';
+import PasteFromExcel from '../components/PasteFromExcel.jsx';
 import { TopView2D, SideView2D, IsoView2D } from '../components/Views2D.jsx';
 function SKUGrouperTool({onSendToMultiSKU}){
   const[rawSkus,setRawSkus]=useState(null);
@@ -112,32 +113,43 @@ function SKUGrouperTool({onSendToMultiSKU}){
       Multi-SKU Planner or Shipment Planner for full container planning.
     </div>
 
-    {/* Upload area */}
+    {/* Upload / Paste area */}
     <div style={S.card}>
-      <div style={S.cardTitle}>📂 Upload SKU List</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px",flexWrap:"wrap",gap:"8px"}}>
+        <div style={S.cardTitle}>📂 SKU Data</div>
+        <PasteFromExcel mode="bulk" onFill={(rows)=>{
+          const skus=rows.map(r=>({
+            name:r.name||`SKU ${r.id}`,
+            L:parseFloat(r.L)||0,W:parseFloat(r.W)||0,H:parseFloat(r.H)||0,
+            weight:parseFloat(r.weight)||0,qty:parseInt(r.qty)||1,
+          })).filter(s=>s.L>0&&s.W>0&&s.H>0);
+          if(skus.length){setRawSkus(skus);setFileName(`${skus.length} SKUs pasted`);setGroups(null);setSent(false);setError("");}
+          else setError("No valid rows found. Ensure columns are: Name | L | W | H | Weight | Qty");
+        }}/>
+      </div>
+
       <div onDragOver={e=>{e.preventDefault();setDragOver(true);}}
         onDragLeave={()=>setDragOver(false)}
         onDrop={e=>{e.preventDefault();setDragOver(false);parseFile(e.dataTransfer.files[0]);}}
         onClick={()=>document.getElementById("grouper-upload").click()}
         style={{border:`2px dashed ${dragOver?"#be185d":"#d1d9e0"}`,borderRadius:"10px",
-          padding:"32px",textAlign:"center",cursor:"pointer",
+          padding:"24px",textAlign:"center",cursor:"pointer",
           background:dragOver?"#fdf2f8":"#fafbfc",transition:"all 0.2s"}}>
         <input id="grouper-upload" type="file" accept=".xlsx,.xls,.csv" style={{display:"none"}}
           onChange={e=>{parseFile(e.target.files[0]);e.target.value="";}}/>
-        <div style={{fontSize:"32px",marginBottom:"8px"}}>📊</div>
-        <div style={{fontWeight:"700",color:"#374151",marginBottom:"4px"}}>
+        <div style={{fontSize:"28px",marginBottom:"6px"}}>📊</div>
+        <div style={{fontWeight:"700",color:"#374151",fontSize:"13px"}}>
           {fileName?fileName:"Drop Excel / CSV file here or click to browse"}
         </div>
-        <div style={{fontSize:"12px",color:"#9ca3af"}}>
-          Required columns: SKU Name · Length (mm) · Width (mm) · Height (mm) · Weight (kg) [optional] · Qty [optional]
+        <div style={{fontSize:"12px",color:"#9ca3af",marginTop:"4px"}}>
+          Supports up to 50,000 SKUs
         </div>
       </div>
 
-      {/* Template download hint */}
       <div style={{...S.noteBox,marginTop:"12px"}}>
-        <strong>Column order:</strong> A=SKU Name, B=Length, C=Width, D=Height, E=Weight per box (kg), F=Quantity.
-        A header row is detected automatically. Rows with zero or missing dimensions are skipped.
-        Supports up to 50,000 SKUs.
+        <strong>Column order:</strong> SKU Name · Length (mm) · Width (mm) · Height (mm) · Weight (kg) · Qty.
+        Use <strong>📋 Paste from Excel</strong> to copy cells directly, or drag-drop a file above.
+        Header row detected automatically.
       </div>
     </div>
 
