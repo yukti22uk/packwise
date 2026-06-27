@@ -261,7 +261,7 @@ export default function OrderAnalyserTool() {
   // ── Step 2: Process order data ─────────────────────────────────────────────
   const processOrder = () => {
     if (!oText.trim()) { setOError('Paste your Order data first.'); return; }
-    setOError(''); setAnalysis(null); setNarrative('');
+    setOError(''); setAnalysis(null);
     const result = parseOrderData(oText, masterMap);
     if (!result.orderSummary.length) {
       setOError('No valid order rows found. Check that your columns are in the correct order: Order No | Order Type | SKU Code | Qty | Date');
