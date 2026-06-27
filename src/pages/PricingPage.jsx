@@ -50,7 +50,7 @@ function PricingPage({onUpgrade,setPage}){
       <div style={{maxWidth:"700px",margin:"64px auto 0"}}>
         <h2 style={{fontSize:"28px",fontWeight:"800",color:"#0f172a",textAlign:"center",marginBottom:"32px"}}>Common questions</h2>
         {[
-          ["Do I need to install anything?","No. PackWise runs entirely in your browser. No downloads, no setup, no IT department."],
+          ["Do I need to install anything?","No. DensiCube runs entirely in your browser. No downloads, no setup, no IT department."],
           ["Can I try Pro before paying?","Yes — click 'Get Pro' and contact us for a 7-day free trial."],
           ["What units does it use?","Millimetres by default. As long as you're consistent (all mm or all cm), the result is accurate."],
           ["Is my data safe?","Everything runs in your browser — we never see your box sizes or shipping data. Nothing is sent to our servers."],
