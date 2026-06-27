@@ -60,7 +60,7 @@ function BoxPackingTool(){
         <div style={{display:"flex",gap:"6px",flex:1}}>
           {[["3d","🔄 3D Model"],["2d","📐 2D Views"]].map(([id,label])=>(
             <button key={id} onClick={()=>setView(id)} style={{padding:"8px 18px",border:"none",borderRadius:"8px",cursor:"pointer",fontWeight:"600",fontSize:"13px",background:view===id?"#059669":"#f1f5f9",color:view===id?"#fff":"#374151"}}>{label}</button>))}</div>
-        <WAShare message={`📦 *PackWise Packing Result*\nContainer: ${fmtN(result.cL)}×${fmtN(result.cW)}×${fmtN(result.cH)} mm\nBox: ${fmtN(result.sl)}×${fmtN(result.sw)}×${fmtN(result.sh)} mm\n*Max boxes: ${result.effQty.toLocaleString()}*\nBest orientation: ${result.orient}\nSpace used: ${(result.volUtil*100).toFixed(1)}%\n\nCalculate your load free at packwise.netlify.app`}/>
+        <WAShare message={`📦 *DensiCube Packing Result*\nContainer: ${fmtN(result.cL)}×${fmtN(result.cW)}×${fmtN(result.cH)} mm\nBox: ${fmtN(result.sl)}×${fmtN(result.sw)}×${fmtN(result.sh)} mm\n*Max boxes: ${result.effQty.toLocaleString()}*\nBest orientation: ${result.orient}\nSpace used: ${(result.volUtil*100).toFixed(1)}%\n\nCalculate your load free at densicube.netlify.app`}/>
       </div>
       {view==="3d"&&<div style={S.card}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}><div style={S.cardTitle}>🔄 3D Model</div><span style={{fontSize:"11px",color:"#94a3b8"}}>Drag to rotate · Scroll to zoom</span></div>
