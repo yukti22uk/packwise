@@ -1,7 +1,8 @@
 // ─── FOOTER ──────────────────────────────────────────────────────────────────
 import { CONFIG } from '../config.js';
 import PackWiseLogo from '../components/PackWiseLogo.jsx';
-function Footer({setPage}){
+function Footer({setPage,onToolSelect}){
+  const goToTool=(tab)=>{if(onToolSelect)onToolSelect(tab);else setPage("tool");};
   return(
     <footer style={{background:"#0f172a",color:"#94a3b8",marginTop:"80px"}}>
       <div style={{maxWidth:"1200px",margin:"0 auto",padding:"48px 32px 32px"}}>
@@ -18,8 +19,8 @@ function Footer({setPage}){
           </div>
           <div>
             <div style={{color:"#fff",fontWeight:"600",fontSize:"13px",marginBottom:"12px",textTransform:"uppercase",letterSpacing:"0.08em"}}>Tool</div>
-            {[["tool","Single SKU Calculator"],["tool","Multi-SKU Planner"],["tool","Shipment Planner"],["tool","Bulk SKU Calculator"],["tool","SKU Grouper"],["tool","Order Analyser"]].map(([pg,l])=>(
-              <div key={l} onClick={()=>setPage(pg)} style={{fontSize:"13px",padding:"4px 0",cursor:"pointer",color:"#94a3b8"}}
+            {[["box","Single SKU Calculator"],["multisku","Multi-SKU Planner"],["shipment","Shipment Planner"],["sku","Bulk SKU Calculator"],["grouper","SKU Grouper"],["analyser","Order Analyser"]].map(([tab,l])=>(
+              <div key={l} onClick={()=>goToTool(tab)} style={{fontSize:"13px",padding:"4px 0",cursor:"pointer",color:"#94a3b8"}}
                 onMouseEnter={e=>e.target.style.color="#34d399"} onMouseLeave={e=>e.target.style.color="#94a3b8"}>{l}</div>))}
           </div>
           <div>
