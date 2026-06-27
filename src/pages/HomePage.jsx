@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 import { CONFIG } from '../config.js';
 import FadeIn from '../components/FadeIn.jsx';
 import CountUp from '../components/CountUp.jsx';
-import PackWiseLogo from '../components/PackWiseLogo.jsx';
+import DensiCubeLogo from '../components/DensiCubeLogo.jsx';
 import BoxLoadingAnim, { ANIM_TOTAL } from '../components/BoxLoadingAnim.jsx';
 import HomeDemoViewer from '../components/HomeDemoViewer.jsx';
 function HomePage({setPage,onUpgrade,onToolSelect}){
@@ -29,7 +29,7 @@ function HomePage({setPage,onUpgrade,onToolSelect}){
     {n:"04",title:"Plan & export",desc:"For full orders: get a per-container manifest and compare freight costs across vehicle types to find the cheapest option. Export a branded PDF."},
   ];
   const testimonials=[
-    {q:"We were loading 32ft SXL trucks manually — always guessing. PackWise showed us we were losing 18% space every load.",name:"Rajesh M.",role:"Logistics Manager, Rajkot"},
+    {q:"We were loading 32ft SXL trucks manually — always guessing. DensiCube showed us we were losing 18% space every load.",name:"Rajesh M.",role:"Logistics Manager, Rajkot"},
     {q:"As an FBA seller, calculating how many units fit per shipment used to take me an hour in Excel. Now it takes 30 seconds.",name:"Priya S.",role:"Amazon Seller, Tirupur"},
     {q:"The PDF loading plan is the best part. My warehouse team can follow it without calling me.",name:"Anil K.",role:"Export Manager, Morbi"},
   ];
@@ -56,7 +56,7 @@ function HomePage({setPage,onUpgrade,onToolSelect}){
               </h1>
               <p style={{fontSize:"clamp(15px,2vw,18px)",color:"#94a3b8",lineHeight:"1.7",
                 margin:"0 0 32px",maxWidth:"460px"}}>
-                PackWise calculates the maximum boxes in any container or vehicle,
+                DensiCube calculates the maximum boxes in any container or vehicle,
                 plans full shipments, and exports loading plans your warehouse team
                 can follow — in seconds, not hours.
               </p>
@@ -130,13 +130,13 @@ function HomePage({setPage,onUpgrade,onToolSelect}){
               extra vehicles, and higher freight cost on every shipment.
             </p>
             <p style={{fontSize:"16px",color:"#475569",lineHeight:"1.8"}}>
-              PackWise replaces the spreadsheet with a precise, instant calculation —
+              DensiCube replaces the spreadsheet with a precise, instant calculation —
               accounting for orientation, weight limits, fragile handling, and multiple vehicle
               types — and shows you exactly where every box goes.
             </p>
           </div>
           <div style={{background:"linear-gradient(135deg,#f0fdf4,#eff6ff)",borderRadius:"16px",padding:"32px"}}>
-            {[["Before PackWise","After PackWise"],
+            {[["Before DensiCube","After DensiCube"],
               ["Guess how many boxes fit","Exact count in 10 seconds"],
               ["Try orientations manually","Best orientation found automatically"],
               ["Ignore weight limits","Weight + volume both respected"],
