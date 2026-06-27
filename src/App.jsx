@@ -1,4 +1,4 @@
-// ─── PACKWISE ROOT APP ────────────────────────────────────────────────────────
+// ─── DENSICUBE ROOT APP ────────────────────────────────────────────────────────
 // Clean entry point — all logic lives in algorithms/, components/, tools/, pages/
 import { useState, useEffect } from 'react';
 
@@ -9,14 +9,14 @@ import HomePage from './pages/HomePage.jsx';
 import ToolPage from './pages/ToolPage.jsx';
 import PricingPage from './pages/PricingPage.jsx';
 import AboutPage   from './pages/AboutPage.jsx';
-import PackWiseBot from './components/PackWiseBot.jsx';
+import DensiCubeBot from './components/DensiCubeBot.jsx';
 
 // ── Error Boundary ────────────────────────────────────────────────────────────
 import { Component } from 'react';
 class ErrorBoundary extends Component {
   constructor(props){ super(props); this.state={ hasError:false, error:null }; }
   static getDerivedStateFromError(error){ return{ hasError:true, error }; }
-  componentDidCatch(error, info){ console.error('PackWise error:', error, info); }
+  componentDidCatch(error, info){ console.error('DensiCube error:', error, info); }
   render(){
     if(!this.state.hasError) return this.props.children;
     return(
@@ -99,7 +99,7 @@ export default function App(){
         </ErrorBoundary>
       </main>
       <Footer setPage={setPage} onToolSelect={handleBotNavigate}/>
-      <PackWiseBot onNavigate={handleBotNavigate}/>
+      <DensiCubeBot onNavigate={handleBotNavigate}/>
     </div>
   );
 }
