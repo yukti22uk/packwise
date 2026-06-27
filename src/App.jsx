@@ -9,6 +9,7 @@ import HomePage from './pages/HomePage.jsx';
 import ToolPage from './pages/ToolPage.jsx';
 import PricingPage from './pages/PricingPage.jsx';
 import AboutPage   from './pages/AboutPage.jsx';
+import PackWiseBot from './components/PackWiseBot.jsx';
 
 // ── Error Boundary ────────────────────────────────────────────────────────────
 import { Component } from 'react';
@@ -55,6 +56,12 @@ export default function App(){
   const[page,setPage]=useState('home');
   const[isPro,setIsPro]=useState(false);
   const[modalOpen,setModalOpen]=useState(false);
+  const[botTab,setBotTab]=useState(null);
+
+  const handleBotNavigate=(tab)=>{
+    setPage('tool');
+    setBotTab(tab);
+  };
 
   useEffect(()=>{
     try{ if(localStorage.getItem('pp_pro')==='true') setIsPro(true); }catch(e){}
@@ -84,13 +91,15 @@ export default function App(){
           <div className="page-enter">
             {page==='home'    && <HomePage    setPage={setPage} onUpgrade={openUpgrade}/>}
             {page==='tool'    && <ToolPage    isPro={isPro} setIsPro={setIsPro}
-                                   modalOpen={modalOpen} setModalOpen={setModalOpen}/>}
+                                   modalOpen={modalOpen} setModalOpen={setModalOpen}
+                                   initialTab={botTab} onTabMounted={()=>setBotTab(null)}/>}
             {page==='pricing' && <PricingPage onUpgrade={openUpgrade} setPage={setPage}/>}
             {page==='about'   && <AboutPage   setPage={setPage}/>}
           </div>
         </ErrorBoundary>
       </main>
       <Footer setPage={setPage}/>
+      <PackWiseBot onNavigate={handleBotNavigate}/>
     </div>
   );
 }
