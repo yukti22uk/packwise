@@ -1,4 +1,4 @@
-// ─── PACKWISE CHATBOT ─────────────────────────────────────────────────────────
+// ─── DENSICUBE CHATBOT ─────────────────────────────────────────────────────────
 // Floating chat widget that helps users find the right tool.
 import { useState, useRef, useEffect } from 'react';
 
@@ -77,11 +77,11 @@ const PROBLEMS = [
 const WELCOME = {
   id: 'welcome',
   from: 'bot',
-  text: "Hi! I'm the PackWise assistant 👋\n\nWhat problem are you trying to solve? Select one below and I'll point you to the right tool.",
+  text: "Hi! I'm the DensiCube assistant 👋\n\nWhat problem are you trying to solve? Select one below and I'll point you to the right tool.",
   showOptions: true,
 };
 
-export default function PackWiseBot({ onNavigate }) {
+export default function DensiCubeBot({ onNavigate }) {
   const [open,     setOpen]    = useState(false);
   const [messages, setMessages]= useState([WELCOME]);
   const [phase,    setPhase]   = useState('problems');
@@ -132,7 +132,7 @@ export default function PackWiseBot({ onNavigate }) {
           display:'flex', alignItems:'center', justifyContent:'center',
           fontSize:'24px', transition:'transform 0.2s',
           transform: open ? 'scale(0.9)' : 'scale(1)' }}
-        aria-label="Open PackWise assistant">
+        aria-label="Open DensiCube assistant">
         {open ? '✕' : '💬'}
       </button>
 
@@ -153,7 +153,7 @@ export default function PackWiseBot({ onNavigate }) {
                 background:'rgba(255,255,255,0.2)', display:'flex',
                 alignItems:'center', justifyContent:'center', fontSize:'18px' }}>🤖</div>
               <div>
-                <div style={{ fontWeight:'700', color:'#fff', fontSize:'14px' }}>PackWise Assistant</div>
+                <div style={{ fontWeight:'700', color:'#fff', fontSize:'14px' }}>DensiCube Assistant</div>
                 <div style={{ fontSize:'11px', color:'rgba(255,255,255,0.75)' }}>Find the right tool instantly</div>
               </div>
             </div>
