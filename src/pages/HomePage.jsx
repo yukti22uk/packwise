@@ -57,8 +57,8 @@ function HomePage({setPage,onUpgrade,onToolSelect}){
               <p style={{fontSize:"clamp(15px,2vw,18px)",color:"#94a3b8",lineHeight:"1.7",
                 margin:"0 0 32px",maxWidth:"460px"}}>
                 DensiCube calculates the maximum boxes in any container or vehicle,
-                plans full shipments, and exports loading plans your warehouse team
-                can follow — in seconds, not hours.
+                plans full shipments, analyses your order data with ABC &amp; FMS classification,
+                and exports loading plans your warehouse team can follow — in seconds, not hours.
               </p>
               <div className="hero-btns" style={{display:"flex",gap:"12px",flexWrap:"wrap"}}>
                 <button onClick={()=>goToTool("box")} className="btn-primary"
