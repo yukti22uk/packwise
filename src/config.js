@@ -2,7 +2,7 @@
 //  ⚙️  OWNER CONFIG — EDIT THESE VALUES, then redeploy
 // ══════════════════════════════════════════════════════════════════════════════
 export const CONFIG = {
-  contactEmail:      "hello@densicube.com",
+  contactEmail:      "info@densicube.com",
   contactPhone:      "+91 70113 28474",   // ← Add your real phone number
   paymentLink:       "https://rzp.io/rzp/F6F1zSg",
   formspreeEndpoint: "",
