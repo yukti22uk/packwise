@@ -1,107 +1,78 @@
-// ─── DENSICUBE ROOT APP ───────────────────────────────────────────────────────
-import { useState, useEffect } from 'react';
-import { Component } from 'react';
-import { AuthProvider, useAuth } from './contexts/AuthContext.jsx';
-import Nav          from './pages/Nav.jsx';
-import Footer       from './pages/Footer.jsx';
-import HomePage     from './pages/HomePage.jsx';
-import ToolPage     from './pages/ToolPage.jsx';
-import PricingPage  from './pages/PricingPage.jsx';
-import AboutPage    from './pages/AboutPage.jsx';
-import AuthPage     from './pages/AuthPage.jsx';
-import AccountPage  from './pages/AccountPage.jsx';
-import DensiCubeBot from './components/PackWiseBot.jsx';
-
-// ── Error Boundary ─────────────────────────────────────────────────────────────
-class ErrorBoundary extends Component {
-  constructor(props){ super(props); this.state={hasError:false,error:null}; }
-  static getDerivedStateFromError(e){ return{hasError:true,error:e}; }
-  componentDidCatch(e,i){ console.error('DensiCube error:',e,i); }
-  render(){
-    if(!this.state.hasError) return this.props.children;
-    return(
-      <div style={{padding:'48px 32px',textAlign:'center',maxWidth:'600px',margin:'0 auto'}}>
-        <div style={{fontSize:'40px',marginBottom:'16px'}}>⚠️</div>
-        <h2 style={{fontWeight:'800',color:'#111',marginBottom:'8px'}}>Something went wrong</h2>
-        <p style={{color:'#6b7280',marginBottom:'24px'}}>An unexpected error occurred. Your other tabs are unaffected.</p>
-        <pre style={{background:'#f8fafc',borderRadius:'8px',padding:'12px',fontSize:'11px',
-          color:'#ef4444',textAlign:'left',overflowX:'auto',marginBottom:'20px',maxHeight:'120px',overflowY:'auto'}}>
-          {this.state.error?.message}
-        </pre>
-        <button onClick={()=>this.setState({hasError:false,error:null})}
-          style={{padding:'10px 24px',background:'#be185d',color:'#fff',border:'none',
-          borderRadius:'8px',fontWeight:'700',cursor:'pointer',fontSize:'14px'}}>
-          Try Again
+// ─── NAV ─────────────────────────────────────────────────────────────────────
+import { useState, useRef, useEffect } from 'react';
+import DensiCubeLogo from '../components/DensiCubeLogo.jsx';
+function Nav({page,setPage,isPro,user,onUpgrade,onLogin,onLogout,onAccount}){
+  const[menuOpen,setMenuOpen]=useState(false);
+  const links=[["home","Home"],["tool","Calculator"],["pricing","Pricing"],["about","About"]];
+  const go=(id)=>{setPage(id);setMenuOpen(false);};
+  return(
+    <nav style={{position:"sticky",top:0,zIndex:200,background:"rgba(255,255,255,0.97)",
+      backdropFilter:"blur(8px)",borderBottom:"1px solid #bbf7d0",
+      boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
+      <div style={{maxWidth:"1200px",margin:"0 auto",padding:"0 24px",
+        display:"flex",alignItems:"center",justifyContent:"space-between",height:"60px"}}>
+        <div onClick={()=>go("home")} style={{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer",flexShrink:0}}>
+          <DensiCubeLogo size={36}/>
+          <div>
+            <div style={{fontWeight:"900",fontSize:"17px",color:"#111827",lineHeight:1,letterSpacing:"-0.02em"}}>DensiCube</div>
+            <div style={{fontSize:"10px",color:"#6b7280",letterSpacing:"0.08em",fontWeight:"600"}}>CONTAINER INTELLIGENCE</div>
+          </div>
+        </div>
+        <div className="nav-desktop">
+          {links.map(([id,label])=>(
+            <button key={id} onClick={()=>go(id)} style={{padding:"7px 14px",border:"none",
+              background:page===id?"#fdf2f8":"none",color:page===id?"#be185d":"#475569",
+              fontWeight:page===id?"700":"500",fontSize:"14px",borderRadius:"8px",cursor:"pointer",fontFamily:"inherit"}}>
+              {label}</button>))}
+          <div style={{width:"1px",height:"20px",background:"#e2e8f0",margin:"0 6px"}}/>
+          {isPro?(
+            <span onClick={onLogout} title="Click to sign out of Pro" style={{background:"#fdf2f8",
+              color:"#be185d",fontWeight:"700",fontSize:"12px",padding:"6px 14px",
+              borderRadius:"99px",cursor:"pointer",border:"1px solid #fbcfe8"}}>⭐ PRO</span>
+          ):(
+            <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-primary"
+              style={{padding:"8px 18px",background:"linear-gradient(135deg,#be185d,#9d174d)",
+              color:"#fff",border:"none",borderRadius:"8px",fontWeight:"700",fontSize:"14px",
+              cursor:"pointer",boxShadow:"0 2px 8px rgba(190,24,93,0.35)",fontFamily:"inherit"}}>
+              ⭐ Get Pro</button>
+          )}
+        </div>
+        <button className="nav-burger" onClick={()=>setMenuOpen(o=>!o)} aria-label="Menu">
+          <div style={{width:"22px",display:"flex",flexDirection:"column",gap:"5px"}}>
+            {[0,1,2].map(i=>(<div key={i} style={{height:"2px",background:"#374151",borderRadius:"2px",
+              transition:"all 0.2s",
+              transform:menuOpen&&i===0?"rotate(45deg) translate(5px,5px)":menuOpen&&i===2?"rotate(-45deg) translate(5px,-5px)":"none",
+              opacity:menuOpen&&i===1?0:1}}/>))}
+          </div>
         </button>
       </div>
-    );
-  }
-}
-
-function trackEvent(name,props={}){ if(window.plausible) window.plausible(name,{props}); }
-export{trackEvent};
-
-// ── Inner App ──────────────────────────────────────────────────────────────────
-function AppInner(){
-  const{user,isPro,loading,signOut}=useAuth();
-  const[page,setPage]=useState('home');
-  const[modalOpen,setModalOpen]=useState(false);
-  const[botTab,setBotTab]=useState(null);
-
-  useEffect(()=>{ window.scrollTo({top:0,behavior:'instant'}); trackEvent('pageview',{page}); },[page]);
-
-  const handleBotNavigate=(tab)=>{ setPage('tool'); setBotTab(tab); };
-
-  const openUpgrade=()=>{
-    if(!user){ setPage('auth'); return; }
-    setPage('tool');
-    setTimeout(()=>setModalOpen(true),100);
-  };
-
-  const handleLogout=async()=>{ await signOut(); setPage('home'); };
-
-  if(loading) return(
-    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f0fdf4'}}>
-      <div style={{textAlign:'center'}}>
-        <div style={{fontSize:'32px',marginBottom:'12px'}}>⏳</div>
-        <div style={{color:'#6b7280',fontSize:'14px'}}>Loading DensiCube...</div>
-      </div>
-    </div>
-  );
-
-  // Auth + Account pages — no Nav/Footer wrapper needed
-  if(page==='auth')    return <AuthPage    setPage={setPage}/>;
-  if(page==='account') return <AccountPage setPage={setPage}/>;
-
-  return(
-    <div style={{fontFamily:"'Space Grotesk','Segoe UI',system-ui,-apple-system,sans-serif",
-      background:'#f0fdf4',minHeight:'100vh'}}>
-      <Nav page={page} setPage={setPage} isPro={isPro}
-        user={user} onLogin={()=>setPage('auth')}
-        onUpgrade={openUpgrade} onLogout={handleLogout}
-        onAccount={()=>setPage('account')}/>
-      <main>
-        <ErrorBoundary key={page}>
-          <div className="page-enter">
-            {page==='home'    &&<HomePage    setPage={setPage} onUpgrade={openUpgrade} onToolSelect={handleBotNavigate}/>}
-            {page==='tool'    &&<ToolPage    isPro={isPro} setIsPro={()=>{}}
-                                  modalOpen={modalOpen} setModalOpen={setModalOpen}
-                                  initialTab={botTab} onTabMounted={()=>setBotTab(null)}/>}
-            {page==='pricing' &&<PricingPage onUpgrade={openUpgrade} setPage={setPage}/>}
-            {page==='about'   &&<AboutPage   setPage={setPage}/>}
+      {menuOpen&&(
+        <div style={{background:"#fff",borderTop:"1px solid #bbf7d0",
+          boxShadow:"0 8px 24px rgba(0,0,0,0.08)",padding:"8px 24px 16px"}}>
+          {links.map(([id,label])=>(
+            <button key={id} onClick={()=>go(id)} style={{display:"block",width:"100%",
+              padding:"12px 8px",border:"none",background:"none",textAlign:"left",
+              fontSize:"16px",fontWeight:"600",color:page===id?"#be185d":"#374151",
+              cursor:"pointer",borderBottom:"1px solid #f0fdf4",fontFamily:"inherit"}}>{label}</button>))}
+          <div style={{marginTop:"12px"}}>
+            {isPro?(
+              <span onClick={()=>{onLogout();setMenuOpen(false);}} style={{display:"inline-block",
+                background:"#fdf2f8",color:"#be185d",fontWeight:"700",fontSize:"13px",
+                padding:"8px 16px",borderRadius:"99px",cursor:"pointer",border:"1px solid #fbcfe8"}}>
+                ⭐ PRO (tap to sign out)</span>
+            ):(
+              <button onClick={()=>{go("tool");setTimeout(onUpgrade,100);}} className="btn-primary"
+                style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#be185d,#9d174d)",
+                color:"#fff",border:"none",borderRadius:"10px",fontWeight:"700",fontSize:"15px",
+                cursor:"pointer",fontFamily:"inherit"}}>⭐ Get Pro</button>
+            )}
           </div>
-        </ErrorBoundary>
-      </main>
-      <Footer setPage={setPage} onToolSelect={handleBotNavigate}/>
-      <DensiCubeBot onNavigate={handleBotNavigate}/>
-    </div>
+        </div>
+      )}
+    </nav>
   );
 }
 
-export default function App(){
-  return(
-    <AuthProvider>
-      <AppInner/>
-    </AuthProvider>
-  );
-}
+// ── Footer ──
+
+export default Nav;
