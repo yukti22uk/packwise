@@ -103,13 +103,22 @@ function AboutPage({setPage}){
       {/* Contact */}
       <div style={{background:"#f8fafc",borderRadius:"16px",padding:"40px",textAlign:"center",marginBottom:"40px"}}>
         <h2 style={{fontSize:"24px",fontWeight:"800",color:"#0f172a",margin:"0 0 12px"}}>Get in touch</h2>
-        <p style={{fontSize:"15px",color:"#64748b",margin:"0 0 20px"}}>Questions, feedback, or want a demo for your team?</p>
-        <a href={`mailto:${CONFIG.contactEmail}`} style={{display:"inline-block",padding:"12px 28px",
-          background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",borderRadius:"10px",
-          fontWeight:"700",fontSize:"15px",textDecoration:"none"}}>
-          Email Us →
-        </a>
-        <div style={{marginTop:"20px"}}>
+        <p style={{fontSize:"15px",color:"#64748b",margin:"0 0 24px"}}>Questions, feedback, or want a demo for your team?</p>
+        <div style={{display:"flex",gap:"14px",justifyContent:"center",flexWrap:"wrap",marginBottom:"20px"}}>
+          <a href={`mailto:${CONFIG.contactEmail}`} style={{display:"inline-flex",alignItems:"center",
+            gap:"8px",padding:"12px 24px",
+            background:"linear-gradient(135deg,#be185d,#9d174d)",color:"#fff",borderRadius:"10px",
+            fontWeight:"700",fontSize:"14px",textDecoration:"none"}}>
+            📧 {CONFIG.contactEmail}
+          </a>
+          <a href={`tel:${CONFIG.contactPhone}`} style={{display:"inline-flex",alignItems:"center",
+            gap:"8px",padding:"12px 24px",
+            background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",borderRadius:"10px",
+            fontWeight:"700",fontSize:"14px",textDecoration:"none"}}>
+            📞 {CONFIG.contactPhone}
+          </a>
+        </div>
+        <div style={{marginTop:"4px"}}>
           <button onClick={()=>setPage("pricing")} style={{background:"none",border:"none",color:"#059669",fontWeight:"600",fontSize:"14px",cursor:"pointer"}}>
             See pricing →
           </button>
