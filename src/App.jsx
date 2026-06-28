@@ -10,7 +10,7 @@ import PricingPage  from './pages/PricingPage.jsx';
 import AboutPage    from './pages/AboutPage.jsx';
 import AuthPage     from './pages/AuthPage.jsx';
 import AccountPage  from './pages/AccountPage.jsx';
-import DensiCubeBot from './components/PackWiseBot.jsx';
+import DensiCubeBot from './components/DensiCubeBot.jsx';
 
 // ── Error Boundary ─────────────────────────────────────────────────────────────
 class ErrorBoundary extends Component {
