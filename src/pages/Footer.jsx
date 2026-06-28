@@ -34,6 +34,8 @@ function Footer({setPage,onToolSelect}){
             <div style={{fontSize:"13px",lineHeight:"1.8"}}>
               <div style={{color:"#94a3b8"}}>Questions?</div>
               <a href={`mailto:${CONFIG.contactEmail}`} style={{color:"#34d399",textDecoration:"none"}}>{CONFIG.contactEmail}</a>
+              <br/>
+              <a href={`tel:${CONFIG.contactPhone}`} style={{color:"#34d399",textDecoration:"none"}}>{CONFIG.contactPhone}</a>
             </div>
           </div>
         </div>
