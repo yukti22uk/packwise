@@ -82,15 +82,16 @@ function parseOrderData(text, masterMap) {
   // Order summary by type
   const typeMap = {};
   orders.forEach(o => {
-    if (!typeMap[o.orderType]) typeMap[o.orderType] = { lines:0, orders:new Set(), skus:new Set(), dates:new Set(), qty:0 };
-    const g = typeMap[o.orderType];
+    const locKey = o.dispatchLoc || 'Unspecified';
+    if (!typeMap[locKey]) typeMap[locKey] = { lines:0, orders:new Set(), skus:new Set(), dates:new Set(), qty:0 };
+    const g = typeMap[locKey];
     g.lines++; g.qty += o.qty;
     if (o.orderNo) g.orders.add(o.orderNo);
     if (o.sku)     g.skus.add(o.sku);
     if (o.date)    g.dates.add(o.date);
   });
-  const orderSummary = Object.entries(typeMap).map(([type, g]) => ({
-    orderType: type, lines: g.lines, uniqueOrders: g.orders.size,
+  const orderSummary = Object.entries(typeMap).map(([loc, g]) => ({
+    dispatchLoc: loc, lines: g.lines, uniqueOrders: g.orders.size,
     distinctSKUs: g.skus.size, distinctDates: g.dates.size, totalQty: g.qty,
     avgQtyPerLine: +(g.qty / g.lines).toFixed(1),
     avgLinesPerOrder: +(g.lines / Math.max(1, g.orders.size)).toFixed(1),
@@ -202,9 +203,9 @@ function exportReport(mAnom, analysis) {
   ], [10,6,22,14,55,10]), '1. Anomalies');
 
   XLSX.utils.book_append_sheet(wb, ws([
-    ['ORDER SUMMARY BY TYPE'], ['Generated:', today], [],
-    ['Order Type','Lines','Unique Orders','Distinct SKUs','Distinct Dates','Total Qty','Avg Qty/Line','Avg Lines/Order'],
-    ...orderSummary.map(r=>[r.orderType,r.lines,r.uniqueOrders,r.distinctSKUs,r.distinctDates,r.totalQty,r.avgQtyPerLine,r.avgLinesPerOrder]),
+    ['ORDER SUMMARY BY DISPATCH LOCATION'], ['Generated:', today], [],
+    ['Dispatch Location','Lines','Unique Orders','Distinct SKUs','Distinct Dates','Total Qty','Avg Qty/Line','Avg Lines/Order'],
+    ...orderSummary.map(r=>[r.dispatchLoc,r.lines,r.uniqueOrders,r.distinctSKUs,r.distinctDates,r.totalQty,r.avgQtyPerLine,r.avgLinesPerOrder]),
     [], ['TOTAL', orderSummary.reduce((s,r)=>s+r.lines,0), orderSummary.reduce((s,r)=>s+r.uniqueOrders,0),'—','—',orderSummary.reduce((s,r)=>s+r.totalQty,0),'—','—'],
   ], [16,8,14,14,14,12,14,16]), '2. Order Summary');
 
@@ -530,11 +531,11 @@ export default function OrderAnalyserTool() {
 
             {/* Order summary table */}
             <div style={{ border:'1px solid #e2e8f0', borderRadius:'8px', overflow:'hidden', marginBottom:'14px' }}>
-              <div style={{ padding:'8px 14px', background:'#f8fafc', borderBottom:'1px solid #e2e8f0', fontWeight:'700', fontSize:'12px' }}>Order Summary by Type</div>
+              <div style={{ padding:'8px 14px', background:'#f8fafc', borderBottom:'1px solid #e2e8f0', fontWeight:'700', fontSize:'12px' }}>Order Summary by Dispatch Location</div>
               <div style={{ overflowX:'auto' }}>
                 <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
                   <thead><tr>
-                    {['Order Type','Lines','Unique Orders','Distinct SKUs','Dates','Total Qty','Avg Qty/Line','Avg Lines/Order'].map(h => (
+                    {['Dispatch Location','Lines','Unique Orders','Distinct SKUs','Dates','Total Qty','Avg Qty/Line','Avg Lines/Order'].map(h => (
                       <th key={h} style={{ padding:'7px 10px', background:'#f8fafc', borderBottom:'1px solid #e2e8f0',
                         textAlign:'left', fontWeight:'600', fontSize:'11px', color:'#6b7280',
                         textTransform:'uppercase', whiteSpace:'nowrap' }}>{h}</th>))}
@@ -542,7 +543,7 @@ export default function OrderAnalyserTool() {
                   <tbody>
                     {analysis.orderSummary.map((r,i) => (
                       <tr key={i} style={{ background:i%2?'#fafbfc':'#fff' }}>
-                        <td style={{ padding:'7px 10px', fontWeight:'700' }}>{r.orderType}</td>
+                        <td style={{ padding:'7px 10px', fontWeight:'700' }}>{r.dispatchLoc}</td>
                         <td style={{ padding:'7px 10px', textAlign:'right' }}>{r.lines.toLocaleString()}</td>
                         <td style={{ padding:'7px 10px', textAlign:'right' }}>{r.uniqueOrders.toLocaleString()}</td>
                         <td style={{ padding:'7px 10px', textAlign:'right' }}>{r.distinctSKUs.toLocaleString()}</td>
