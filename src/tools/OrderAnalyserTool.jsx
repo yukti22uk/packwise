@@ -1,12 +1,12 @@
-// â”€â”€â”€ ORDER ANALYSER TOOL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Step 1: Paste Master SKU data (fixed column order) â†’ validate + flag anomalies
-// Step 2: Paste Order data (fixed column order) â†’ full analytics â†’ 6-sheet Excel
-// No AI column mapping â€” user pastes in expected order shown on screen.
+// ─── ORDER ANALYSER TOOL ──────────────────────────────────────────────────────
+// Step 1: Paste Master SKU data (fixed column order) → validate + flag anomalies
+// Step 2: Paste Order data (fixed column order) → full analytics → 6-sheet Excel
+// No AI column mapping — user pastes in expected order shown on screen.
 import { useState } from 'react';
 import * as XLSX from 'xlsx';
 import { S } from '../components/styles.jsx';
 
-// â”€â”€â”€ PARSE PASTED TSV â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── PARSE PASTED TSV ────────────────────────────────────────────────────────
 function parseTSV(text) {
   return text.trim().split('\n')
     .map(r => r.split('\t').map(c => c.trim()))
@@ -21,7 +21,7 @@ function isHeaderRow(row) {
   return isNaN(num1) && isNaN(num2);
 }
 
-// â”€â”€â”€ MASTER SKU: PARSE & VALIDATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── MASTER SKU: PARSE & VALIDATE ────────────────────────────────────────────
 // Fixed order: SKU Name | Length (mm) | Width (mm) | Height (mm) | Weight/Box (kg)
 function parseMasterSKU(text) {
   const rows = parseTSV(text);
@@ -36,7 +36,7 @@ function parseMasterSKU(text) {
     const H = parseFloat(r[3]) || 0;
     const weight = parseFloat(r[4]) || 0;
 
-    if (!name.trim()) { anomalies.push({ row: rowNum, sku: 'â€”', field: 'SKU Name', issue: 'Missing SKU name', sev: 'High' }); return; }
+    if (!name.trim()) { anomalies.push({ row: rowNum, sku: '—', field: 'SKU Name', issue: 'Missing SKU name', sev: 'High' }); return; }
     if (seen.has(name)) anomalies.push({ row: rowNum, sku: name, field: 'SKU', issue: `Duplicate SKU (appears more than once)`, sev: 'Medium' });
     else seen.add(name);
     if (!L) anomalies.push({ row: rowNum, sku: name, field: 'Length', issue: 'Missing or zero length', sev: 'High' });
@@ -51,7 +51,7 @@ function parseMasterSKU(text) {
   return { skus, anomalies, masterMap };
 }
 
-// â”€â”€â”€ ORDER DATA: PARSE & ANALYSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── ORDER DATA: PARSE & ANALYSE ─────────────────────────────────────────────
 // Fixed order: Order No | Order Type | SKU Code | Qty | Date | Category* | Dispatch Location*
 // * = optional columns
 function parseOrderData(text, masterMap) {
@@ -70,11 +70,11 @@ function parseOrderData(text, masterMap) {
     const dispatchLoc = r[6] ? r[6].trim() : '';   // optional
 
     if (!orderNo) anomalies.push({ row: rowNum, sku, field: 'Order No',  issue: 'Missing order/invoice number', sev: 'High' });
-    if (!sku)     anomalies.push({ row: rowNum, sku: 'â€”', field: 'SKU',  issue: 'Missing SKU code', sev: 'High' });
+    if (!sku)     anomalies.push({ row: rowNum, sku: '—', field: 'SKU',  issue: 'Missing SKU code', sev: 'High' });
     if (qty <= 0) anomalies.push({ row: rowNum, sku, field: 'Qty',       issue: `Zero or negative qty: ${r[3]}`, sev: 'High' });
     if (!date)    anomalies.push({ row: rowNum, sku, field: 'Date',      issue: 'Missing date', sev: 'Medium' });
     if (sku && masterMap.size > 0 && !masterMap.has(sku))
-      anomalies.push({ row: rowNum, sku, field: 'Master Data', issue: `SKU not in master â€” dimensions missing`, sev: 'High' });
+      anomalies.push({ row: rowNum, sku, field: 'Master Data', issue: `SKU not in master — dimensions missing`, sev: 'High' });
 
     orders.push({ orderNo, orderType, sku, qty, date, category, dispatchLoc });
   });
@@ -112,14 +112,14 @@ function parseOrderData(text, masterMap) {
     const m = masterMap.get(sku) || { L:0, W:0, H:0, weight:0, volume:0 };
     const ds = [...g.dates].sort();
     return { sku, lines:g.lines, uniqueOrders:g.orders.size, totalQty:g.qty,
-      firstDate:ds[0]||'â€”', lastDate:ds[ds.length-1]||'â€”',
-      categories:[...g.categories].join(', ')||'â€”',
-      locations:[...g.locations].join(', ')||'â€”',
+      firstDate:ds[0]||'—', lastDate:ds[ds.length-1]||'—',
+      categories:[...g.categories].join(', ')||'—',
+      locations:[...g.locations].join(', ')||'—',
       L:m.L, W:m.W, H:m.H, weight:m.weight,
       volumePerUnit:m.volume, totalVolume:m.volume*g.qty/1e9 };
   });
 
-  // â”€â”€ Category Analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Category Analysis ────────────────────────────────────────────────────────
   const hasCat = orders.some(o => o.category);
   const catMap = {};
   orders.forEach(o => {
@@ -136,14 +136,14 @@ function parseOrderData(text, masterMap) {
   const categorySummary = Object.entries(catMap)
     .map(([cat, g]) => ({ category:cat, lines:g.lines, uniqueOrders:g.orders.size,
       distinctSKUs:g.skus.size, totalQty:g.qty, totalVolume:+g.volume.toFixed(4),
-      locations:[...g.locations].join(', ')||'â€”' }))
+      locations:[...g.locations].join(', ')||'—' }))
     .sort((a,b) => b.totalQty - a.totalQty);
   const totCatVol = categorySummary.reduce((s,r) => s+r.totalVolume, 0);
   categorySummary.forEach(r => {
     r.volPct = totCatVol > 0 ? +(r.totalVolume/totCatVol*100).toFixed(1) : 0;
   });
 
-  // â”€â”€ Dispatch Location Analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Dispatch Location Analysis ───────────────────────────────────────────────
   const hasLoc = orders.some(o => o.dispatchLoc);
   const locMap = {};
   orders.forEach(o => {
@@ -160,7 +160,7 @@ function parseOrderData(text, masterMap) {
   const locationSummary = Object.entries(locMap)
     .map(([loc, g]) => ({ location:loc, lines:g.lines, uniqueOrders:g.orders.size,
       distinctSKUs:g.skus.size, totalQty:g.qty, totalVolume:+g.volume.toFixed(4),
-      categories:[...g.categories].join(', ')||'â€”' }))
+      categories:[...g.categories].join(', ')||'—' }))
     .sort((a,b) => b.totalQty - a.totalQty);
   const totLocVol = locationSummary.reduce((s,r) => s+r.totalVolume, 0);
   locationSummary.forEach(r => {
@@ -197,7 +197,7 @@ function parseOrderData(text, masterMap) {
     matrix[key] = { count:items.length, totalQty:items.reduce((s,r)=>s+r.totalQty,0), skus:items.map(r=>r.sku) };
   }));
 
-  // â”€â”€ Location Ã— Category Cross-Analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Location × Category Cross-Analysis ──────────────────────────────────────
   const locCatMap = {};
   orders.forEach(o => {
     const loc = o.dispatchLoc || 'Unspecified';
@@ -222,14 +222,12 @@ function parseOrderData(text, masterMap) {
   const allLocations = [...new Set(locCatSummary.map(r => r.location))];
   const allCategories = [...new Set(locCatSummary.map(r => r.category))];
 
-  return { anomalies, orderSummary, skuSummary, abcData, fmsData, matrix, totVol,
-    categorySummary, locationSummary, locCatSummary, allLocations, allCategories,
-    hasCat, hasLoc };
+
 }
 
-// â”€â”€â”€ EXCEL EXPORT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
 function exportReport(mAnom, analysis) {
-  const { anomalies, orderSummary, skuSummary, abcData, fmsData, matrix, categorySummary, locationSummary, hasCat, hasLoc } = analysis;
+  const { anomalies, orderSummary, skuSummary, abcData, fmsData, matrix, grpLocCatSummary, hasCat, hasLoc } = analysis;
   const wb = XLSX.utils.book_new();
   const today = new Date().toLocaleDateString();
   const ws = (data, cols) => {
@@ -240,9 +238,9 @@ function exportReport(mAnom, analysis) {
   const allAnom = [...mAnom.map(a=>({...a,src:'Master'})), ...anomalies.map(a=>({...a,src:'Order'}))];
 
   XLSX.utils.book_append_sheet(wb, ws([
-    ['DENSICUBE â€” DATA ANOMALY REPORT'], ['Generated:', today], ['Total issues:', allAnom.length], [],
+    ['DENSICUBE — DATA ANOMALY REPORT'], ['Generated:', today], ['Total issues:', allAnom.length], [],
     ['Source','Row','SKU','Field','Issue','Severity'],
-    ...(allAnom.length ? allAnom.map(a=>[a.src,a.row,a.sku,a.field,a.issue,a.sev]) : [['â€”','â€”','â€”','â€”','No issues found','â€”']]),
+    ...(allAnom.length ? allAnom.map(a=>[a.src,a.row,a.sku,a.field,a.issue,a.sev]) : [['—','—','—','—','No issues found','—']]),
     [], ['SUMMARY'],
     ['High severity:', allAnom.filter(a=>a.sev==='High').length],
     ['Medium severity:', allAnom.filter(a=>a.sev==='Medium').length],
@@ -252,26 +250,26 @@ function exportReport(mAnom, analysis) {
     ['ORDER SUMMARY BY TYPE'], ['Generated:', today], [],
     ['Order Type','Lines','Unique Orders','Distinct SKUs','Distinct Dates','Total Qty','Avg Qty/Line','Avg Lines/Order'],
     ...orderSummary.map(r=>[r.orderType,r.lines,r.uniqueOrders,r.distinctSKUs,r.distinctDates,r.totalQty,r.avgQtyPerLine,r.avgLinesPerOrder]),
-    [], ['TOTAL', orderSummary.reduce((s,r)=>s+r.lines,0), orderSummary.reduce((s,r)=>s+r.uniqueOrders,0),'â€”','â€”',orderSummary.reduce((s,r)=>s+r.totalQty,0),'â€”','â€”'],
+    [], ['TOTAL', orderSummary.reduce((s,r)=>s+r.lines,0), orderSummary.reduce((s,r)=>s+r.uniqueOrders,0),'—','—',orderSummary.reduce((s,r)=>s+r.totalQty,0),'—','—'],
   ], [16,8,14,14,14,12,14,16]), '2. Order Summary');
 
   XLSX.utils.book_append_sheet(wb, ws([
     ['SKU SUMMARY'], [],
-    ['SKU','Lines','Unique Orders','Total Qty','L mm','W mm','H mm','Wt/Box kg','Vol/Unit mÂ³','Total Vol mÂ³','First Date','Last Date','Category','Dispatch Location'],
+    ['SKU','Lines','Unique Orders','Total Qty','L mm','W mm','H mm','Wt/Box kg','Vol/Unit m³','Total Vol m³','First Date','Last Date','Category','Dispatch Location'],
     ...[...skuSummary].sort((a,b)=>b.totalQty-a.totalQty).map(r=>[r.sku,r.lines,r.uniqueOrders,r.totalQty,
-      r.L||'â€”',r.W||'â€”',r.H||'â€”',r.weight||'â€”',
-      r.volumePerUnit>0?+(r.volumePerUnit/1e9).toFixed(6):'â€”',
-      r.totalVolume>0?+r.totalVolume.toFixed(4):'â€”',r.firstDate,r.lastDate,
-      r.categories||'â€”',r.locations||'â€”']),
+      r.L||'—',r.W||'—',r.H||'—',r.weight||'—',
+      r.volumePerUnit>0?+(r.volumePerUnit/1e9).toFixed(6):'—',
+      r.totalVolume>0?+r.totalVolume.toFixed(4):'—',r.firstDate,r.lastDate,
+      r.categories||'—',r.locations||'—']),
   ], [22,8,14,12,8,8,8,12,14,14,12,12,20,22]), '3. SKU Summary');
 
   XLSX.utils.book_append_sheet(wb, ws([
-    ['ABC ANALYSIS â€” BY SHIPPING VOLUME'],['A=Top 70% volume | B=Next 20% | C=Bottom 10%'],[],
-    ['Rank','SKU','Total Qty','Vol/Unit (mÂ³)','Total Volume (mÂ³)','Cumulative Vol %','ABC Class'],
+    ['ABC ANALYSIS — BY SHIPPING VOLUME'],['A=Top 70% volume | B=Next 20% | C=Bottom 10%'],[],
+    ['Rank','SKU','Total Qty','Vol/Unit (m³)','Total Volume (m³)','Cumulative Vol %','ABC Class'],
     ...abcData.map((r,i)=>[i+1,r.sku,r.totalQty,
-      r.volumePerUnit>0?+(r.volumePerUnit/1e9).toFixed(6):'â€”',
-      r.totalVolume>0?+r.totalVolume.toFixed(4):'â€”',r.cumVolPct+'%',r.abc]),
-    [], ['SUMMARY'],['Class','SKU Count','% SKUs','Total Volume (mÂ³)','% Volume'],
+      r.volumePerUnit>0?+(r.volumePerUnit/1e9).toFixed(6):'—',
+      r.totalVolume>0?+r.totalVolume.toFixed(4):'—',r.cumVolPct+'%',r.abc]),
+    [], ['SUMMARY'],['Class','SKU Count','% SKUs','Total Volume (m³)','% Volume'],
     ...['A','B','C'].map(cls=>{
       const items=abcData.filter(r=>r.abc===cls);
       const vol=items.reduce((s,r)=>s+r.totalVolume,0);
@@ -282,7 +280,7 @@ function exportReport(mAnom, analysis) {
   ], [6,22,12,14,18,18,10]), '4. ABC Analysis');
 
   XLSX.utils.book_append_sheet(wb, ws([
-    ['FMS ANALYSIS â€” BY ORDER LINES'],['Fast=Top 33% | Medium=Mid 33% | Slow=Bottom 33%'],[],
+    ['FMS ANALYSIS — BY ORDER LINES'],['Fast=Top 33% | Medium=Mid 33% | Slow=Bottom 33%'],[],
     ['Rank','SKU','Lines','Total Qty','Unique Orders','Cumulative Lines %','FMS Class'],
     ...fmsData.map((r,i)=>[i+1,r.sku,r.lines,r.totalQty,r.uniqueOrders,r.cumLinesPct+'%',r.fms]),
     [], ['SUMMARY'],['Class','SKU Count','% SKUs','Total Lines','% Lines'],
@@ -300,47 +298,47 @@ function exportReport(mAnom, analysis) {
     ['','Fast','Medium','Slow'],
     ...['A','B','C'].map(a=>[a,...['Fast','Medium','Slow'].map(f=>{
       const c=matrix[`${a}-${f}`];
-      return c?.count?`${c.count} SKUs | ${c.totalQty.toLocaleString()} units`:'â€”';
+      return c?.count?`${c.count} SKUs | ${c.totalQty.toLocaleString()} units`:'—';
     })]),
     [],[  'INTERPRETATION'],
-    ['A-Fast','Star products â€” highest priority for container planning'],
-    ['A-Slow','High value, low frequency â€” consider batch shipping'],
-    ['C-Fast','Many small orders â€” review minimum order quantities'],
+    ['A-Fast','Star products — highest priority for container planning'],
+    ['A-Slow','High value, low frequency — consider batch shipping'],
+    ['C-Fast','Many small orders — review minimum order quantities'],
     ['C-Slow','Candidates for rationalisation or consolidation'],
   ];
   XLSX.utils.book_append_sheet(wb, ws(matRows, [16,35,35,35]), '6. ABC-FMS Matrix');
 
-  // â”€â”€ Sheet 7: Group Ã— Location Ã— Category â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Sheet 7: Group × Location × Category ────────────────────────────────────
   const totGLC = grpLocCatSummary.reduce((s,r) => s+r.totalQty, 0);
   const totGLCVol = grpLocCatSummary.reduce((s,r) => s+r.totalVolume, 0);
 
   // Flat detail list
   const glcRows = [
-    ['GROUP Ã— LOCATION Ã— CATEGORY ANALYSIS'],
+    ['GROUP × LOCATION × CATEGORY ANALYSIS'],
     ['Group = Order Type | Location = Dispatch Origin | Category = Product Category'],
-    [hasCat&&hasLoc ? '' : !hasCat&&!hasLoc ? 'Note: Category (col 6) and Dispatch Location (col 7) not pasted â€” showing Order Type breakdown only'
+    [hasCat&&hasLoc ? '' : !hasCat&&!hasLoc ? 'Note: Category (col 6) and Dispatch Location (col 7) not pasted — showing Order Type breakdown only'
       : !hasCat ? 'Note: Category (col 6) not pasted' : 'Note: Dispatch Location (col 7) not pasted'],
     ['Generated:', today], [],
-    ['Group (Order Type)','Dispatch Location','Product Category','Lines','Unique Orders','Distinct SKUs','Total Qty','Total Volume (mÂ³)','% of Total Qty'],
+    ['Group (Order Type)','Dispatch Location','Product Category','Lines','Unique Orders','Distinct SKUs','Total Qty','Total Volume (m³)','% of Total Qty'],
     ...grpLocCatSummary.map(r => [r.group, r.location, r.category, r.lines,
       r.uniqueOrders, r.distinctSKUs, r.totalQty,
-      r.totalVolume>0 ? r.totalVolume : 'â€”',
-      totGLC>0 ? +(r.totalQty/totGLC*100).toFixed(1)+'%' : 'â€”']),
-    [], ['TOTAL','â€”','â€”',
-      grpLocCatSummary.reduce((s,r)=>s+r.lines,0), 'â€”', 'â€”',
+      r.totalVolume>0 ? r.totalVolume : '—',
+      totGLC>0 ? +(r.totalQty/totGLC*100).toFixed(1)+'%' : '—']),
+    [], ['TOTAL','—','—',
+      grpLocCatSummary.reduce((s,r)=>s+r.lines,0), '—', '—',
       totGLC, +totGLCVol.toFixed(4), '100%'],
   ];
 
   // Sub-totals by Group
   const groups = [...new Set(grpLocCatSummary.map(r=>r.group))];
   glcRows.push([], ['SUB-TOTALS BY GROUP']);
-  glcRows.push(['Group','Lines','Total Qty','Total Volume (mÂ³)','% of Total']);
+  glcRows.push(['Group','Lines','Total Qty','Total Volume (m³)','% of Total']);
   groups.forEach(grp => {
     const rows = grpLocCatSummary.filter(r=>r.group===grp);
     const qty = rows.reduce((s,r)=>s+r.totalQty,0);
     const vol = rows.reduce((s,r)=>s+r.totalVolume,0);
     glcRows.push([grp, rows.reduce((s,r)=>s+r.lines,0), qty, +vol.toFixed(4),
-      totGLC>0 ? +(qty/totGLC*100).toFixed(1)+'%' : 'â€”']);
+      totGLC>0 ? +(qty/totGLC*100).toFixed(1)+'%' : '—']);
   });
 
   XLSX.utils.book_append_sheet(wb, ws(glcRows,
@@ -349,7 +347,7 @@ function exportReport(mAnom, analysis) {
   XLSX.writeFile(wb, `DensiCube_Analysis_${today.replace(/\//g,'-')}.xlsx`);
 }
 
-// â”€â”€â”€ COMPONENT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function OrderAnalyserTool() {
   const [mText,    setMText]    = useState('');
   const [mAnom,    setMAnom]    = useState([]);
@@ -362,7 +360,7 @@ export default function OrderAnalyserTool() {
   const [analysis,  setAnalysis] = useState(null);
   const [oError,    setOError]   = useState('');
 
-  // â”€â”€ Step 1: Process master SKU â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Step 1: Process master SKU ─────────────────────────────────────────────
   const processMaster = () => {
     if (!mText.trim()) { setMError('Paste your Master SKU data first.'); return; }
     setMError(''); setMDone(false); setMAnom([]); setMasterMap(new Map()); setMStats(null);
@@ -377,7 +375,7 @@ export default function OrderAnalyserTool() {
     setMDone(true);
   };
 
-  // â”€â”€ Step 2: Process order data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Step 2: Process order data ─────────────────────────────────────────────
   const processOrder = () => {
     if (!oText.trim()) { setOError('Paste your Order data first.'); return; }
     setOError(''); setAnalysis(null);
@@ -390,7 +388,7 @@ export default function OrderAnalyserTool() {
   };
 
 
-  // â”€â”€ Shared helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Shared helpers ─────────────────────────────────────────────────────────
   const sev = s => <span style={{ background:s==='High'?'#fee2e2':'#fef9c3',
     color:s==='High'?'#991b1b':'#854d0e', padding:'2px 7px',
     borderRadius:'99px', fontSize:'11px', fontWeight:'700' }}>{s}</span>;
@@ -427,19 +425,19 @@ export default function OrderAnalyserTool() {
     <div style={{ width:'32px', height:'32px', borderRadius:'50%', flexShrink:0,
       background:done?'#166534':'#be185d', display:'flex', alignItems:'center',
       justifyContent:'center', color:'#fff', fontWeight:'800', fontSize:'14px' }}>
-      {done ? 'âœ“' : n}
+      {done ? '✓' : n}
     </div>
   );
 
   return (
     <div>
       <div style={S.sectionDesc}>
-        Paste your Master SKU data and Order data directly from Excel â€” no file upload needed.
+        Paste your Master SKU data and Order data directly from Excel — no file upload needed.
         Columns must be in the order shown. Get a 6-sheet Excel report with anomaly detection,
         order summary, ABC analysis, FMS classification, and ABC-FMS matrix.
       </div>
 
-      {/* â”€â”€ STEP 1: MASTER SKU â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── STEP 1: MASTER SKU ──────────────────────────────────────────────── */}
       <div style={S.card}>
         <div style={{ display:'flex', alignItems:'center', gap:'12px', marginBottom:'16px' }}>
           {stepCircle(1, mDone)}
@@ -453,13 +451,13 @@ export default function OrderAnalyserTool() {
 
         {colHint(['SKU Name', 'Length (mm)', 'Width (mm)', 'Height (mm)', 'Weight/Box (kg)'])}
         <div style={{ fontSize:'12px', color:'#6b7280', marginBottom:'8px' }}>
-          In Excel: arrange columns in this order â†’ select all data cells (including header) â†’ Ctrl+C â†’ paste below
+          In Excel: arrange columns in this order → select all data cells (including header) → Ctrl+C → paste below
         </div>
 
         {textarea(mText, setMText,
           'Paste Master SKU data here (Ctrl+V)\n\nExample:\nSKU Name\tLength\tWidth\tHeight\tWeight\nProduct A\t300\t200\t150\t2.5\nProduct B\t450\t320\t200\t4.0\nProduct C\t250\t180\t120\t1.8')}
 
-        {mError && <div style={{ ...S.error, marginTop:'8px' }}>âš  {mError}</div>}
+        {mError && <div style={{ ...S.error, marginTop:'8px' }}>⚠ {mError}</div>}
 
         <button onClick={processMaster} disabled={!mText.trim()}
           style={{ marginTop:'10px', width:'100%', padding:'10px',
@@ -467,7 +465,7 @@ export default function OrderAnalyserTool() {
             color: mText.trim() ? '#fff' : '#9ca3af',
             border:'none', borderRadius:'8px', fontWeight:'700', fontSize:'13px',
             cursor: mText.trim() ? 'pointer' : 'not-allowed', fontFamily:'inherit' }}>
-          â–¶ Validate Master SKU Data
+          ▶ Validate Master SKU Data
         </button>
 
         {/* Results */}
@@ -506,15 +504,15 @@ export default function OrderAnalyserTool() {
                       </tr>))}
                   </tbody>
                 </table>
-                {mAnom.length > 50 && <div style={{ padding:'8px 12px', fontSize:'11px', color:'#9ca3af' }}>Showing 50 of {mAnom.length} â€” full list in Excel report</div>}
+                {mAnom.length > 50 && <div style={{ padding:'8px 12px', fontSize:'11px', color:'#9ca3af' }}>Showing 50 of {mAnom.length} — full list in Excel report</div>}
               </div>
             )}
-            {mAnom.length === 0 && <div style={{ background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:'8px', padding:'10px 14px', fontSize:'13px', color:'#166534' }}>âœ“ No anomalies found</div>}
+            {mAnom.length === 0 && <div style={{ background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:'8px', padding:'10px 14px', fontSize:'13px', color:'#166534' }}>✓ No anomalies found</div>}
           </div>
         )}
       </div>
 
-      {/* â”€â”€ STEP 2: ORDER DATA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── STEP 2: ORDER DATA ──────────────────────────────────────────────── */}
       <div style={{ ...S.card, opacity:mDone?1:0.5, pointerEvents:mDone?'auto':'none' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'12px', marginBottom:'16px' }}>
           {stepCircle(2, !!analysis)}
@@ -535,7 +533,7 @@ export default function OrderAnalyserTool() {
           {textarea(oText, setOText,
             'Paste Order data here (Ctrl+V)\n\nColumns 1-5 required | Columns 6-7 optional:\nOrder No | Order Type | SKU Code | Qty | Date | Category | Dispatch Location\n\nExample (with optional columns):\n1001\tCustomer\tSKU-001\t500\t01/06/2024\tRefrigerator\tMumbai\n1002\tSTO\tSKU-002\t200\t02/06/2024\tWashing Machine\tAhmedabad')}
 
-          {oError && <div style={{ ...S.error, marginTop:'8px' }}>âš  {oError}</div>}
+          {oError && <div style={{ ...S.error, marginTop:'8px' }}>⚠ {oError}</div>}
 
           <button onClick={processOrder} disabled={!oText.trim()}
             style={{ marginTop:'10px', width:'100%', padding:'10px',
@@ -543,7 +541,7 @@ export default function OrderAnalyserTool() {
               color: oText.trim() ? '#fff' : '#9ca3af',
               border:'none', borderRadius:'8px', fontWeight:'700', fontSize:'13px',
               cursor: oText.trim() ? 'pointer' : 'not-allowed', fontFamily:'inherit' }}>
-            â–¶ Run Analysis
+            ▶ Run Analysis
           </button>
         </>)}
 
@@ -555,7 +553,7 @@ export default function OrderAnalyserTool() {
                 padding:'10px 14px', marginBottom:'14px', fontSize:'13px',
                 display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                 <span style={{ color:'#991b1b', fontWeight:'600' }}>
-                  âš  {analysis.anomalies.length} order anomalies
+                  ⚠ {analysis.anomalies.length} order anomalies
                   ({analysis.anomalies.filter(a=>a.sev==='High').length} high severity)
                 </span>
                 <span style={{ fontSize:'12px', color:'#9ca3af' }}>Full list in Excel report</span>
@@ -658,7 +656,7 @@ export default function OrderAnalyserTool() {
                           background:n>0?(a==='A'&&f==='Fast'?'#dcfce7':a==='C'&&f==='Slow'?'#fee2e2':'#fff'):'#f8fafc' }}>
                           {n>0?(<><div style={{ fontWeight:'700', fontSize:'14px' }}>{n}</div>
                             <div style={{ fontSize:'10px', color:'#9ca3af' }}>{c?.totalQty?.toLocaleString()||0} units</div></>)
-                            :<span style={{ color:'#d1d5db' }}>â€”</span>}
+                            :<span style={{ color:'#d1d5db' }}>—</span>}
                         </td>);})}
                     </tr>))}
                 </tbody>
@@ -667,10 +665,10 @@ export default function OrderAnalyserTool() {
 
             <button onClick={() => exportReport(mAnom, analysis)}
               style={{ ...S.btnPrimary, background:'linear-gradient(135deg,#be185d,#9d174d)' }}>
-              â¬‡ Download 6-Sheet Excel Report
+              ⬇ Download 6-Sheet Excel Report
             </button>
             <div style={{ fontSize:'11px', color:'#9ca3af', textAlign:'center', marginTop:'6px' }}>
-              Anomalies Â· Order Summary Â· SKU Summary Â· ABC Â· FMS Â· ABC-FMS Matrix Â· GroupÃ—LocationÃ—Category
+              Anomalies · Order Summary · SKU Summary · ABC · FMS · ABC-FMS Matrix · Group×Location×Category
             </div>
           </div>
         )}
