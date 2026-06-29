@@ -62,12 +62,12 @@ function parseOrderData(text, masterMap) {
   dataRows.forEach((r, i) => {
     const rowNum      = i + (rows.length > dataRows.length ? 2 : 1);
     const orderNo     = r[0] || '';
-    const orderType   = r[1] || 'Unknown';
+    const dispatchLoc = r[1] ? r[1].trim() : '';   // col 2 — Dispatch Location
     const sku         = r[2] || '';
     const qty         = parseFloat(r[3]) || 0;
     const date        = r[4] || '';
-    const category    = r[5] ? r[5].trim() : '';   // optional
-    const dispatchLoc = r[6] ? r[6].trim() : '';   // optional
+    const orderType   = r[5] ? r[5].trim() : 'Unknown'; // optional col 6
+    const category    = r[6] ? r[6].trim() : '';         // optional col 7
 
     if (!orderNo) anomalies.push({ row: rowNum, sku, field: 'Order No',  issue: 'Missing order/invoice number', sev: 'High' });
     if (!sku)     anomalies.push({ row: rowNum, sku: '—', field: 'SKU',  issue: 'Missing SKU code', sev: 'High' });
@@ -271,7 +271,7 @@ function exportReport(mAnom, analysis) {
   const glcRows = [
     ['GROUP × LOCATION × CATEGORY ANALYSIS'],
     ['Group = Order Type | Location = Dispatch Origin | Category = Product Category'],
-    [hasCat&&hasLoc ? '' : !hasCat&&!hasLoc ? 'Note: Category (col 6) and Dispatch Location (col 7) not pasted — showing Order Type breakdown only'
+    [hasCat&&hasLoc ? '' : !hasCat&&!hasLoc ? 'Note: Order Type (col 6) and Category (col 7) not pasted — showing Location breakdown only'
       : !hasCat ? 'Note: Category (col 6) not pasted' : 'Note: Dispatch Location (col 7) not pasted'],
     ['Generated:', today], [],
     ['Group (Order Type)','Dispatch Location','Product Category','Lines','Unique Orders','Distinct SKUs','Total Qty','Total Volume (m³)','% of Total Qty'],
@@ -480,9 +480,9 @@ export default function OrderAnalyserTool() {
         </div>
 
         {mDone && (<>
-          {colHint(['Order No', 'Order Type', 'SKU Code', 'Qty', 'Date', 'Category (optional)', 'Dispatch Location (optional)'])}
+          {colHint(['Order No', 'Dispatch Location', 'SKU Code', 'Qty', 'Date', 'Order Type (optional)', 'Category (optional)'])}
           <div style={{ fontSize:'12px', color:'#6b7280', marginBottom:'8px' }}>
-            Order Type examples: STO, Customer, Export etc. Category examples: Refrigerator, TV, Washing Machine. Dispatch Location is origin city/warehouse.
+            Order Type examples: STO, Customer, Export etc. Category examples: Refrigerator, TV, Washing Machine. Both are optional — paste 5 columns minimum.
           </div>
 
           {textarea(oText, setOText,
