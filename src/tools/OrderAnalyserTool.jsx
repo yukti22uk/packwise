@@ -197,32 +197,35 @@ function parseOrderData(text, masterMap) {
     matrix[key] = { count:items.length, totalQty:items.reduce((s,r)=>s+r.totalQty,0), skus:items.map(r=>r.sku) };
   }));
 
-  // ── Location × Category Cross-Analysis ──────────────────────────────────────
-  const locCatMap = {};
+  // ── Group × Location × Category Cross-Analysis ──────────────────────────────
+  const hasCat = orders.some(o => o.category);
+  const hasLoc = orders.some(o => o.dispatchLoc);
+  const grpLocCatMap = {};
   orders.forEach(o => {
+    const grp = o.orderType   || 'Unknown';
     const loc = o.dispatchLoc || 'Unspecified';
     const cat = o.category    || 'Unspecified';
-    const key = `${loc}|||${cat}`;
-    if (!locCatMap[key]) locCatMap[key] = { location:loc, category:cat,
+    const key = `${grp}|||${loc}|||${cat}`;
+    if (!grpLocCatMap[key]) grpLocCatMap[key] = { group:grp, location:loc, category:cat,
       lines:0, orders:new Set(), skus:new Set(), qty:0, volume:0 };
-    const g = locCatMap[key];
+    const g = grpLocCatMap[key];
     g.lines++; g.qty += o.qty;
     if (o.orderNo) g.orders.add(o.orderNo);
     if (o.sku)     g.skus.add(o.sku);
     const m = masterMap.get(o.sku);
     if (m) g.volume += m.volume * o.qty / 1e9;
   });
-  const locCatSummary = Object.values(locCatMap)
-    .map(g => ({ location:g.location, category:g.category,
+  const grpLocCatSummary = Object.values(grpLocCatMap)
+    .map(g => ({ group:g.group, location:g.location, category:g.category,
       lines:g.lines, uniqueOrders:g.orders.size, distinctSKUs:g.skus.size,
       totalQty:g.qty, totalVolume:+g.volume.toFixed(4) }))
-    .sort((a,b) => a.location.localeCompare(b.location) || b.totalQty - a.totalQty);
+    .sort((a,b) =>
+      a.group.localeCompare(b.group) ||
+      a.location.localeCompare(b.location) ||
+      b.totalQty - a.totalQty);
 
-  // Pivot: unique locations and categories for matrix
-  const allLocations = [...new Set(locCatSummary.map(r => r.location))];
-  const allCategories = [...new Set(locCatSummary.map(r => r.category))];
-
-
+  return { anomalies, orderSummary, skuSummary, abcData, fmsData, matrix,
+    totVol, grpLocCatSummary, hasCat, hasLoc };
 }
 
 // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
