@@ -4,6 +4,7 @@
 // No AI column mapping — user pastes in expected order shown on screen.
 import { useState } from 'react';
 import * as XLSX from 'xlsx';
+import PptxGenJS from 'pptxgenjs';
 import { S } from '../components/styles.jsx';
 
 // ─── PARSE PASTED TSV ────────────────────────────────────────────────────────
@@ -179,6 +180,232 @@ function parseOrderData(text, masterMap) {
 
   return { anomalies, orderSummary, skuSummary, abcData, fmsData, matrix,
     totVol, grpLocCatSummary, hasCat, hasLoc };
+}
+
+// ─── PPT GENERATION ───────────────────────────────────────────────────────────
+function generatePPT(mAnom, analysis) {
+  const { orderSummary, skuSummary, abcData, fmsData, matrix,
+    grpLocCatSummary, hasCat, hasLoc } = analysis;
+  const today = new Date().toLocaleDateString('en-IN');
+  const prs = new PptxGenJS();
+
+  // Theme
+  const PINK   = 'BE185D';
+  const DARK   = '0F172A';
+  const BLUE   = '0EA5E9';
+  const GREEN  = '059669';
+  const GRAY   = '64748B';
+  const LGRAY  = 'F1F5F9';
+  const WHITE  = 'FFFFFF';
+  const AMBER  = 'D97706';
+
+  prs.layout       = 'LAYOUT_WIDE';
+  prs.theme        = { headFontFace: 'Calibri', bodyFontFace: 'Calibri' };
+  prs.author       = 'DensiCube';
+  prs.company      = 'DensiCube';
+  prs.subject      = 'Order Analysis Report';
+
+  const hdr = (sld, title, sub) => {
+    sld.addShape(prs.ShapeType.rect, { x:0, y:0, w:'100%', h:1.2,
+      fill:{ color: PINK } });
+    sld.addText('DensiCube', { x:0.3, y:0.08, w:2, h:0.35,
+      fontSize:10, color:WHITE, bold:true, fontFace:'Calibri' });
+    sld.addText(title, { x:0.3, y:0.38, w:9, h:0.55,
+      fontSize:22, color:WHITE, bold:true, fontFace:'Calibri' });
+    if (sub) sld.addText(sub, { x:0.3, y:0.88, w:9, h:0.28,
+      fontSize:11, color:'FBCFE8', fontFace:'Calibri' });
+    sld.addText(today, { x:9.2, y:0.08, w:1.8, h:0.35,
+      fontSize:9, color:'FBCFE8', align:'right', fontFace:'Calibri' });
+  };
+
+  const statBox = (sld, x, y, val, label, color) => {
+    sld.addShape(prs.ShapeType.roundRect, { x, y, w:2.1, h:1.0,
+      fill:{ color: LGRAY }, line:{ color:'E2E8F0', pt:1 }, rectRadius:0.1 });
+    sld.addText(String(val), { x, y:y+0.08, w:2.1, h:0.5,
+      fontSize:26, bold:true, color, align:'center', fontFace:'Calibri' });
+    sld.addText(label, { x, y:y+0.6, w:2.1, h:0.32,
+      fontSize:9, color:GRAY, align:'center', fontFace:'Calibri' });
+  };
+
+  // ── SLIDE 1: Title ──────────────────────────────────────────────────────────
+  const s1 = prs.addSlide();
+  s1.addShape(prs.ShapeType.rect, { x:0, y:0, w:'100%', h:'100%', fill:{ color:DARK } });
+  s1.addShape(prs.ShapeType.rect, { x:0, y:0, w:0.18, h:'100%', fill:{ color:PINK } });
+  s1.addText('DensiCube', { x:0.5, y:1.2, w:9, h:0.6,
+    fontSize:14, color:'FBCFE8', bold:true, fontFace:'Calibri' });
+  s1.addText('Order Analysis Report', { x:0.5, y:1.9, w:9, h:1.2,
+    fontSize:36, color:WHITE, bold:true, fontFace:'Calibri' });
+  s1.addText('Container Intelligence', { x:0.5, y:3.1, w:9, h:0.5,
+    fontSize:13, color:'94A3B8', fontFace:'Calibri' });
+  s1.addText(`Generated: ${today}`, { x:0.5, y:5.5, w:9, h:0.4,
+    fontSize:11, color:'475569', fontFace:'Calibri' });
+  const totLines = orderSummary.reduce((s,r)=>s+r.lines,0);
+  const totQty   = orderSummary.reduce((s,r)=>s+r.totalQty,0);
+  s1.addText(`${totLines.toLocaleString()} order lines  ·  ${skuSummary.length} SKUs  ·  ${totQty.toLocaleString()} units`, {
+    x:0.5, y:5.9, w:9, h:0.4, fontSize:11, color:'64748B', fontFace:'Calibri' });
+
+  // ── SLIDE 2: Key Metrics ────────────────────────────────────────────────────
+  const s2 = prs.addSlide();
+  hdr(s2, 'Key Metrics', 'High-level summary of your order data');
+  const totOrders = orderSummary.reduce((s,r)=>s+r.uniqueOrders,0);
+  const totVol    = skuSummary.reduce((s,r)=>s+r.totalVolume,0);
+  statBox(s2, 0.4,  1.5, totLines.toLocaleString(),   'Total Order Lines',    PINK);
+  statBox(s2, 2.7,  1.5, totOrders.toLocaleString(),  'Unique Orders',        BLUE);
+  statBox(s2, 5.0,  1.5, skuSummary.length,            'Distinct SKUs',        GREEN);
+  statBox(s2, 7.3,  1.5, totQty.toLocaleString(),      'Total Qty Ordered',    AMBER);
+  statBox(s2, 0.4,  2.8, mAnom.length + analysis.anomalies.length, 'Data Anomalies', mAnom.length+analysis.anomalies.length>0?'BE185D':GREEN);
+  statBox(s2, 2.7,  2.8, abcData.filter(r=>r.abc==='A').length,  'ABC-A SKUs',  GREEN);
+  statBox(s2, 5.0,  2.8, fmsData.filter(r=>r.fms==='Fast').length,'Fast-Moving SKUs', BLUE);
+  statBox(s2, 7.3,  2.8, totVol>0?totVol.toFixed(2)+'m³':'—',   'Total Volume', GRAY);
+
+  // ── SLIDE 3: Order Summary by Location ─────────────────────────────────────
+  const s3 = prs.addSlide();
+  hdr(s3, 'Order Summary by Dispatch Location', 'Lines, orders and quantities per origin location');
+  const locRows = orderSummary.slice(0,10).map(r => ([
+    { text: r.dispatchLoc,                        options:{ bold:true, color:DARK } },
+    { text: r.lines.toLocaleString(),             options:{ align:'center' } },
+    { text: r.uniqueOrders.toLocaleString(),      options:{ align:'center' } },
+    { text: r.totalQty.toLocaleString(),          options:{ align:'center', bold:true, color:PINK } },
+    { text: r.avgQtyPerLine.toString(),           options:{ align:'center' } },
+  ]));
+  s3.addTable([
+    [{ text:'Location', options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+     { text:'Lines',    options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
+     { text:'Orders',   options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
+     { text:'Total Qty',options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
+     { text:'Avg Qty/Line', options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } }],
+    ...locRows,
+  ], { x:0.4, y:1.3, w:9.2, colW:[3,1.5,1.5,2,2.2],
+    fontSize:11, border:{ type:'solid', color:'E2E8F0', pt:1 },
+    rowH:0.35, autoPage:false });
+
+  // ── SLIDE 4: ABC Analysis ───────────────────────────────────────────────────
+  const s4 = prs.addSlide();
+  hdr(s4, 'ABC Analysis', 'Ranked by shipping volume — A = top 70%, B = next 20%, C = bottom 10%');
+  const abcClasses = ['A','B','C'];
+  const abcColors  = { A:GREEN, B:AMBER, C:GRAY };
+  abcClasses.forEach((cls, i) => {
+    const items = abcData.filter(r=>r.abc===cls);
+    const vol   = items.reduce((s,r)=>s+r.totalVolume,0);
+    const totV  = abcData.reduce((s,r)=>s+r.totalVolume,0);
+    const x = 0.4 + i * 3.2;
+    s4.addShape(prs.ShapeType.roundRect, { x, y:1.3, w:3.0, h:2.8,
+      fill:{ color: LGRAY }, line:{ color:'E2E8F0', pt:1 }, rectRadius:0.1 });
+    s4.addText(`Class ${cls}`, { x, y:1.35, w:3.0, h:0.45,
+      fontSize:18, bold:true, color:abcColors[cls], align:'center', fontFace:'Calibri' });
+    s4.addText(`${items.length} SKUs`, { x, y:1.8, w:3.0, h:0.4,
+      fontSize:22, bold:true, color:DARK, align:'center', fontFace:'Calibri' });
+    s4.addText(`${totV>0?(vol/totV*100).toFixed(1):0}% of volume`, { x, y:2.2, w:3.0, h:0.35,
+      fontSize:12, color:GRAY, align:'center', fontFace:'Calibri' });
+    const topSkus = items.slice(0,4).map(r=>r.sku).join('\n');
+    s4.addText(`Top SKUs:\n${topSkus||'—'}`, { x:x+0.1, y:2.6, w:2.8, h:1.3,
+      fontSize:9, color:GRAY, fontFace:'Calibri', valign:'top' });
+  });
+  s4.addText('💡 Focus container planning on Class A SKUs — they drive most of your freight volume.',
+    { x:0.4, y:4.3, w:9.2, h:0.5, fontSize:10, color:PINK, italic:true, fontFace:'Calibri' });
+
+  // ── SLIDE 5: FMS Analysis ───────────────────────────────────────────────────
+  const s5 = prs.addSlide();
+  hdr(s5, 'FMS Analysis', 'Ranked by order frequency — Fast = top 33%, Medium = mid 33%, Slow = bottom 33%');
+  const fmsClasses = ['Fast','Medium','Slow'];
+  const fmsColors  = { Fast:GREEN, Medium:AMBER, Slow:'DC2626' };
+  fmsClasses.forEach((cls, i) => {
+    const items  = fmsData.filter(r=>r.fms===cls);
+    const lines  = items.reduce((s,r)=>s+r.lines,0);
+    const totL   = fmsData.reduce((s,r)=>s+r.lines,0);
+    const x = 0.4 + i * 3.2;
+    s5.addShape(prs.ShapeType.roundRect, { x, y:1.3, w:3.0, h:2.8,
+      fill:{ color:LGRAY }, line:{ color:'E2E8F0', pt:1 }, rectRadius:0.1 });
+    s5.addText(cls, { x, y:1.35, w:3.0, h:0.45,
+      fontSize:18, bold:true, color:fmsColors[cls], align:'center', fontFace:'Calibri' });
+    s5.addText(`${items.length} SKUs`, { x, y:1.8, w:3.0, h:0.4,
+      fontSize:22, bold:true, color:DARK, align:'center', fontFace:'Calibri' });
+    s5.addText(`${totL>0?(lines/totL*100).toFixed(1):0}% of order lines`, { x, y:2.2, w:3.0, h:0.35,
+      fontSize:12, color:GRAY, align:'center', fontFace:'Calibri' });
+    const topSkus = items.slice(0,4).map(r=>r.sku).join('\n');
+    s5.addText(`Top SKUs:\n${topSkus||'—'}`, { x:x+0.1, y:2.6, w:2.8, h:1.3,
+      fontSize:9, color:GRAY, fontFace:'Calibri', valign:'top' });
+  });
+  s5.addText('💡 Fast-moving SKUs need reliable stock at dispatch locations. Slow movers are candidates for batch consolidation.',
+    { x:0.4, y:4.3, w:9.2, h:0.5, fontSize:10, color:PINK, italic:true, fontFace:'Calibri' });
+
+  // ── SLIDE 6: ABC-FMS Matrix ─────────────────────────────────────────────────
+  const s6 = prs.addSlide();
+  hdr(s6, 'ABC-FMS Matrix', 'Volume (ABC) × Frequency (FMS) — find your priority SKUs');
+  const matColors = {
+    'A-Fast':'D1FAE5','A-Medium':'FEF9C3','A-Slow':'FEF3C7',
+    'B-Fast':'DBEAFE','B-Medium':'F3F4F6','B-Slow':'F3F4F6',
+    'C-Fast':'FEE2E2','C-Medium':'F3F4F6','C-Slow':'F3F4F6',
+  };
+  const matHdr = [
+    { text:'', options:{ fill:{ color:DARK } } },
+    ...['Fast','Medium','Slow'].map(f => ({ text:f, options:{ bold:true, color:WHITE, fill:{ color:DARK }, align:'center' } })),
+  ];
+  const matDataRows = ['A','B','C'].map(a => ([
+    { text:`Class ${a}`, options:{ bold:true, color:abcColors[a], fill:{ color:LGRAY } } },
+    ...['Fast','Medium','Slow'].map(f => {
+      const cell = matrix[`${a}-${f}`];
+      return { text: cell?.count ? `${cell.count} SKUs\n${cell.totalQty.toLocaleString()} units` : '—',
+        options:{ fill:{ color:matColors[`${a}-${f}`] }, align:'center',
+          fontSize:10, color: cell?.count ? DARK : '9CA3AF' } };
+    }),
+  ]));
+  s6.addTable([matHdr,...matDataRows], { x:1.5, y:1.4, w:7, colW:[1.5,1.8,1.8,1.9],
+    fontSize:11, border:{ type:'solid', color:'E2E8F0', pt:1 }, rowH:0.7, autoPage:false });
+  s6.addText('A-Fast = Priority / Star products  |  A-Slow = High value, low frequency  |  C-Fast = Review MOQ  |  C-Slow = Rationalise',
+    { x:0.4, y:4.5, w:9.2, h:0.5, fontSize:9, color:GRAY, italic:true, align:'center', fontFace:'Calibri' });
+
+  // ── SLIDE 7: Group × Location × Category ────────────────────────────────────
+  if (grpLocCatSummary?.length > 0) {
+    const s7 = prs.addSlide();
+    hdr(s7, 'Group × Location × Category', 'Top shipping combinations by order type, origin and product category');
+    const top10 = grpLocCatSummary.slice(0, 10);
+    const totGLC = grpLocCatSummary.reduce((s,r)=>s+r.totalQty,0);
+    const glcRows = top10.map((r,i) => ([
+      { text:(i+1).toString(),           options:{ align:'center', color:GRAY } },
+      { text:r.group,                    options:{ bold:true, color:PINK } },
+      { text:r.location||'—',           options:{ color:DARK } },
+      { text:r.category||'—',           options:{ color:DARK } },
+      { text:r.totalQty.toLocaleString(),options:{ align:'center', bold:true } },
+      { text:totGLC>0?+(r.totalQty/totGLC*100).toFixed(1)+'%':'—', options:{ align:'center', color:GRAY } },
+    ]));
+    s7.addTable([
+      [{ text:'#',        options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
+       { text:'Group',    options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+       { text:'Location', options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+       { text:'Category', options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+       { text:'Total Qty',options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
+       { text:'% of Total',options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } }],
+      ...glcRows,
+    ], { x:0.4, y:1.35, w:9.2, colW:[0.4,1.8,2.0,2.2,1.9,1.0],
+      fontSize:10, border:{ type:'solid', color:'E2E8F0', pt:1 }, rowH:0.32, autoPage:false });
+  }
+
+  // ── SLIDE 8: Recommendations ────────────────────────────────────────────────
+  const s8 = prs.addSlide();
+  hdr(s8, 'Recommendations', 'Data-driven actions from your order analysis');
+  const aSkus  = abcData.filter(r=>r.abc==='A').length;
+  const fastSk = fmsData.filter(r=>r.fms==='Fast').length;
+  const anomCount = mAnom.length + analysis.anomalies.length;
+  const recs = [
+    { icon:'📦', title:'Prioritise A-Class SKUs', body:`${aSkus} SKUs drive 70% of your freight volume. Ensure these are always container-optimised using the DensiCube Multi-SKU Planner.` },
+    { icon:'🚀', title:'Fast-Moving SKU Readiness', body:`${fastSk} fast-moving SKUs have high order frequency. Keep them stocked at primary dispatch locations to avoid split shipments.` },
+    { icon:'📊', title:'Consolidate Slow Movers', body:`C-class slow-moving SKUs are candidates for batch consolidation. Ship them together to reduce per-unit freight cost.` },
+    { icon:'⚠️', title:'Fix Data Anomalies', body:anomCount>0?`${anomCount} anomalies found in your data. Fix missing dimensions and zero-quantity rows before the next shipment plan.`:'No anomalies found. Your data is clean — good for accurate planning.' },
+    { icon:'🗺️', title:'Location-Based Planning', body:`Use dispatch location breakdown to allocate container types per origin. High-volume locations may benefit from dedicated container schedules.` },
+  ];
+  recs.forEach((r, i) => {
+    const y = 1.35 + i * 0.82;
+    s8.addShape(prs.ShapeType.roundRect, { x:0.4, y, w:9.2, h:0.72,
+      fill:{ color:i%2===0?LGRAY:WHITE }, line:{ color:'E2E8F0', pt:1 }, rectRadius:0.06 });
+    s8.addText(`${r.icon}  ${r.title}`, { x:0.6, y:y+0.06, w:9.0, h:0.28,
+      fontSize:11, bold:true, color:DARK, fontFace:'Calibri' });
+    s8.addText(r.body, { x:0.6, y:y+0.34, w:9.0, h:0.3,
+      fontSize:9, color:GRAY, fontFace:'Calibri' });
+  });
+
+  // ── Save ────────────────────────────────────────────────────────────────────
+  prs.writeFile({ fileName: `DensiCube_Insights_${today.replace(/\//g,'-')}.pptx` });
 }
 
 // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
@@ -619,10 +846,16 @@ export default function OrderAnalyserTool() {
               </table>
             </div>
 
-            <button onClick={() => exportReport(mAnom, analysis)}
-              style={{ ...S.btnPrimary, background:'linear-gradient(135deg,#be185d,#9d174d)' }}>
-              ⬇ Download 6-Sheet Excel Report
-            </button>
+            <div style={{ display:'flex', gap:'10px', flexWrap:'wrap' }}>
+              <button onClick={() => exportReport(mAnom, analysis)}
+                style={{ ...S.btnPrimary, flex:1, background:'linear-gradient(135deg,#be185d,#9d174d)' }}>
+                ⬇ Download Excel Report
+              </button>
+              <button onClick={() => generatePPT(mAnom, analysis)}
+                style={{ ...S.btnPrimary, flex:1, background:'linear-gradient(135deg,#7c3aed,#6d28d9)' }}>
+                📊 Download PPT Insights
+              </button>
+            </div>
             <div style={{ fontSize:'11px', color:'#9ca3af', textAlign:'center', marginTop:'6px' }}>
               Anomalies · Order Summary · SKU Summary · ABC · FMS · ABC-FMS Matrix · Group×Location×Category
             </div>
