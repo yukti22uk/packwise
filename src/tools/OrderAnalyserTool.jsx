@@ -24,32 +24,72 @@ function isHeaderRow(row) {
 
 // ─── MASTER SKU: PARSE & VALIDATE ────────────────────────────────────────────
 // Fixed order: SKU Name | Length (mm) | Width (mm) | Height (mm) | Weight/Box (kg)
+// Missing dimension/weight values are filled with averages from valid rows.
 function parseMasterSKU(text) {
   const rows = parseTSV(text);
   const dataRows = rows.length > 0 && isHeaderRow(rows[0]) ? rows.slice(1) : rows;
   const skus = [], anomalies = [], seen = new Set();
 
-  dataRows.forEach((r, i) => {
-    const rowNum = i + (rows.length > dataRows.length ? 2 : 1);
-    const name = r[0] || '';
-    const L = parseFloat(r[1]) || 0;
-    const W = parseFloat(r[2]) || 0;
-    const H = parseFloat(r[3]) || 0;
-    const weight = parseFloat(r[4]) || 0;
+  // ── Pass 1: parse raw values ─────────────────────────────────────────────
+  const raw = dataRows.map((r, i) => ({
+    rowNum: i + (rows.length > dataRows.length ? 2 : 1),
+    name:   (r[0] || '').trim(),
+    L:      parseFloat(r[1]) || 0,
+    W:      parseFloat(r[2]) || 0,
+    H:      parseFloat(r[3]) || 0,
+    weight: parseFloat(r[4]) || 0,
+  }));
 
-    if (!name.trim()) { anomalies.push({ row: rowNum, sku: '—', field: 'SKU Name', issue: 'Missing SKU name', sev: 'High' }); return; }
-    if (seen.has(name)) anomalies.push({ row: rowNum, sku: name, field: 'SKU', issue: `Duplicate SKU (appears more than once)`, sev: 'Medium' });
-    else seen.add(name);
-    if (!L) anomalies.push({ row: rowNum, sku: name, field: 'Length', issue: 'Missing or zero length', sev: 'High' });
-    if (!W) anomalies.push({ row: rowNum, sku: name, field: 'Width',  issue: 'Missing or zero width',  sev: 'High' });
-    if (!H) anomalies.push({ row: rowNum, sku: name, field: 'Height', issue: 'Missing or zero height', sev: 'High' });
-    if (!weight) anomalies.push({ row: rowNum, sku: name, field: 'Weight', issue: 'Missing or zero weight', sev: 'Medium' });
+  // ── Compute averages from valid (non-zero) rows ───────────────────────────
+  const validL = raw.filter(r => r.L > 0).map(r => r.L);
+  const validW = raw.filter(r => r.W > 0).map(r => r.W);
+  const validH = raw.filter(r => r.H > 0).map(r => r.H);
+  const validWt= raw.filter(r => r.weight > 0).map(r => r.weight);
+  const avg = (arr) => arr.length > 0 ? Math.round(arr.reduce((s,v)=>s+v,0)/arr.length) : 0;
+  const avgL  = avg(validL);
+  const avgW  = avg(validW);
+  const avgH  = avg(validH);
+  const avgWt = +(validWt.reduce((s,v)=>s+v,0) / Math.max(1, validWt.length)).toFixed(2);
 
-    skus.push({ name, L, W, H, weight, volume: L * W * H });
+  // ── Pass 2: validate, fill missing with averages, flag anomalies ─────────
+  raw.forEach(r => {
+    if (!r.name) {
+      anomalies.push({ row:r.rowNum, sku:'—', field:'SKU Name', issue:'Missing SKU name — row skipped', sev:'High' });
+      return;
+    }
+    if (seen.has(r.name)) anomalies.push({ row:r.rowNum, sku:r.name, field:'SKU', issue:'Duplicate SKU', sev:'Medium' });
+    else seen.add(r.name);
+
+    // Fill missing dims with averages
+    let { L, W, H, weight } = r;
+    if (!L) {
+      anomalies.push({ row:r.rowNum, sku:r.name, field:'Length', issue:`Missing — filled with average (${avgL} mm)`, sev:'Medium' });
+      L = avgL;
+    }
+    if (!W) {
+      anomalies.push({ row:r.rowNum, sku:r.name, field:'Width', issue:`Missing — filled with average (${avgW} mm)`, sev:'Medium' });
+      W = avgW;
+    }
+    if (!H) {
+      anomalies.push({ row:r.rowNum, sku:r.name, field:'Height', issue:`Missing — filled with average (${avgH} mm)`, sev:'Medium' });
+      H = avgH;
+    }
+    if (!weight) {
+      anomalies.push({ row:r.rowNum, sku:r.name, field:'Weight', issue:`Missing — filled with average (${avgWt} kg)`, sev:'Low' });
+      weight = avgWt;
+    }
+
+    skus.push({ name:r.name, L, W, H, weight, volume: L * W * H });
   });
 
   const masterMap = new Map(skus.map(s => [s.name, s]));
-  return { skus, anomalies, masterMap };
+  const avgValues = { L: avgL, W: avgW, H: avgH, weight: avgWt,
+    filledL:  anomalies.filter(a=>a.field==='Length').length,
+    filledW:  anomalies.filter(a=>a.field==='Width').length,
+    filledH:  anomalies.filter(a=>a.field==='Height').length,
+    filledWt: anomalies.filter(a=>a.field==='Weight').length,
+  };
+  return { skus, anomalies, masterMap, avgValues };
 }
 
 // ─── ORDER DATA: PARSE & ANALYSE ─────────────────────────────────────────────
@@ -183,7 +223,7 @@ function parseOrderData(text, masterMap) {
 }
 
 // ─── PPT GENERATION ───────────────────────────────────────────────────────────
-function generatePPT(mAnom, analysis) {
+function generatePPT(mAnom, analysis, avgValues) {
   const { orderSummary, skuSummary, abcData, fmsData, matrix,
     grpLocCatSummary, hasCat, hasLoc } = analysis;
   const today = new Date().toLocaleDateString('en-IN');
@@ -404,12 +444,71 @@ function generatePPT(mAnom, analysis) {
       fontSize:9, color:GRAY, fontFace:'Calibri' });
   });
 
+  // ── SLIDE 9: Assumptions ───────────────────────────────────────────────────
+  const s9 = prs.addSlide();
+  hdr(s9, 'Assumptions & Methodology', 'All data processing rules and imputation assumptions used in this report');
+  const asmData = buildAssumptions(mAnom, analysis, avgValues);
+  const asmDataRows = asmData.slice(1, 12); // header + first 11 rows fit on slide
+  s9.addTable([
+    [{ text:'Category',   options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+     { text:'Assumption', options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+     { text:'Value / Detail', options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+     { text:'Rationale', options:{ bold:true, color:WHITE, fill:{ color:PINK } } }],
+    ...asmDataRows.map((r, i) => ([
+      { text: r[0], options:{ bold:true, color:PINK,  fill:{ color: i%2===0?'F8FAFC':WHITE }, fontSize:9 } },
+      { text: r[1], options:{ color:DARK, fill:{ color: i%2===0?'F8FAFC':WHITE }, fontSize:9 } },
+      { text: r[2], options:{ color:'059669', fill:{ color: i%2===0?'F8FAFC':WHITE }, fontSize:9, bold:true } },
+      { text: r[3], options:{ color:GRAY, fill:{ color: i%2===0?'F8FAFC':WHITE }, fontSize:8, italic:true } },
+    ])),
+  ], { x:0.4, y:1.35, w:9.2, colW:[1.4, 2.8, 2.4, 2.6],
+    border:{ type:'solid', color:'E2E8F0', pt:1 }, rowH:0.3, autoPage:false });
+  s9.addText('Full assumptions list available in Sheet 8 of the Excel report.',
+    { x:0.4, y:6.8, w:9.2, h:0.28, fontSize:9, color:GRAY, italic:true, align:'center', fontFace:'Calibri' });
+
   // ── Save ────────────────────────────────────────────────────────────────────
   prs.writeFile({ fileName: `DensiCube_Insights_${today.replace(/\//g,'-')}.pptx` });
 }
 
 // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
-function exportReport(mAnom, analysis) {
+
+function buildAssumptions(mAnom, analysis, avgValues) {
+  const av = avgValues || {};
+  const { skuSummary, abcData, fmsData } = analysis;
+  const rows = [
+    ['Category', 'Assumption', 'Value / Detail', 'Rationale'],
+    // Master SKU assumptions
+    ['Master Data', 'ABC classification threshold — Class A', 'Top 70% cumulative shipping volume', 'Standard Pareto principle for inventory prioritisation'],
+    ['Master Data', 'ABC classification threshold — Class B', 'Next 20% cumulative volume (70-90%)', 'Standard Pareto principle'],
+    ['Master Data', 'ABC classification threshold — Class C', 'Bottom 10% cumulative volume (90-100%)', 'Standard Pareto principle'],
+    ['Master Data', 'FMS classification — Fast', 'Top 33% by order line frequency', 'Equal tertile split of order frequency'],
+    ['Master Data', 'FMS classification — Medium', 'Middle 33% by order line frequency', 'Equal tertile split'],
+    ['Master Data', 'FMS classification — Slow', 'Bottom 33% by order line frequency', 'Equal tertile split'],
+    ['Master Data', 'Volume calculation', 'L × W × H (mm³) converted to m³ ÷ 1,000,000,000', 'Standard cubic volume formula'],
+  ];
+
+  // Avg fill assumptions
+  if (av.filledL > 0) rows.push(['Master Data', `Missing Length — ${av.filledL} SKU(s)`, `Filled with dataset average: ${av.L} mm`, 'Average of all SKUs with valid length values']);
+  if (av.filledW > 0) rows.push(['Master Data', `Missing Width — ${av.filledW} SKU(s)`, `Filled with dataset average: ${av.W} mm`, 'Average of all SKUs with valid width values']);
+  if (av.filledH > 0) rows.push(['Master Data', `Missing Height — ${av.filledH} SKU(s)`, `Filled with dataset average: ${av.H} mm`, 'Average of all SKUs with valid height values']);
+  if (av.filledWt > 0) rows.push(['Master Data', `Missing Weight — ${av.filledWt} SKU(s)`, `Filled with dataset average: ${av.weight} kg`, 'Average of all SKUs with valid weight values']);
+  if (!av.filledL && !av.filledW && !av.filledH && !av.filledWt) rows.push(['Master Data', 'Missing dimensions/weight', 'None — all SKUs had complete data', '—']);
+
+  rows.push(
+    // Order data
+    ['Order Data', 'Missing Order Type', 'Labelled as "Unknown"', 'Optional column — absence does not affect core analytics'],
+    ['Order Data', 'Missing Category', 'Labelled as "Unspecified"', 'Optional column — analytics still run on available data'],
+    ['Order Data', 'Missing Dispatch Location', 'Labelled as "Unspecified"', 'Optional column — analytics still run on available data'],
+    ['Order Data', 'SKUs not in Master data', 'Flagged as anomaly — volume set to 0 for that SKU', 'Cannot compute freight volume without dimensions'],
+    ['Order Data', 'Zero or negative qty', 'Flagged as high-severity anomaly', 'Negative quantities indicate data entry errors'],
+    // Analytics
+    ['Analytics', 'Order Summary grouping', 'Grouped by Dispatch Location', 'Location-based grouping is more actionable for logistics planning'],
+    ['Analytics', 'Duplicate SKU in Master', 'First occurrence used — duplicate flagged as anomaly', 'Prevents double-counting in volume calculations'],
+    ['Analytics', 'Total volume per SKU', 'Vol per unit × Total Qty ordered', 'Represents total freight volume demand for each SKU'],
+  );
+  return rows;
+}
+
+function exportReport(mAnom, analysis, avgValues) {
   const { anomalies, orderSummary, skuSummary, abcData, fmsData, matrix, grpLocCatSummary, hasCat, hasLoc } = analysis;
   const wb = XLSX.utils.book_new();
   const today = new Date().toLocaleDateString();
@@ -527,6 +626,15 @@ function exportReport(mAnom, analysis) {
   XLSX.utils.book_append_sheet(wb, ws(glcRows,
     [20,22,22,8,14,14,12,16,14]), '7. Group x Location x Category');
 
+  // ── Sheet 8: Assumptions ────────────────────────────────────────────────────
+  const asmRows = buildAssumptions(mAnom, analysis, avgValues);
+  XLSX.utils.book_append_sheet(wb, ws([
+    ['ASSUMPTIONS & METHODOLOGY'],
+    ['This sheet documents all assumptions made during data processing and analysis'],
+    ['Generated:', today], [],
+    ...asmRows,
+  ], [16, 42, 36, 52]), '8. Assumptions');
+
   XLSX.writeFile(wb, `DensiCube_Analysis_${today.replace(/\//g,'-')}.xlsx`);
 }
 
@@ -535,6 +643,7 @@ export default function OrderAnalyserTool() {
   const [mText,    setMText]    = useState('');
   const [mAnom,    setMAnom]    = useState([]);
   const [masterMap,setMasterMap]= useState(new Map());
+  const [mAvgValues,setMAvgValues]= useState(null);
   const [mDone,    setMDone]    = useState(false);
   const [mError,   setMError]   = useState('');
   const [mStats,   setMStats]   = useState(null);
@@ -547,14 +656,15 @@ export default function OrderAnalyserTool() {
   const processMaster = () => {
     if (!mText.trim()) { setMError('Paste your Master SKU data first.'); return; }
     setMError(''); setMDone(false); setMAnom([]); setMasterMap(new Map()); setMStats(null);
-    const { skus, anomalies, masterMap: mm } = parseMasterSKU(mText);
+    const { skus, anomalies, masterMap: mm, avgValues } = parseMasterSKU(mText);
     if (!skus.length && anomalies.filter(a=>a.sev==='High').length > 0) {
       setMError('No valid SKU rows found. Check that your columns are in the correct order: SKU Name | L | W | H | Weight');
       setMAnom(anomalies); return;
     }
-    setMAnom(anomalies); setMasterMap(mm);
+    setMAnom(anomalies); setMasterMap(mm); setMAvgValues(avgValues);
     setMStats({ total: mm.size, withDims: skus.filter(s=>s.L&&s.W&&s.H).length,
-      withWeight: skus.filter(s=>s.weight>0).length });
+      withWeight: skus.filter(s=>s.weight>0).length,
+      avgFilled: anomalies.filter(a=>a.issue.includes('average')).length });
     setMDone(true);
   };
 
@@ -572,8 +682,8 @@ export default function OrderAnalyserTool() {
 
 
   // ── Shared helpers ─────────────────────────────────────────────────────────
-  const sev = s => <span style={{ background:s==='High'?'#fee2e2':'#fef9c3',
-    color:s==='High'?'#991b1b':'#854d0e', padding:'2px 7px',
+  const sev = s => <span style={{ background:s==='High'?'#fee2e2':s==='Medium'?'#fef9c3':'#f0fdf4',
+    color:s==='High'?'#991b1b':s==='Medium'?'#854d0e':'#166534', padding:'2px 7px',
     borderRadius:'99px', fontSize:'11px', fontWeight:'700' }}>{s}</span>;
 
   const abcB = c => { const m={A:['#dcfce7','#166534'],B:['#fef9c3','#854d0e'],C:['#f3f4f6','#6b7280']};
@@ -657,8 +767,8 @@ export default function OrderAnalyserTool() {
             <div style={{ display:'flex', gap:'10px', marginBottom:'12px' }}>
               {[['Total SKUs', mStats.total, '#eff6ff','#1d4ed8'],
                 ['With Dimensions', mStats.withDims, '#f0fdf4','#166534'],
-                ['Issues Found', mAnom.length, mAnom.length?'#fff1f2':'#f0fdf4', mAnom.length?'#be185d':'#166534'],
-                ['High Severity', mAnom.filter(a=>a.sev==='High').length, '#fff1f2','#991b1b'],
+                ['Avg Values Used', mStats.avgFilled, mStats.avgFilled?'#fffbeb':'#f0fdf4', mStats.avgFilled?'#d97706':'#166534'],
+                ['Issues Found', mAnom.filter(a=>!a.issue.includes('average')).length, mAnom.filter(a=>!a.issue.includes('average')).length?'#fff1f2':'#f0fdf4', mAnom.filter(a=>!a.issue.includes('average')).length?'#be185d':'#166534'],
               ].map(([l,v,bg,col]) => (
                 <div key={l} style={{ flex:1, background:bg, borderRadius:'8px', padding:'10px', textAlign:'center' }}>
                   <div style={{ fontSize:'20px', fontWeight:'800', color:col }}>{v}</div>
@@ -847,17 +957,17 @@ export default function OrderAnalyserTool() {
             </div>
 
             <div style={{ display:'flex', gap:'10px', flexWrap:'wrap' }}>
-              <button onClick={() => exportReport(mAnom, analysis)}
+              <button onClick={() => exportReport(mAnom, analysis, mAvgValues)}
                 style={{ ...S.btnPrimary, flex:1, background:'linear-gradient(135deg,#be185d,#9d174d)' }}>
                 ⬇ Download Excel Report
               </button>
-              <button onClick={() => generatePPT(mAnom, analysis)}
+              <button onClick={() => generatePPT(mAnom, analysis, mAvgValues)}
                 style={{ ...S.btnPrimary, flex:1, background:'linear-gradient(135deg,#7c3aed,#6d28d9)' }}>
                 📊 Download PPT Insights
               </button>
             </div>
             <div style={{ fontSize:'11px', color:'#9ca3af', textAlign:'center', marginTop:'6px' }}>
-              Anomalies · Order Summary · SKU Summary · ABC · FMS · ABC-FMS Matrix · Group×Location×Category
+              Anomalies · Order Summary · SKU Summary · ABC · FMS · ABC-FMS Matrix · Group×Location×Category · Assumptions
             </div>
           </div>
         )}
