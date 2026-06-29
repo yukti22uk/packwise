@@ -119,54 +119,6 @@ function parseOrderData(text, masterMap) {
       volumePerUnit:m.volume, totalVolume:m.volume*g.qty/1e9 };
   });
 
-  // ── Category Analysis ────────────────────────────────────────────────────────
-  const hasCat = orders.some(o => o.category);
-  const catMap = {};
-  orders.forEach(o => {
-    const cat = o.category || 'Unspecified';
-    if (!catMap[cat]) catMap[cat] = { lines:0, orders:new Set(), skus:new Set(), qty:0, volume:0, locations:new Set() };
-    const g = catMap[cat];
-    g.lines++; g.qty += o.qty;
-    if (o.orderNo)     g.orders.add(o.orderNo);
-    if (o.sku)         g.skus.add(o.sku);
-    if (o.dispatchLoc) g.locations.add(o.dispatchLoc);
-    const m = masterMap.get(o.sku);
-    if (m) g.volume += m.volume * o.qty / 1e9;
-  });
-  const categorySummary = Object.entries(catMap)
-    .map(([cat, g]) => ({ category:cat, lines:g.lines, uniqueOrders:g.orders.size,
-      distinctSKUs:g.skus.size, totalQty:g.qty, totalVolume:+g.volume.toFixed(4),
-      locations:[...g.locations].join(', ')||'—' }))
-    .sort((a,b) => b.totalQty - a.totalQty);
-  const totCatVol = categorySummary.reduce((s,r) => s+r.totalVolume, 0);
-  categorySummary.forEach(r => {
-    r.volPct = totCatVol > 0 ? +(r.totalVolume/totCatVol*100).toFixed(1) : 0;
-  });
-
-  // ── Dispatch Location Analysis ───────────────────────────────────────────────
-  const hasLoc = orders.some(o => o.dispatchLoc);
-  const locMap = {};
-  orders.forEach(o => {
-    const loc = o.dispatchLoc || 'Unspecified';
-    if (!locMap[loc]) locMap[loc] = { lines:0, orders:new Set(), skus:new Set(), qty:0, volume:0, categories:new Set() };
-    const g = locMap[loc];
-    g.lines++; g.qty += o.qty;
-    if (o.orderNo)  g.orders.add(o.orderNo);
-    if (o.sku)      g.skus.add(o.sku);
-    if (o.category) g.categories.add(o.category);
-    const m = masterMap.get(o.sku);
-    if (m) g.volume += m.volume * o.qty / 1e9;
-  });
-  const locationSummary = Object.entries(locMap)
-    .map(([loc, g]) => ({ location:loc, lines:g.lines, uniqueOrders:g.orders.size,
-      distinctSKUs:g.skus.size, totalQty:g.qty, totalVolume:+g.volume.toFixed(4),
-      categories:[...g.categories].join(', ')||'—' }))
-    .sort((a,b) => b.totalQty - a.totalQty);
-  const totLocVol = locationSummary.reduce((s,r) => s+r.totalVolume, 0);
-  locationSummary.forEach(r => {
-    r.volPct = totLocVol > 0 ? +(r.totalVolume/totLocVol*100).toFixed(1) : 0;
-  });
-
   // ABC by volume
   const abcData = [...skuSummary].sort((a,b) => b.totalVolume - a.totalVolume);
   const totVol = abcData.reduce((s,r) => s+r.totalVolume, 0);
