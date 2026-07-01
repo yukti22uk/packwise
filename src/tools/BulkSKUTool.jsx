@@ -14,13 +14,26 @@ const PALLET_PRESETS = {
   custom:   { label: 'Custom',                     L:0,    W:0,    H:0    },
 };
 
+
+// ─── BOXES PER PALLET (LOCK HEIGHT) ──────────────────────────────────────────
+// Lock height: box H is always vertical — only horizontal rotation (L↔W swap)
+function calcLockedBPP(pL, pW, pH, sl, sw, sh) {
+  if (sh > pH) return 0; // box taller than pallet
+  const layers = Math.floor(pH / sh);
+  const ori1   = Math.floor(pL / sl) * Math.floor(pW / sw);
+  const ori2   = Math.floor(pL / sw) * Math.floor(pW / sl);
+  return Math.max(ori1, ori2) * layers;
+}
+
 // ─── PALLET MIXING ALGORITHM ──────────────────────────────────────────────────
-function calcPalletMix(skus, pL, pW, pH, maxSkus) {
+function calcPalletMix(skus, pL, pW, pH, maxSkus, lockHeight=false) {
   // Step 1: calc boxes per pallet and pallet equivalents per SKU
   const items = skus
     .filter(s => s.sl>0 && s.sw>0 && s.sh>0 && s.qtyAvail>0)
     .map(s => {
-      const { total: bpp } = calcMixed(pL, pW, pH, s.sl, s.sw, s.sh);
+      const bpp = lockHeight
+        ? calcLockedBPP(pL, pW, pH, s.sl, s.sw, s.sh)
+        : calcMixed(pL, pW, pH, s.sl, s.sw, s.sh).total;
       if (!bpp || bpp === 0) return { ...s, bpp:0, palletEquiv:null, fullPallets:0, remainder:0, error:'Box too large for pallet' };
       const pe     = s.qtyAvail / bpp;
       const full   = Math.floor(pe);
@@ -89,6 +102,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
   const [pPreset,     setPPreset]     = useState('standard');
   const [pL,setPL]=useState('1200'); const [pW,setPW]=useState('1000'); const [pH,setPH]=useState('1200');
   const [maxSkus,     setMaxSkus]     = useState(4);
+  const [lockHeight,  setLockHeight]  = useState(false);
   const [mixResult,   setMixResult]   = useState(null);
   const [mixError,    setMixError]    = useState('');
 
@@ -180,7 +194,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
       .filter(s => s.qtyAvail > 0)
       .map(s => ({ ...s }));
     if (!skusForMix.length) { setMixError('No SKUs with available qty found.'); return; }
-    const mr = calcPalletMix(skusForMix, PL, PW, PH, maxSkus);
+    const mr = calcPalletMix(skusForMix, PL, PW, PH, maxSkus, lockHeight);
     setMixResult(mr);
   };
 
@@ -210,7 +224,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
     if (mixResult) {
       const mixRows = [
         ['PALLET MIXING RESULTS'],
-        [`Pallet: ${pL}×${pW}×${pH}mm | Max SKUs per pallet: ${maxSkus}`],[],
+        [`Pallet: ${pL}×${pW}×${pH}mm | Max SKUs per pallet: ${maxSkus} | Height: ${lockHeight?'LOCKED (upright only)':'Free (all orientations)'}`],[],
         ['SKU','Qty Available','Boxes/Pallet','Pallet Equivalents','Full Pallets','Remainder'],
         ...mixResult.items.map(r=>[r.name, r.qtyAvail, r.bpp||'—',
           r.palletEquiv!=null?r.palletEquiv:'—', r.fullPallets, r.remainder>0?r.remainder:'0']),
@@ -320,6 +334,28 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
               </div>
             </div>
 
+            {/* Lock Height toggle */}
+            <div style={{marginTop:'10px',padding:'10px 12px',background:'#f8fafc',
+              border:'1px solid #e2e8f0',borderRadius:'8px',
+              display:'flex',alignItems:'center',gap:'10px',cursor:'pointer'}}
+              onClick={()=>setLockHeight(h=>!h)}>
+              <div style={{width:'36px',height:'20px',borderRadius:'99px',position:'relative',
+                background:lockHeight?'#7c3aed':'#d1d5db',transition:'background 0.2s',flexShrink:0}}>
+                <div style={{position:'absolute',top:'2px',
+                  left:lockHeight?'18px':'2px',width:'16px',height:'16px',
+                  background:'#fff',borderRadius:'50%',transition:'left 0.2s',
+                  boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+              </div>
+              <div>
+                <div style={{fontWeight:'700',fontSize:'12px',color:lockHeight?'#7c3aed':'#374151'}}>
+                  🔒 Lock Height (Keep Boxes Upright)
+                </div>
+                <div style={{fontSize:'10px',color:'#9ca3af',marginTop:'1px'}}>
+                  {lockHeight ? 'Box H is always vertical — no tipping allowed' : 'All 6 orientations tried (max boxes per pallet)'}
+                </div>
+              </div>
+            </div>
+
             {mixError && <div style={{...S.error, marginTop:'8px'}}>⚠ {mixError}</div>}
             <button style={{...S.btnPrimary, marginTop:'10px',
               background:'linear-gradient(135deg,#7c3aed,#6d28d9)'}}
@@ -425,6 +461,9 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                 <div style={S.cardTitle}>🪵 Pallet Mixing Summary</div>
                 <div style={{fontSize:'12px',color:'#6b7280',marginBottom:'14px'}}>
                   Pallet: {pL}×{pW}×{pH}mm · Max {maxSkus} SKU{maxSkus>1?'s':''} per pallet
+                  {lockHeight ? <span style={{marginLeft:'8px',background:'#ede9fe',color:'#6d28d9',
+                    padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'600'}}>
+                    🔒 Height Locked</span> : ''}
                 </div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px',marginBottom:'16px'}}>
                   {[
