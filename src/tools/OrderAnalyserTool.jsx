@@ -218,12 +218,72 @@ function parseOrderData(text, masterMap) {
       a.location.localeCompare(b.location) ||
       b.totalQty - a.totalQty);
 
+  // Period days — distinct order dates across all orders
+  const periodDays = Math.max(new Set(orders.map(o=>o.date).filter(d=>d)).size, 1);
+
   return { anomalies, orderSummary, skuSummary, abcData, fmsData, matrix,
-    totVol, grpLocCatSummary, hasCat, hasLoc };
+    totVol, grpLocCatSummary, hasCat, hasLoc, periodDays };
 }
 
 // ─── PPT GENERATION ───────────────────────────────────────────────────────────
-function generatePPT(mAnom, analysis, avgValues) {
+
+// ─── INVENTORY: PARSE ─────────────────────────────────────────────────────────
+// Fixed order: SKU Code | Current Stock Qty | Warehouse Location* | Last Received Date*
+function parseInventoryData(text) {
+  const rows = parseTSV(text);
+  const dataRows = rows.length > 0 && isHeaderRow(rows[0]) ? rows.slice(1) : rows;
+  return dataRows.filter(r => r[0]).map(r => ({
+    sku: r[0].trim(), stockQty: parseFloat(r[1]) || 0,
+    location: r[2] ? r[2].trim() : '', lastRecvd: r[3] ? r[3].trim() : '',
+  }));
+}
+
+// ─── INVENTORY: ANALYSE ───────────────────────────────────────────────────────
+function analyseInventory(invData, analysis) {
+  const { skuSummary, abcData, fmsData, periodDays } = analysis;
+  const days = Math.max(periodDays || 30, 1);
+  const abcBySku  = Object.fromEntries(abcData.map(r => [r.sku, r.abc]));
+  const fmsBySku  = Object.fromEntries(fmsData.map(r => [r.sku, r.fms]));
+  const demandBySku = Object.fromEntries(
+    skuSummary.map(r => [r.sku, { totalQty:r.totalQty, daily:r.totalQty/days }])
+  );
+
+  const results = invData.map(inv => {
+    const d       = demandBySku[inv.sku];
+    const abc     = abcBySku[inv.sku]  || 'N/A';
+    const fms     = fmsBySku[inv.sku]  || 'N/A';
+    const daily   = d ? +d.daily.toFixed(2) : 0;
+    const hasDemand = !!d && daily > 0;
+    const daysCov = hasDemand ? Math.round(inv.stockQty / daily) : null;
+    let flag, priority;
+    if (!d)           { flag='Dead Stock'; priority='None'; }
+    else if (!hasDemand) { flag='No Demand'; priority='None'; }
+    else if (daysCov < 7)  { flag='Critical'; priority=(abc==='A'||abc==='B')?'P1 — Immediate':'P2 — High'; }
+    else if (daysCov < 30) { flag='Low';      priority=abc==='A'?'P2 — High':'P3 — Medium'; }
+    else if (daysCov <=90) { flag='Adequate'; priority='P4 — Monitor'; }
+    else                   { flag='Overstock';priority='None — Review'; }
+    return { sku:inv.sku, stockQty:inv.stockQty, location:inv.location,
+      lastRecvd:inv.lastRecvd, daily, daysCov, flag, priority,
+      abc, fms, abcFms:(abc!=='N/A'&&fms!=='N/A')?`${abc}-${fms}`:'—' };
+  });
+
+  const invSkus = new Set(invData.map(r=>r.sku));
+  const notInInv = skuSummary
+    .filter(r=>!invSkus.has(r.sku))
+    .map(r=>({sku:r.sku,totalQty:r.totalQty,abc:abcBySku[r.sku]||'—',fms:fmsBySku[r.sku]||'—'}))
+    .sort((a,b)=>b.totalQty-a.totalQty);
+
+  return {
+    results, notInInv, days,
+    critical:  results.filter(r=>r.flag==='Critical').length,
+    low:       results.filter(r=>r.flag==='Low').length,
+    adequate:  results.filter(r=>r.flag==='Adequate').length,
+    overstock: results.filter(r=>r.flag==='Overstock').length,
+    dead:      results.filter(r=>r.flag==='Dead Stock').length,
+  };
+}
+
+function generatePPT(mAnom, analysis, avgValues, invAnalysis) {
   const { orderSummary, skuSummary, abcData, fmsData, matrix,
     grpLocCatSummary, hasCat, hasLoc } = analysis;
   const today = new Date().toLocaleDateString('en-IN');
@@ -465,6 +525,91 @@ function generatePPT(mAnom, analysis, avgValues) {
   s9.addText('Full assumptions list available in Sheet 8 of the Excel report.',
     { x:0.4, y:6.8, w:9.2, h:0.28, fontSize:9, color:GRAY, italic:true, align:'center', fontFace:'Calibri' });
 
+
+  // ── SLIDE 10: Inventory Highlights ─────────────────────────────────────────
+  if (invAnalysis) {
+    const s10 = prs.addSlide();
+    hdr(s10, 'Inventory Analysis', `Coverage based on ${invAnalysis.days}-day order period`);
+
+    // Summary stat boxes
+    const invStats = [
+      [invAnalysis.critical,  'Critical (<7 days)', 'BE185D'],
+      [invAnalysis.low,       'Low (7-30 days)',    'D97706'],
+      [invAnalysis.adequate,  'Adequate (30-90d)',  '059669'],
+      [invAnalysis.overstock, 'Overstock (>90d)',   '0EA5E9'],
+      [invAnalysis.dead,      'Dead Stock',         '64748B'],
+    ];
+    invStats.forEach(([val, label, col], i) => {
+      const x = 0.4 + i * 1.88;
+      s10.addShape(prs.ShapeType.roundRect, { x, y:1.35, w:1.75, h:0.9,
+        fill:{ color:'F8FAFC' }, line:{ color:'E2E8F0', pt:1 }, rectRadius:0.08 });
+      s10.addText(String(val), { x, y:1.38, w:1.75, h:0.45,
+        fontSize:22, bold:true, color:col, align:'center', fontFace:'Calibri' });
+      s10.addText(label, { x, y:1.83, w:1.75, h:0.35,
+        fontSize:8, color:'64748B', align:'center', fontFace:'Calibri' });
+    });
+
+    // Top 10 reorder priority
+    const reorderList = invAnalysis.results
+      .filter(r=>r.flag==='Critical'||r.flag==='Low')
+      .sort((a,b)=>(a.priority<b.priority?-1:1)||(a.daysCov||999)-(b.daysCov||999))
+      .slice(0,10);
+    if (reorderList.length > 0) {
+      s10.addText('Reorder Priority List', { x:0.4, y:2.4, w:5.5, h:0.3,
+        fontSize:11, bold:true, color:'0F172A', fontFace:'Calibri' });
+      s10.addTable([
+        [{ text:'SKU',       options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+         { text:'Stock Qty', options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
+         { text:'Days Left', options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
+         { text:'Priority',  options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+         { text:'ABC-FMS',   options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } }],
+        ...reorderList.map((r,i) => ([
+          { text:r.sku, options:{ color:'0F172A', fill:{ color:i%2===0?'FFF1F2':'FFFFFF' }, fontSize:9 } },
+          { text:r.stockQty.toLocaleString(), options:{ align:'center', fontSize:9 } },
+          { text:r.daysCov!=null?String(r.daysCov):'—', options:{ align:'center', bold:true, color:'BE185D', fontSize:9 } },
+          { text:r.priority, options:{ bold:true, color:'BE185D', fontSize:9 } },
+          { text:r.abcFms, options:{ align:'center', fontSize:9 } },
+        ])),
+      ], { x:0.4, y:2.7, w:5.5, colW:[2.2,1.1,1.1,1.7,0.9],
+        border:{ type:'solid', color:'E2E8F0', pt:1 }, rowH:0.28, autoPage:false });
+    }
+
+    // ABC-FMS vs inventory coverage (right panel)
+    s10.addText('ABC-FMS Coverage Summary', { x:6.1, y:2.4, w:3.5, h:0.3,
+      fontSize:11, bold:true, color:'0F172A', fontFace:'Calibri' });
+    const abcFmsGroups = {};
+    invAnalysis.results.forEach(r => {
+      const k = r.abcFms==='—' ? 'Unclassified' : r.abcFms;
+      if (!abcFmsGroups[k]) abcFmsGroups[k] = { total:0, critical:0, adequate:0, overstock:0 };
+      abcFmsGroups[k].total++;
+      if (r.flag==='Critical'||r.flag==='Low') abcFmsGroups[k].critical++;
+      else if (r.flag==='Adequate')             abcFmsGroups[k].adequate++;
+      else if (r.flag==='Overstock')            abcFmsGroups[k].overstock++;
+    });
+    const afRows = Object.entries(abcFmsGroups)
+      .sort(([a],[b])=>a.localeCompare(b)).slice(0,8);
+    if (afRows.length > 0) {
+      s10.addTable([
+        [{ text:'Class',    options:{ bold:true, color:WHITE, fill:{ color:'0F172A' } } },
+         { text:'SKUs',     options:{ bold:true, color:WHITE, fill:{ color:'0F172A' }, align:'center' } },
+         { text:'⚠ Low',   options:{ bold:true, color:WHITE, fill:{ color:'0F172A' }, align:'center' } },
+         { text:'✓ OK',    options:{ bold:true, color:WHITE, fill:{ color:'0F172A' }, align:'center' } }],
+        ...afRows.map(([k,v],i)=>([
+          { text:k, options:{ bold:true, color:'0F172A', fill:{ color:i%2===0?'F8FAFC':'FFFFFF' }, fontSize:9 } },
+          { text:String(v.total),    options:{ align:'center', fontSize:9 } },
+          { text:v.critical>0?String(v.critical):'—', options:{ align:'center', bold:v.critical>0, color:v.critical>0?'BE185D':'9CA3AF', fontSize:9 } },
+          { text:v.adequate>0?String(v.adequate):'—', options:{ align:'center', bold:false, color:'059669', fontSize:9 } },
+        ])),
+      ], { x:6.1, y:2.7, w:3.5, colW:[1.4,0.7,0.7,0.7],
+        border:{ type:'solid', color:'E2E8F0', pt:1 }, rowH:0.28, autoPage:false });
+    }
+
+    if (invAnalysis.dead > 0) {
+      s10.addText(`⚠ ${invAnalysis.dead} dead stock SKU(s) — items in inventory with zero orders in the period. Consider liquidation or write-off.`,
+        { x:0.4, y:6.8, w:9.2, h:0.3, fontSize:9, color:'64748B', italic:true, align:'center', fontFace:'Calibri' });
+    }
+  }
+
   // ── Save ────────────────────────────────────────────────────────────────────
   prs.writeFile({ fileName: `DensiCube_Insights_${today.replace(/\//g,'-')}.pptx` });
 }
@@ -508,7 +653,7 @@ function buildAssumptions(mAnom, analysis, avgValues) {
   return rows;
 }
 
-function exportReport(mAnom, analysis, avgValues) {
+function exportReport(mAnom, analysis, avgValues, invAnalysis) {
   const { anomalies, orderSummary, skuSummary, abcData, fmsData, matrix, grpLocCatSummary, hasCat, hasLoc } = analysis;
   const wb = XLSX.utils.book_new();
   const today = new Date().toLocaleDateString();
@@ -635,6 +780,37 @@ function exportReport(mAnom, analysis, avgValues) {
     ...asmRows,
   ], [16, 42, 36, 52]), '8. Assumptions');
 
+  // ── Sheet 9: Inventory Analysis ─────────────────────────────────────────────
+  if (invAnalysis) {
+    const flagIcon = { Critical:'🔴', Low:'🟡', Adequate:'🟢', Overstock:'🔵', 'Dead Stock':'⚫', 'No Demand':'⚪' };
+    const inv9Rows = [
+      ['INVENTORY ANALYSIS'],
+      [`Coverage period: ${invAnalysis.days} days based on distinct order dates`],
+      ['Generated:', today], [],
+      ['SKU Code','Current Stock','Daily Demand','Days Coverage','Status','Reorder Priority','ABC','FMS','ABC-FMS','Warehouse','Last Received'],
+      ...invAnalysis.results
+        .sort((a,b)=>(a.priority<b.priority?-1:1)||(a.daysCov||9999)-(b.daysCov||9999))
+        .map(r=>[r.sku, r.stockQty, r.daily>0?r.daily:'—',
+          r.daysCov!=null?r.daysCov:'—',
+          (flagIcon[r.flag]||'')+(r.flag),
+          r.priority, r.abc, r.fms, r.abcFms,
+          r.location||'—', r.lastRecvd||'—']),
+      [], ['SUMMARY'],
+      ['Critical (<7 days)', invAnalysis.critical],
+      ['Low (7-30 days)',     invAnalysis.low],
+      ['Adequate (30-90 days)', invAnalysis.adequate],
+      ['Overstock (>90 days)', invAnalysis.overstock],
+      ['Dead Stock (no orders)', invAnalysis.dead],
+    ];
+    if (invAnalysis.notInInv.length > 0) {
+      inv9Rows.push([], ['SKUs IN ORDERS BUT NOT IN INVENTORY (no stock recorded)'],
+        ['SKU', 'Total Qty Ordered', 'ABC', 'FMS'],
+        ...invAnalysis.notInInv.slice(0,20).map(r=>[r.sku, r.totalQty, r.abc, r.fms]));
+    }
+    XLSX.utils.book_append_sheet(wb, ws(inv9Rows,
+      [22,14,14,14,14,18,8,10,12,18,16]), '9. Inventory Analysis');
+  }
+
   XLSX.writeFile(wb, `DensiCube_Analysis_${today.replace(/\//g,'-')}.xlsx`);
 }
 
@@ -651,6 +827,11 @@ export default function OrderAnalyserTool() {
   const [oText,     setOText]    = useState('');
   const [analysis,  setAnalysis] = useState(null);
   const [oError,    setOError]   = useState('');
+
+  const [invText,    setInvText]   = useState('');
+  const [invAnalysis,setInvAnalysis]= useState(null);
+  const [invDone,    setInvDone]   = useState(false);
+  const [invError,   setInvError]  = useState('');
 
   // ── Step 1: Process master SKU ─────────────────────────────────────────────
   const processMaster = () => {
@@ -680,6 +861,21 @@ export default function OrderAnalyserTool() {
     setAnalysis(result);
   };
 
+
+
+  // ── Step 3: Process inventory data ────────────────────────────────────────
+  const processInventory = () => {
+    if (!invText.trim()) { setInvError('Paste your inventory data first.'); return; }
+    setInvError(''); setInvDone(false); setInvAnalysis(null);
+    const invData = parseInventoryData(invText);
+    if (!invData.length) {
+      setInvError('No valid rows found. Check column order: SKU Code | Current Stock Qty');
+      return;
+    }
+    const result = analyseInventory(invData, analysis);
+    setInvAnalysis(result);
+    setInvDone(true);
+  };
 
   // ── Shared helpers ─────────────────────────────────────────────────────────
   const sev = s => <span style={{ background:s==='High'?'#fee2e2':s==='Medium'?'#fef9c3':'#f0fdf4',
@@ -957,20 +1153,123 @@ export default function OrderAnalyserTool() {
             </div>
 
             <div style={{ display:'flex', gap:'10px', flexWrap:'wrap' }}>
-              <button onClick={() => exportReport(mAnom, analysis, mAvgValues)}
+              <button onClick={() => exportReport(mAnom, analysis, mAvgValues, invAnalysis)}
                 style={{ ...S.btnPrimary, flex:1, background:'linear-gradient(135deg,#be185d,#9d174d)' }}>
                 ⬇ Download Excel Report
               </button>
-              <button onClick={() => generatePPT(mAnom, analysis, mAvgValues)}
+              <button onClick={() => generatePPT(mAnom, analysis, mAvgValues, invAnalysis)}
                 style={{ ...S.btnPrimary, flex:1, background:'linear-gradient(135deg,#7c3aed,#6d28d9)' }}>
                 📊 Download PPT Insights
               </button>
             </div>
             <div style={{ fontSize:'11px', color:'#9ca3af', textAlign:'center', marginTop:'6px' }}>
-              Anomalies · Order Summary · SKU Summary · ABC · FMS · ABC-FMS Matrix · Group×Location×Category · Assumptions
+              Anomalies · Order Summary · SKU Summary · ABC · FMS · ABC-FMS Matrix · Group×Location×Category · Assumptions{invAnalysis ? ' · Inventory Analysis' : ''}
             </div>
           </div>
         )}
+      </div>
+
+      {/* ── STEP 3: INVENTORY (Optional) ──────────────────────────────────── */}
+      <div style={{ ...S.card, opacity:analysis?1:0.4, pointerEvents:analysis?'auto':'none' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'12px', marginBottom:'16px' }}>
+          {stepCircle(3, invDone)}
+          <div>
+            <div style={S.cardTitle}>Inventory Data
+              <span style={{ fontSize:'12px', fontWeight:'500', color:'#059669', marginLeft:'8px' }}>Optional</span>
+            </div>
+            <div style={{ fontSize:'12px', color:'#6b7280' }}>
+              {analysis ? 'Paste current stock levels to get coverage analysis, reorder priority and ABC-FMS inventory cross' : 'Complete Step 2 first'}
+            </div>
+          </div>
+        </div>
+
+        {analysis && (<>
+          {colHint(['SKU Code', 'Current Stock Qty', 'Warehouse Location (optional)', 'Last Received Date (optional)'])}
+          <div style={{ fontSize:'12px', color:'#6b7280', marginBottom:'8px' }}>
+            SKU codes must match your Master SKU data. Coverage calculated over <strong>{analysis.periodDays} order days</strong> detected from your order data.
+          </div>
+          <textarea value={invText} onChange={e => setInvText(e.target.value)}
+            placeholder={'Paste inventory data here (Ctrl+V)\n\nExample:\nSKU Code\tCurrent Stock\tWarehouse\tLast Received\nSKU-001\t2500\tMumbai WH\t15/06/2024\nSKU-002\t180\tAhmedabad WH\t10/06/2024\nSKU-003\t0\tMumbai WH\t01/05/2024'}
+            style={{ width:'100%', height:'140px', border:'1px solid #e2e8f0', borderRadius:'8px',
+              padding:'10px 12px', fontSize:'12px', fontFamily:'monospace', resize:'vertical',
+              outline:'none', boxSizing:'border-box', color:'#374151', lineHeight:'1.6' }}/>
+
+          {invError && <div style={{ ...S.error, marginTop:'8px' }}>⚠ {invError}</div>}
+
+          <button onClick={processInventory} disabled={!invText.trim()}
+            style={{ marginTop:'10px', width:'100%', padding:'10px',
+              background: invText.trim() ? '#059669' : '#e2e8f0',
+              color: invText.trim() ? '#fff' : '#9ca3af',
+              border:'none', borderRadius:'8px', fontWeight:'700', fontSize:'13px',
+              cursor: invText.trim() ? 'pointer' : 'not-allowed', fontFamily:'inherit' }}>
+            ▶ Analyse Inventory
+          </button>
+
+          {invAnalysis && (
+            <div style={{ marginTop:'16px' }}>
+              {/* Stat boxes */}
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:'8px', marginBottom:'14px' }}>
+                {[['🔴','Critical',invAnalysis.critical,'#fff1f2','#be185d'],
+                  ['🟡','Low',invAnalysis.low,'#fffbeb','#d97706'],
+                  ['🟢','Adequate',invAnalysis.adequate,'#f0fdf4','#166534'],
+                  ['🔵','Overstock',invAnalysis.overstock,'#eff6ff','#1d4ed8'],
+                  ['⚫','Dead Stock',invAnalysis.dead,'#f8fafc','#374151'],
+                ].map(([icon,label,val,bg,col]) => (
+                  <div key={label} style={{ background:bg, borderRadius:'8px', padding:'10px', textAlign:'center' }}>
+                    <div style={{ fontSize:'18px', fontWeight:'800', color:col }}>{val}</div>
+                    <div style={{ fontSize:'9px', color:'#6b7280', marginTop:'2px', fontWeight:'600', textTransform:'uppercase' }}>{icon} {label}</div>
+                  </div>))}
+              </div>
+
+              {/* Reorder table */}
+              {invAnalysis.results.filter(r=>r.flag==='Critical'||r.flag==='Low').length > 0 && (
+                <div style={{ border:'1px solid #e2e8f0', borderRadius:'8px', overflow:'hidden', marginBottom:'10px' }}>
+                  <div style={{ padding:'8px 14px', background:'#fff1f2', borderBottom:'1px solid #fecaca',
+                    fontWeight:'700', fontSize:'12px', color:'#991b1b' }}>
+                    ⚠ Reorder Priority ({invAnalysis.critical + invAnalysis.low} SKUs)
+                  </div>
+                  <div style={{ overflowX:'auto', maxHeight:'200px', overflowY:'auto' }}>
+                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                      <thead><tr>
+                        {['SKU','Stock','Days Left','Demand/Day','Priority','ABC-FMS'].map(h => (
+                          <th key={h} style={{ padding:'6px 10px', background:'#f8fafc',
+                            borderBottom:'1px solid #e2e8f0', textAlign:'left',
+                            fontWeight:'700', fontSize:'11px', color:'#6b7280',
+                            textTransform:'uppercase', whiteSpace:'nowrap' }}>{h}</th>))}
+                      </tr></thead>
+                      <tbody>
+                        {invAnalysis.results
+                          .filter(r=>r.flag==='Critical'||r.flag==='Low')
+                          .sort((a,b)=>(a.daysCov||999)-(b.daysCov||999))
+                          .slice(0,15)
+                          .map((r,i) => (
+                          <tr key={i} style={{ background:i%2?'#fafbfc':'#fff' }}>
+                            <td style={{ padding:'6px 10px', fontWeight:'600' }}>{r.sku}</td>
+                            <td style={{ padding:'6px 10px', textAlign:'right' }}>{r.stockQty.toLocaleString()}</td>
+                            <td style={{ padding:'6px 10px', textAlign:'right', fontWeight:'700',
+                              color:r.flag==='Critical'?'#be185d':'#d97706' }}>
+                              {r.daysCov != null ? r.daysCov : '—'}
+                            </td>
+                            <td style={{ padding:'6px 10px', textAlign:'right', color:'#6b7280' }}>{r.daily}</td>
+                            <td style={{ padding:'6px 10px', fontWeight:'600', color:'#be185d', fontSize:'11px' }}>{r.priority}</td>
+                            <td style={{ padding:'6px 10px' }}>{r.abcFms}</td>
+                          </tr>))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {(invAnalysis.dead > 0 || invAnalysis.notInInv.length > 0) && (
+                <div style={{ background:'#f8fafc', border:'1px solid #e2e8f0',
+                  borderRadius:'8px', padding:'10px 14px', fontSize:'13px', color:'#6b7280' }}>
+                  {invAnalysis.dead > 0 && <div>⚫ <strong>{invAnalysis.dead} dead stock SKU(s)</strong> — in inventory with zero orders this period</div>}
+                  {invAnalysis.notInInv.length > 0 && <div style={{ marginTop:'4px' }}>⚠ <strong>{invAnalysis.notInInv.length} ordered SKU(s)</strong> not found in inventory — check if stock is missing</div>}
+                </div>
+              )}
+            </div>
+          )}
+        </>)}
       </div>
     </div>
   );
