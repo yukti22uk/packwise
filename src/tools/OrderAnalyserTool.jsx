@@ -247,6 +247,9 @@ function analyseInventory(invData, analysis) {
   const demandBySku = Object.fromEntries(
     skuSummary.map(r => [r.sku, { totalQty:r.totalQty, daily:r.totalQty/days }])
   );
+  const volBySku = Object.fromEntries(
+    skuSummary.map(r => [r.sku, r.volumePerUnit || 0])
+  );
 
   const results = invData.map(inv => {
     const d       = demandBySku[inv.sku];
@@ -262,7 +265,9 @@ function analyseInventory(invData, analysis) {
     else if (daysCov < 30) { flag='Low';      priority=abc==='A'?'P2 — High':'P3 — Medium'; }
     else if (daysCov <=90) { flag='Adequate'; priority='P4 — Monitor'; }
     else                   { flag='Overstock';priority='None — Review'; }
-    return { sku:inv.sku, stockQty:inv.stockQty, location:inv.location,
+    const volPerUnit = volBySku[inv.sku] || 0;
+    const stockVolume = volPerUnit > 0 ? +(inv.stockQty * volPerUnit / 1e9).toFixed(4) : 0;
+    return { sku:inv.sku, stockQty:inv.stockQty, stockVolume, location:inv.location,
       lastRecvd:inv.lastRecvd, daily, daysCov, flag, priority,
       abc, fms, abcFms:(abc!=='N/A'&&fms!=='N/A')?`${abc}-${fms}`:'—' };
   });
@@ -558,19 +563,21 @@ function generatePPT(mAnom, analysis, avgValues, invAnalysis) {
       s10.addText('Reorder Priority List', { x:0.4, y:2.4, w:5.5, h:0.3,
         fontSize:11, bold:true, color:'0F172A', fontFace:'Calibri' });
       s10.addTable([
-        [{ text:'SKU',       options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
-         { text:'Stock Qty', options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
-         { text:'Days Left', options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
-         { text:'Priority',  options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
-         { text:'ABC-FMS',   options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } }],
+        [{ text:'SKU',        options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+         { text:'Stock Qty',  options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
+         { text:'Vol (m³)',   options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
+         { text:'Days Left',  options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } },
+         { text:'Priority',   options:{ bold:true, color:WHITE, fill:{ color:PINK } } },
+         { text:'ABC-FMS',    options:{ bold:true, color:WHITE, fill:{ color:PINK }, align:'center' } }],
         ...reorderList.map((r,i) => ([
           { text:r.sku, options:{ color:'0F172A', fill:{ color:i%2===0?'FFF1F2':'FFFFFF' }, fontSize:9 } },
           { text:r.stockQty.toLocaleString(), options:{ align:'center', fontSize:9 } },
+          { text:r.stockVolume>0?String(r.stockVolume):'—', options:{ align:'center', color:'64748B', fontSize:9 } },
           { text:r.daysCov!=null?String(r.daysCov):'—', options:{ align:'center', bold:true, color:'BE185D', fontSize:9 } },
           { text:r.priority, options:{ bold:true, color:'BE185D', fontSize:9 } },
           { text:r.abcFms, options:{ align:'center', fontSize:9 } },
         ])),
-      ], { x:0.4, y:2.7, w:5.5, colW:[2.2,1.1,1.1,1.7,0.9],
+      ], { x:0.4, y:2.7, w:5.5, colW:[1.8,1.0,0.9,0.9,1.5,0.9],
         border:{ type:'solid', color:'E2E8F0', pt:1 }, rowH:0.28, autoPage:false });
     }
 
@@ -787,10 +794,10 @@ function exportReport(mAnom, analysis, avgValues, invAnalysis) {
       ['INVENTORY ANALYSIS'],
       [`Coverage period: ${invAnalysis.days} days based on distinct order dates`],
       ['Generated:', today], [],
-      ['SKU Code','Current Stock','Daily Demand','Days Coverage','Status','Reorder Priority','ABC','FMS','ABC-FMS','Warehouse','Last Received'],
+      ['SKU Code','Current Stock','Stock Volume (m³)','Daily Demand','Days Coverage','Status','Reorder Priority','ABC','FMS','ABC-FMS','Warehouse','Last Received'],
       ...invAnalysis.results
         .sort((a,b)=>(a.priority<b.priority?-1:1)||(a.daysCov||9999)-(b.daysCov||9999))
-        .map(r=>[r.sku, r.stockQty, r.daily>0?r.daily:'—',
+        .map(r=>[r.sku, r.stockQty, r.stockVolume>0?r.stockVolume:'—', r.daily>0?r.daily:'—',
           r.daysCov!=null?r.daysCov:'—',
           (flagIcon[r.flag]||'')+(r.flag),
           r.priority, r.abc, r.fms, r.abcFms,
@@ -808,7 +815,7 @@ function exportReport(mAnom, analysis, avgValues, invAnalysis) {
         ...invAnalysis.notInInv.slice(0,20).map(r=>[r.sku, r.totalQty, r.abc, r.fms]));
     }
     XLSX.utils.book_append_sheet(wb, ws(inv9Rows,
-      [22,14,14,14,14,18,8,10,12,18,16]), '9. Inventory Analysis');
+      [22,14,16,14,14,14,18,8,10,12,18,16]), '9. Inventory Analysis');
   }
 
   XLSX.writeFile(wb, `DensiCube_Analysis_${today.replace(/\//g,'-')}.xlsx`);
@@ -1231,7 +1238,7 @@ export default function OrderAnalyserTool() {
                   <div style={{ overflowX:'auto', maxHeight:'200px', overflowY:'auto' }}>
                     <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
                       <thead><tr>
-                        {['SKU','Stock','Days Left','Demand/Day','Priority','ABC-FMS'].map(h => (
+                        {['SKU','Stock Qty','Stock Vol (m³)','Days Left','Demand/Day','Priority','ABC-FMS'].map(h => (
                           <th key={h} style={{ padding:'6px 10px', background:'#f8fafc',
                             borderBottom:'1px solid #e2e8f0', textAlign:'left',
                             fontWeight:'700', fontSize:'11px', color:'#6b7280',
@@ -1246,6 +1253,7 @@ export default function OrderAnalyserTool() {
                           <tr key={i} style={{ background:i%2?'#fafbfc':'#fff' }}>
                             <td style={{ padding:'6px 10px', fontWeight:'600' }}>{r.sku}</td>
                             <td style={{ padding:'6px 10px', textAlign:'right' }}>{r.stockQty.toLocaleString()}</td>
+                            <td style={{ padding:'6px 10px', textAlign:'right', color:'#6b7280' }}>{r.stockVolume>0?r.stockVolume:'—'}</td>
                             <td style={{ padding:'6px 10px', textAlign:'right', fontWeight:'700',
                               color:r.flag==='Critical'?'#be185d':'#d97706' }}>
                               {r.daysCov != null ? r.daysCov : '—'}
