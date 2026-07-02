@@ -11,12 +11,12 @@ import { S } from '../components/styles.jsx';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const BIN_CATALOG = {
-  XS: { name:'Compartment Tray', dims:'300×200×100 mm', volCm3:6000,  fill:0.55, slotH:0.12 },
-  S:  { name:'Small Tote/Bin',   dims:'400×300×200 mm', volCm3:24000, fill:0.55, slotH:0.22 },
-  M:  { name:'Louvre/Shelf Bin', dims:'600×400×300 mm', volCm3:72000, fill:0.55, slotH:0.32 },
-  L:  { name:'Stack Crate/Half-Pallet', dims:'800×600×400 mm', volCm3:192000, fill:0.55, slotH:0.45 },
-  XL: { name:'Standard Pallet',  dims:'1200×1000 mm',  volCm3:1440000,fill:0.55, slotH:1.20 },
-  LONG:{ name:'Long-Goods Slot', dims:'per item',       volCm3:null,  fill:0.40, slotH:0.40 },
+  XS: { name:'Compartment Tray',        dims:'300×200×100 mm',     phys:[300,200,100],      volCm3:6000,    fill:0.55, slotH:0.12 },
+  S:  { name:'Small Tote/Bin',          dims:'400×300×200 mm',     phys:[400,300,200],      volCm3:24000,   fill:0.55, slotH:0.22 },
+  M:  { name:'Louvre/Shelf Bin',        dims:'600×400×300 mm',     phys:[600,400,300],      volCm3:72000,   fill:0.55, slotH:0.32 },
+  L:  { name:'Stack Crate/Half-Pallet', dims:'800×600×400 mm',     phys:[800,600,400],      volCm3:192000,  fill:0.55, slotH:0.45 },
+  XL: { name:'Standard Pallet',         dims:'1200×1000×1200 mm',  phys:[1200,1000,1200],   volCm3:1440000, fill:0.55, slotH:1.20 },
+  LONG:{ name:'Long-Goods Slot',        dims:'per item',            phys:null,               volCm3:null,    fill:0.40, slotH:0.40 },
 };
 
 const ZONE_DEFS = {
@@ -46,17 +46,133 @@ function isHeaderRow(row) {
   const n1 = parseFloat(row[1]), n2 = parseFloat(row[2]);
   return isNaN(n1) && isNaN(n2);
 }
-function sizeBand(volCm3) {
-  if (volCm3 <= 500)   return 'XS';
-  if (volCm3 <= 3000)  return 'S';
-  if (volCm3 <= 15000) return 'M';
-  if (volCm3 <= 50000) return 'L';
+// Check if SKU fits in bin using optimal orientation
+// Sort both descending and compare element-wise (largest sku dim must fit in largest bin dim)
+function fitsInBin(skuL, skuW, skuH, binKey) {
+  const b = BIN_CATALOG[binKey];
+  if (!b || !b.phys) return false;
+  const sku = [skuL, skuW, skuH].sort((a,b)=>b-a);
+  const bin = [...b.phys].sort((a,b)=>b-a);
+  return sku[0]<=bin[0] && sku[1]<=bin[1] && sku[2]<=bin[2];
+}
+
+// Select smallest bin that physically fits the SKU
+// Falls back to volume-based selection if dimensions unknown
+function selectBin(skuL, skuW, skuH, volCm3, isLong) {
+  if (isLong) return 'LONG';
+  if (skuL > 0 && skuW > 0 && skuH > 0) {
+    // Physical fit check — smallest bin that fits wins
+    for (const band of ['XS','S','M','L','XL']) {
+      if (fitsInBin(skuL, skuW, skuH, band)) return band;
+    }
+    return 'XL'; // larger than XL pallet — needs custom handling
+  }
+  // Fallback to volume-only when dimensions missing
+  if (!volCm3)       return 'S';
+  if (volCm3 <= 500)  return 'XS';
+  if (volCm3 <= 3000) return 'S';
+  if (volCm3 <= 15000)return 'M';
+  if (volCm3 <= 50000)return 'L';
   return 'XL';
 }
-function unitsPerBin(skuVolCm3, band) {
+
+function unitsPerBin(skuL, skuW, skuH, skuVolCm3, band) {
   const b = BIN_CATALOG[band];
   if (!b || !b.volCm3 || !skuVolCm3) return 1;
+  // Physical layout: how many fit per layer × layers
+  if (b.phys && skuL > 0 && skuW > 0 && skuH > 0) {
+    // Try orientation where SKU height = tallest dim (standing up)
+    const skuDims = [skuL, skuW, skuH].sort((a,b)=>b-a);
+    const binDims = [...b.phys].sort((a,b)=>b-a);
+    const perRow = Math.floor(binDims[1] / skuDims[1]);
+    const perCol = Math.floor(binDims[2] / skuDims[2]);
+    const layers = Math.floor(binDims[0] / skuDims[0]);
+    const byLayout = Math.max(1, perRow * perCol * layers);
+    // Also volume-based estimate
+    const byVolume = Math.max(1, Math.floor(b.volCm3 * b.fill / skuVolCm3));
+    // Use the lower (more conservative) of the two
+    return Math.min(byLayout, byVolume);
+  }
   return Math.max(1, Math.floor(b.volCm3 * b.fill / skuVolCm3));
+}
+
+
+// ─── TRUCK TYPE CATALOGUE ────────────────────────────────────────────────────
+const TRUCK_TYPES = {
+  small:  { label:'Small (Tata Ace / Eicher 10ft)', stagingDepth:6,  pallets:4,  dockTimeH:0.50 },
+  medium: { label:'Medium (Eicher 17ft / 19ft)',    stagingDepth:8,  pallets:10, dockTimeH:0.75 },
+  large:  { label:'Large (32ft / Container truck)', stagingDepth:13, pallets:22, dockTimeH:1.25 },
+};
+const PALLET_FP     = 1.2;   // m² per pallet footprint
+const STAGING_SAFETY= 1.5;   // peak buffer factor
+const DOCK_EFF      = 0.85;  // dock utilisation efficiency
+
+// ─── STAGING AREA CALCULATION ─────────────────────────────────────────────────
+function calcStagingParams(params) {
+  const { truckMix, dockConfig, dockPitch, inboundDwellH, outboundDwellH,
+    packingInDispatch, packingBenches, shifts } = params;
+  const workingH = (parseInt(shifts)||1) * 8; // total working hours per day
+  const pitch    = parseFloat(dockPitch)||4.5;
+
+  let inbVehicles=0, outVehicles=0, inbDockH=0, outDockH=0;
+  let inbPallets=0,  outPallets=0;
+  let weightedInbDepth=0, weightedOutDepth=0;
+
+  (truckMix||[]).forEach(t => {
+    const tt   = TRUCK_TYPES[t.type] || TRUCK_TYPES.medium;
+    const inb  = parseFloat(t.inboundVehicles)  || 0;
+    const out  = parseFloat(t.outboundVehicles) || 0;
+    const dep  = parseFloat(t.stagingDepth)     || tt.stagingDepth;
+    inbVehicles += inb;
+    outVehicles += out;
+    inbDockH    += inb * tt.dockTimeH;
+    outDockH    += out * tt.dockTimeH;
+    inbPallets  += inb * tt.pallets;
+    outPallets  += out * tt.pallets;
+    weightedInbDepth += inb * dep;
+    weightedOutDepth += out * dep;
+  });
+
+  const avgInbDepth  = inbVehicles  > 0 ? weightedInbDepth/inbVehicles  : 8;
+  const avgOutDepth  = outVehicles  > 0 ? weightedOutDepth/outVehicles   : 8;
+
+  // Dock count (calculated from throughput)
+  const availDockH = workingH * DOCK_EFF;
+  if (dockConfig === 'separate') {
+    var inboundDocks  = Math.max(1, Math.ceil(inbDockH  / availDockH));
+    var outboundDocks = Math.max(1, Math.ceil(outDockH  / availDockH));
+  } else {
+    // Shared: total vehicles share all docks
+    var totalDockH    = inbDockH + outDockH;
+    var sharedDocks   = Math.max(1, Math.ceil(totalDockH / availDockH));
+    var inboundDocks  = Math.round(sharedDocks * (inbDockH/(totalDockH||1))) || Math.ceil(sharedDocks/2);
+    var outboundDocks = sharedDocks - inboundDocks;
+  }
+  const totalDocks = inboundDocks + outboundDocks;
+
+  // Inbound staging area
+  // = pallets in dwell × pallet footprint × safety + GRN apron
+  const inbPalletsInDwell = inbPallets * (parseFloat(inboundDwellH)||4) / workingH;
+  const inbStorageArea    = inbPalletsInDwell * PALLET_FP * STAGING_SAFETY;
+  const grnApron          = inboundDocks * pitch * 2; // 2m strip at dock face
+  const receivingArea     = Math.max(30, Math.ceil(inbStorageArea + grnApron));
+
+  // Outbound staging area
+  // = pallets in dwell × pallet footprint × safety + packing benches + dispatch apron
+  const outPalletsInDwell = outPallets * (parseFloat(outboundDwellH)||2) / workingH;
+  const outStorageArea    = outPalletsInDwell * PALLET_FP * STAGING_SAFETY;
+  const packingArea       = packingInDispatch ? (parseInt(packingBenches)||0) * 4 : 0; // 4m² per bench
+  const dispatchApron     = outboundDocks * pitch * 2;
+  const dispatchArea      = Math.max(30, Math.ceil(outStorageArea + packingArea + dispatchApron));
+
+  return { inboundDocks, outboundDocks, totalDocks, receivingArea, dispatchArea,
+    inbPallets, outPallets, inbPalletsInDwell, outPalletsInDwell,
+    avgInbDepth, avgOutDepth, inbVehicles, outVehicles,
+    stagingBreakdown: {
+      inbStorage: Math.ceil(inbStorageArea), grnApron: Math.ceil(grnApron),
+      outStorage: Math.ceil(outStorageArea), packingArea, dispatchApron: Math.ceil(dispatchApron),
+    }
+  };
 }
 
 // ─── RACK SELECTION ───────────────────────────────────────────────────────────
@@ -115,8 +231,9 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params) {
     const L = parseFloat(r[1])||0, W = parseFloat(r[2])||0, H = parseFloat(r[3])||0;
     const volCm3 = +(L*W*H/1000).toFixed(2); // mm³ → cm³
     const maxDim = Math.max(L,W,H);
-    master[sku] = { L,W,H, volCm3, maxDim, isLong: maxDim > 600,
-      sb: sizeBand(volCm3) };
+    const isLong = maxDim > 600;
+    master[sku] = { L,W,H, volCm3, maxDim, isLong,
+      sb: selectBin(L, W, H, volCm3, isLong) };
   });
 
   // Parse order data → pick lines per SKU
@@ -151,7 +268,7 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params) {
     const zone  = getZone(vb, isLong);
     const rack  = selectRackType(sb, vb, isLong, clearH, forkType);
     const bin   = isLong ? 'LONG' : sb;
-    const upb   = isLong ? 1 : unitsPerBin(m.volCm3, bin);
+    const upb   = isLong ? 1 : unitsPerBin(m.L, m.W, m.H, m.volCm3, bin);
     const stock = invMap[sku]||0;
     const locsReq = stock > 0 ? Math.max(1, Math.ceil(stock/upb)) : 0;
     const pl    = pickMap[sku]||0;
@@ -206,202 +323,356 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params) {
 
 // ─── WAREHOUSE SIZING ─────────────────────────────────────────────────────────
 function calcWarehouseSize(analysis, params) {
-  const { clearH, forkType, dockCount, dockSide, aisleW, shifts } = params;
-  const { zoneSummary, rackSummary } = analysis;
+  const { clearH, forkType, dockSide, aisleW } = params;
+  const { rackSummary } = analysis;
 
-  // Pallet rack levels based on forklift & height
-  const palletLevelH = 1.5; // m per level (pallet + beam)
+  // ── Throughput-based staging (replaces 10% rule) ──────────────────────────
+  const staging = calcStagingParams(params);
+  const { receivingArea, dispatchArea, totalDocks, inboundDocks, outboundDocks } = staging;
+
+  // ── Rack levels ───────────────────────────────────────────────────────────
+  const palletLevelH = 1.5;
   const maxLift = { manual:2.2, counterbalance:6.0, reach:9.0, vna:12.0 };
   const liftH = maxLift[forkType]||6.0;
-  const palletLevels = Math.max(1, Math.floor((Math.min(liftH,clearH) - 0.8) / palletLevelH));
+  const palletLevels = Math.max(1, Math.floor((Math.min(liftH, clearH) - 0.8) / palletLevelH));
+  const shelfSlotH   = 0.35;
+  const shelfLevels  = Math.max(1, Math.floor((Math.min(3.5, clearH) - 0.3) / shelfSlotH));
 
-  // Shelf levels for bins
-  const shelfSlotH = 0.35; // m per shelf level (avg)
-  const shelfLevels = Math.max(1, Math.floor((Math.min(3.5, clearH) - 0.3) / shelfSlotH));
-
-  // Area calculation per rack type
-  const AISLE_FACTOR = 1 + (parseFloat(aisleW)||3.0) / 3.0; // aisle adds ~100% of rack depth
+  // ── Racking area ─────────────────────────────────────────────────────────
+  const AISLE_FACTOR = 1 + (parseFloat(aisleW)||3.0) / 3.0;
   const rackAreas = {};
-
   Object.entries(RACK_DEFS).forEach(([rk, rd]) => {
     const locs = rackSummary[rk]?.locs || 0;
     if (locs === 0) { rackAreas[rk] = 0; return; }
     let locsPerBay;
     if (['selective','driveIn','doubleDeep'].includes(rk)) {
       const depth = rk==='driveIn' ? 6 : rk==='doubleDeep' ? 2 : 1;
-      locsPerBay = 2 * palletLevels * depth; // 2 pallets wide per bay
+      locsPerBay = 2 * palletLevels * depth;
     } else if (rk === 'shelving' || rk === 'liveStorage') {
-      locsPerBay = Math.floor(1.0/(shelfSlotH)) * shelfLevels; // approx bins per bay
+      locsPerBay = Math.floor(1.0/shelfSlotH) * shelfLevels;
     } else if (rk === 'cantilever') {
-      locsPerBay = 8; // ~8 slots per cantilever bay
+      locsPerBay = 8;
     } else {
       locsPerBay = 4;
     }
-    const bays = Math.ceil(locs / Math.max(1,locsPerBay));
-    const bayArea = rd.bayW * rd.bayD;
-    rackAreas[rk] = +(bays * bayArea * AISLE_FACTOR).toFixed(1);
+    const bays    = Math.ceil(locs / Math.max(1, locsPerBay));
+    rackAreas[rk] = +(bays * rd.bayW * rd.bayD * AISLE_FACTOR).toFixed(1);
   });
 
-  const netRackArea   = Object.values(rackAreas).reduce((s,v)=>s+v,0);
-  const receivingArea = Math.max(50, netRackArea * 0.10);
-  const dispatchArea  = Math.max(50, netRackArea * 0.10);
-  const officeArea    = 50;
+  const netRackArea     = Object.values(rackAreas).reduce((s,v)=>s+v, 0);
+  const officeArea      = 50;
   const circulationArea = netRackArea * 0.08;
-  const totalGrossArea = netRackArea + receivingArea + dispatchArea + officeArea + circulationArea;
+  const totalGrossArea  = netRackArea + receivingArea + dispatchArea + officeArea + circulationArea;
 
-  // Dock width requirement
-  const minDockWidth = dockCount * 4.5 + 6; // each door 3.5m + spacing
-  const recWidth = dockSide==='both' ? Math.sqrt(totalGrossArea * 0.8) : Math.sqrt(totalGrossArea * 0.6);
-  const wW = Math.max(minDockWidth, Math.ceil(recWidth / 5) * 5);
-  const wL = Math.ceil(totalGrossArea / wW / 5) * 5;
+  // ── Warehouse dimensions ──────────────────────────────────────────────────
+  const pitch        = parseFloat(params.dockPitch)||4.5;
+  const minDockWidth = totalDocks * pitch + 6;
+  const recWidth     = dockSide==='both' ? Math.sqrt(totalGrossArea*0.8) : Math.sqrt(totalGrossArea*0.6);
+  const wW = Math.max(minDockWidth, Math.ceil(recWidth/5)*5);
+  const wL = Math.ceil(totalGrossArea/wW/5)*5;
 
-  // Zone areas (proportional to locations)
+  // ── Zone areas ────────────────────────────────────────────────────────────
   const totalLocs = analysis.metrics.totLocs || 1;
   const zoneAreas = {};
   Object.entries(analysis.zoneSummary).forEach(([z, zs]) => {
-    zoneAreas[z] = +(netRackArea * (zs.locs / totalLocs)).toFixed(1);
+    zoneAreas[z] = +(netRackArea * (zs.locs/totalLocs)).toFixed(1);
   });
 
-  return { wW, wL, totalGrossArea: +totalGrossArea.toFixed(0),
-    netRackArea: +netRackArea.toFixed(0), receivingArea: +receivingArea.toFixed(0),
-    dispatchArea: +dispatchArea.toFixed(0), officeArea,
-    rackAreas, zoneAreas, palletLevels, shelfLevels };
+  return { wW, wL,
+    totalGrossArea: +totalGrossArea.toFixed(0),
+    netRackArea:    +netRackArea.toFixed(0),
+    receivingArea, dispatchArea, officeArea,
+    rackAreas, zoneAreas, palletLevels, shelfLevels,
+    totalDocks, inboundDocks, outboundDocks, staging,
+  };
 }
 
 // ─── SVG FLOOR PLAN ───────────────────────────────────────────────────────────
 function FloorPlanSVG({ analysis, design, params }) {
-  const { wW, wL, zoneAreas, receivingArea, dispatchArea } = design;
-  const { dockCount, dockSide } = params;
+  const { wW, wL, zoneAreas, receivingArea, dispatchArea,
+    totalDocks, inboundDocks, outboundDocks } = design;
+  const { dockSide, aisleW: aisleWParam, dockPitch } = params;
+  const pitch = parseFloat(dockPitch)||4.5;
 
-  const SVG_W = 780, SVG_H = 520;
-  const MARGIN = 36;
+  const SVG_W = 780, SVG_H = 540;
+  const MARGIN = 40;
   const scaleX = (SVG_W - MARGIN*2) / wW;
-  const scaleY = (SVG_H - MARGIN*2 - 40) / wL;
+  const scaleY = (SVG_H - MARGIN*2 - 44) / wL;
 
   const toX = m => MARGIN + m * scaleX;
   const toY = m => MARGIN + m * scaleY;
-  const toPx = (mW, mH) => ({ w: mW * scaleX, h: mH * scaleY });
 
-  // Zone layout — horizontal bands from south (bottom = docks)
-  const totalLocs = analysis.metrics.totLocs || 1;
+  const recH  = Math.max(4, (receivingArea||0) / (wW||1));
+  const disH  = Math.max(4, (dispatchArea||0) / (wW||1));
+  const stagingH = Math.max(recH, disH); // shared strip height for one-side
+
+  // ── LAYOUT RULES BY DOCK POSITION ─────────────────────────────────────────
+  // one:  docks on south wall only → receiving LEFT + dispatch RIGHT (same south strip)
+  //       zones from golden (above staging) up to bulk (north end)
+  // both: inbound docks south → receiving at south | outbound docks north → dispatch at north
+  //       zones fill the middle, golden near south (closer to dispatch)
+  // corner: docks on south + east → receiving south-left, dispatch south-right (east end)
+  //         zones fill the interior
+
+  const isOne    = dockSide === 'one';
+  const isBoth   = dockSide === 'both';
+  const isCorner = dockSide === 'corner';
+
+  const availH = isOne
+    ? Math.max(0, wL - stagingH)
+    : Math.max(0, wL - recH - disH);
+
   const zoneOrder = ['golden','mid','reserve','bulk','long'];
   const zoneHeights = {};
+  const totZoneArea = zoneOrder.reduce((s,z)=>s+(zoneAreas[z]||0),0)||1;
   zoneOrder.forEach(z => {
-    const a = zoneAreas[z]||0;
-    zoneHeights[z] = (a / (wW||1));
+    zoneHeights[z] = ((zoneAreas[z]||0) / totZoneArea) * availH;
   });
 
-  // From south: receiving → golden → mid → reserve → bulk/long → dispatch strip on north
-  const recH  = (receivingArea||0) / (wW||1);
-  const disH  = (dispatchArea||0) / (wW||1);
-  const availH = Math.max(0, wL - recH - disH);
+  const zoneRects  = [];
+  const stagingRects = [];
+  const dockDoors  = [];
+  const aisleW = parseFloat(aisleWParam)||3.0;
 
-  const totZoneH = zoneOrder.reduce((s,z)=>s+(zoneHeights[z]||0),0)||1;
-  let cursor = wL; // start from south (bottom SVG)
-  const zoneRects = [];
+  // ── ONE SIDE ────────────────────────────────────────────────────────────────
+  if (isOne) {
+    // South strip: Receiving (left) | Dispatch/Packing (right) — both near docks
+    stagingRects.push({
+      x:0,       y:wL-stagingH, w:wW/2,  h:stagingH,
+      label:'⬅ Receiving / GRN', subLabel:'Inbound staging',
+      color:'#e0f2fe', border:'#0284c7', text:'#0369a1',
+    });
+    stagingRects.push({
+      x:wW/2,    y:wL-stagingH, w:wW/2,  h:stagingH,
+      label:'Dispatch / Packing ➡', subLabel:'Outbound staging',
+      color:'#fef3c7', border:'#d97706', text:'#92400e',
+    });
 
-  // Receiving at south
-  cursor -= recH;
-  zoneRects.push({ key:'receiving', y:cursor, h:recH, label:'Receiving / GRN',
-    color:'#e0f2fe', border:'#0284c7', text:'#0369a1' });
+    // Zones stacked from just above staging (golden) northwards (bulk)
+    let cursor = wL - stagingH;
+    zoneOrder.forEach(z => {
+      const zh = zoneHeights[z]||0;
+      cursor -= zh;
+      zoneRects.push({ key:z, y:cursor, h:zh, x:0, w:wW,
+        label:ZONE_DEFS[z].label, color:ZONE_DEFS[z].color,
+        border:ZONE_DEFS[z].border, text:ZONE_DEFS[z].textColor });
+    });
 
-  // Zones (golden first = closest to receiving/dispatch)
-  zoneOrder.forEach(z => {
-    const zh = (zoneHeights[z]||0) / totZoneH * availH;
-    cursor -= zh;
-    zoneRects.push({ key:z, y:cursor, h:zh,
-      label: ZONE_DEFS[z].label,
-      color: ZONE_DEFS[z].color,
-      border: ZONE_DEFS[z].border,
-      text:  ZONE_DEFS[z].textColor });
-  });
+    // All docks on south wall
+    const spacing = wW / (inboundDocks + outboundDocks + 1);
+    for (let i=1; i<=(inboundDocks+outboundDocks); i++) {
+      dockDoors.push({ x:spacing*i - 1.75, y:wL, side:'south', label:`D${i}` });
+    }
 
-  // Dispatch at north
-  cursor -= disH;
-  zoneRects.push({ key:'dispatch', y:cursor, h:disH, label:'Dispatch / Packing',
-    color:'#fef3c7', border:'#d97706', text:'#92400e' });
+  // ── BOTH (OPPOSITE) SIDES ───────────────────────────────────────────────────
+  } else if (isBoth) {
+    // Receiving at south (near inbound docks)
+    stagingRects.push({
+      x:0, y:wL-recH, w:wW, h:recH,
+      label:'⬅ Receiving / GRN', subLabel:'Inbound — south docks',
+      color:'#e0f2fe', border:'#0284c7', text:'#0369a1',
+    });
+    // Dispatch at north (near outbound docks)
+    stagingRects.push({
+      x:0, y:0, w:wW, h:disH,
+      label:'Dispatch / Packing ➡', subLabel:'Outbound — north docks',
+      color:'#fef3c7', border:'#d97706', text:'#92400e',
+    });
 
-  // Rack rows inside zones
+    // Zones fill middle — golden near SOUTH (close to inbound/cross-dock flow)
+    let cursor = wL - recH;
+    zoneOrder.forEach(z => {
+      const zh = zoneHeights[z]||0;
+      cursor -= zh;
+      zoneRects.push({ key:z, y:cursor, h:zh, x:0, w:wW,
+        label:ZONE_DEFS[z].label, color:ZONE_DEFS[z].color,
+        border:ZONE_DEFS[z].border, text:ZONE_DEFS[z].textColor });
+    });
+
+    // Inbound docks south, outbound docks north (split count)
+    const sSpacing = wW / (inboundDocks + 1);
+    for (let i=1; i<=inboundDocks; i++) {
+      dockDoors.push({ x:sSpacing*i-1.75, y:wL, side:'south', label:`D${i}` });
+    }
+    const nSpacing = wW / (outboundDocks + 1);
+    for (let i=1; i<=outboundDocks; i++) {
+      dockDoors.push({ x:nSpacing*i-1.75, y:0, side:'north', label:`D${inboundDocks+i}` });
+    }
+
+  // ── CORNER ──────────────────────────────────────────────────────────────────
+  } else {
+    // Receiving on south wall (left portion), Dispatch on east wall (right strip)
+    const eastW  = Math.min(wW * 0.25, 12); // dispatch strip on east wall
+    const recInW = wW - eastW;
+
+    stagingRects.push({
+      x:0, y:wL-stagingH, w:recInW, h:stagingH,
+      label:'⬅ Receiving / GRN', subLabel:'South wall — inbound',
+      color:'#e0f2fe', border:'#0284c7', text:'#0369a1',
+    });
+    stagingRects.push({
+      x:wW-eastW, y:wL-stagingH, w:eastW, h:stagingH,
+      label:'Dispatch ➡', subLabel:'East wall — outbound',
+      color:'#fef3c7', border:'#d97706', text:'#92400e',
+    });
+
+    // Zones fill interior
+    let cursor = wL - stagingH;
+    zoneOrder.forEach(z => {
+      const zh = zoneHeights[z]||0;
+      cursor -= zh;
+      zoneRects.push({ key:z, y:cursor, h:zh, x:0, w:wW - eastW,
+        label:ZONE_DEFS[z].label, color:ZONE_DEFS[z].color,
+        border:ZONE_DEFS[z].border, text:ZONE_DEFS[z].textColor });
+    });
+
+    // Docks on south + east walls
+    const southN = inboundDocks;
+    const eastN  = outboundDocks;
+    const sSpacing2 = (wW - eastW) / (southN+1);
+    for (let i=1; i<=southN; i++) {
+      dockDoors.push({ x:sSpacing2*i-1.75, y:wL, side:'south', label:`D${i}` });
+    }
+    const eSpacing = wL / (eastN+1);
+    for (let i=1; i<=eastN; i++) {
+      dockDoors.push({ x:wW, y:eSpacing*i, side:'east', label:`D${southN+i}` });
+    }
+  }
+
+  // ── RACK ROWS inside zones ─────────────────────────────────────────────────
   const rackRows = [];
-  zoneRects.filter(z=>!['receiving','dispatch'].includes(z.key)).forEach(zone => {
-    const zH = zone.h;
-    if (zH < 1) return;
-    const aisleW = parseFloat(params.aisleW)||3.0;
-    const rowDepth = 0.9; // m
-    const slot = (rowDepth + aisleW);
-    const numRows = Math.max(1, Math.floor(zH / slot));
+  zoneRects.forEach(zone => {
+    if (zone.h < 2) return;
+    const slot = 0.9 + aisleW;
+    const numRows = Math.max(1, Math.floor(zone.h / slot));
     for (let i=0; i<numRows; i++) {
-      const rowY = zone.y + (zH / numRows) * i + aisleW/2;
-      rackRows.push({ y: rowY, zoneKey: zone.key });
+      const rowY = zone.y + (zone.h / numRows) * i + aisleW/2;
+      rackRows.push({ y:rowY, x:zone.x||0, w:zone.w||wW });
     }
   });
 
-  // Dock doors
-  const dockDoors = [];
-  const doorW = 3.5, doorSpacing = wW / (dockCount+1);
-  for (let i=1; i<=dockCount; i++) {
-    dockDoors.push({ x: doorSpacing * i - doorW/2, w: doorW });
-  }
+  // ── FLOW ARROWS (material flow direction) ─────────────────────────────────
+  // Arrow from Receiving → Golden Zone → Dispatch (simplified as label)
 
   return (
     <svg width={SVG_W} height={SVG_H} viewBox={`0 0 ${SVG_W} ${SVG_H}`}
-      style={{ border:'1px solid #e2e8f0', borderRadius:'8px', background:'#fafafa', width:'100%', height:'auto' }}>
+      style={{ border:'1px solid #e2e8f0', borderRadius:'8px', background:'#f8fafc',
+               width:'100%', height:'auto' }}>
 
       {/* Warehouse outline */}
       <rect x={toX(0)} y={toY(0)} width={wW*scaleX} height={wL*scaleY}
-        fill="white" stroke="#334155" strokeWidth="2"/>
+        fill="white" stroke="#1e293b" strokeWidth="2.5" rx="2"/>
 
-      {/* Zone bands */}
+      {/* Storage zones */}
       {zoneRects.map(z => (
         <g key={z.key}>
-          <rect x={toX(0)} y={toY(z.y)} width={wW*scaleX} height={Math.max(2, z.h*scaleY)}
-            fill={z.color} stroke={z.border} strokeWidth="1" opacity="0.9"/>
-          {z.h * scaleY > 16 && (
-            <text x={toX(wW/2)} y={toY(z.y + z.h/2)} textAnchor="middle"
-              dominantBaseline="middle" fontSize="11" fontWeight="600" fill={z.text}>
-              {z.label}
-              {z.h > 5 && ` (${z.h.toFixed(0)}m)`}
+          <rect x={toX(z.x||0)} y={toY(z.y)}
+            width={(z.w||wW)*scaleX} height={Math.max(2, z.h*scaleY)}
+            fill={z.color} stroke={z.border} strokeWidth="1" opacity="0.85"/>
+          {z.h * scaleY > 18 && (
+            <text x={toX((z.x||0) + (z.w||wW)/2)} y={toY(z.y + z.h/2)}
+              textAnchor="middle" dominantBaseline="middle"
+              fontSize="11" fontWeight="700" fill={z.text}>
+              {z.label}{z.h > 4 ? ` — ${z.h.toFixed(0)}m` : ''}
             </text>
           )}
         </g>
       ))}
 
-      {/* Rack rows */}
-      {rackRows.map((r,i) => (
-        <rect key={i} x={toX(1)} y={toY(r.y)} width={(wW-2)*scaleX} height={Math.max(2,0.6*scaleY)}
-          fill="rgba(51,65,85,0.15)" rx="1"/>
-      ))}
-
-      {/* Dock doors */}
-      {dockDoors.map((d,i) => (
-        <g key={i}>
-          <rect x={toX(d.x)} y={toY(wL)-4} width={d.w*scaleX} height={8}
-            fill="#1d4ed8" rx="2"/>
-          <text x={toX(d.x + d.w/2)} y={toY(wL)+14} textAnchor="middle"
-            fontSize="9" fill="#1d4ed8" fontWeight="600">D{i+1}</text>
+      {/* Staging areas (receiving / dispatch) */}
+      {stagingRects.map((s,i) => (
+        <g key={`staging-${i}`}>
+          <rect x={toX(s.x)} y={toY(s.y)}
+            width={s.w*scaleX} height={Math.max(2, s.h*scaleY)}
+            fill={s.color} stroke={s.border} strokeWidth="1.5" opacity="0.92"/>
+          {/* Divider line between receiving and dispatch on same strip */}
+          {s.h * scaleY > 14 && (
+            <text x={toX(s.x + s.w/2)} y={toY(s.y + s.h/2) - 4}
+              textAnchor="middle" dominantBaseline="middle"
+              fontSize="10" fontWeight="700" fill={s.text}>{s.label}</text>
+          )}
+          {s.h * scaleY > 28 && s.subLabel && (
+            <text x={toX(s.x + s.w/2)} y={toY(s.y + s.h/2) + 10}
+              textAnchor="middle" dominantBaseline="middle"
+              fontSize="9" fill={s.text} opacity="0.8">{s.subLabel}</text>
+          )}
         </g>
       ))}
 
-      {/* Compass / North arrow */}
-      <text x={SVG_W-MARGIN+6} y={MARGIN+10} fontSize="11" fill="#64748b" fontWeight="700">N↑</text>
+      {/* Divider line between receiving and dispatch for one-side layout */}
+      {isOne && (
+        <line x1={toX(wW/2)} y1={toY(wL-stagingH)} x2={toX(wW/2)} y2={toY(wL)}
+          stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="4,3"/>
+      )}
+
+      {/* Rack rows */}
+      {rackRows.map((r,i) => (
+        <rect key={i} x={toX(r.x)+2} y={toY(r.y)}
+          width={(r.w)*scaleX-4} height={Math.max(2, 0.7*scaleY)}
+          fill="rgba(51,65,85,0.12)" stroke="rgba(51,65,85,0.2)"
+          strokeWidth="0.5" rx="1"/>
+      ))}
+
+      {/* Dock doors — south wall */}
+      {dockDoors.filter(d=>d.side==='south').map((d,i) => (
+        <g key={`ds-${i}`}>
+          <rect x={toX(d.x)} y={toY(wL)-5} width={3.5*scaleX} height={10}
+            fill="#1d4ed8" rx="2"/>
+          <text x={toX(d.x+1.75)} y={toY(wL)+17} textAnchor="middle"
+            fontSize="8" fill="#1d4ed8" fontWeight="700">{d.label}</text>
+        </g>
+      ))}
+
+      {/* Dock doors — north wall */}
+      {dockDoors.filter(d=>d.side==='north').map((d,i) => (
+        <g key={`dn-${i}`}>
+          <rect x={toX(d.x)} y={toY(0)-5} width={3.5*scaleX} height={10}
+            fill="#7c3aed" rx="2"/>
+          <text x={toX(d.x+1.75)} y={toY(0)-10} textAnchor="middle"
+            fontSize="8" fill="#7c3aed" fontWeight="700">{d.label}</text>
+        </g>
+      ))}
+
+      {/* Dock doors — east wall (corner config) */}
+      {dockDoors.filter(d=>d.side==='east').map((d,i) => (
+        <g key={`de-${i}`}>
+          <rect x={toX(wW)-5} y={toY(d.y)-scaleY*1.75} width={10} height={3.5*scaleY}
+            fill="#7c3aed" rx="2"/>
+          <text x={toX(wW)+14} y={toY(d.y)} textAnchor="start"
+            fontSize="8" fill="#7c3aed" fontWeight="700">{d.label}</text>
+        </g>
+      ))}
+
+      {/* Material flow arrow (inbound → storage → outbound) */}
+      <defs>
+        <marker id="arrowhead" markerWidth="8" markerHeight="6"
+          refX="4" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#64748b"/>
+        </marker>
+      </defs>
+
+      {/* North label */}
+      <text x={SVG_W-MARGIN+8} y={MARGIN+14} fontSize="12" fill="#475569" fontWeight="800">N</text>
+      <text x={SVG_W-MARGIN+10} y={MARGIN+4} fontSize="10" fill="#475569">↑</text>
 
       {/* Scale bar */}
-      <line x1={toX(0)} y1={SVG_H-18} x2={toX(Math.min(10,wW))} y2={SVG_H-18}
+      <line x1={toX(0)} y1={SVG_H-20} x2={toX(Math.min(10,wW))} y2={SVG_H-20}
         stroke="#64748b" strokeWidth="2"/>
-      <text x={toX(Math.min(10,wW)/2)} y={SVG_H-6} textAnchor="middle"
+      <line x1={toX(0)} y1={SVG_H-24} x2={toX(0)} y2={SVG_H-16} stroke="#64748b" strokeWidth="1.5"/>
+      <line x1={toX(Math.min(10,wW))} y1={SVG_H-24} x2={toX(Math.min(10,wW))} y2={SVG_H-16} stroke="#64748b" strokeWidth="1.5"/>
+      <text x={toX(Math.min(10,wW)/2)} y={SVG_H-7} textAnchor="middle"
         fontSize="9" fill="#64748b">{Math.min(10,wW)}m</text>
 
       {/* Dimensions */}
-      <text x={toX(wW/2)} y={MARGIN-10} textAnchor="middle"
-        fontSize="11" fontWeight="700" fill="#0f172a">{wW}m</text>
-      <text x={MARGIN-12} y={toY(wL/2)} textAnchor="middle"
-        fontSize="11" fontWeight="700" fill="#0f172a"
-        transform={`rotate(-90,${MARGIN-12},${toY(wL/2)})`}>{wL}m</text>
+      <text x={toX(wW/2)} y={MARGIN-14} textAnchor="middle"
+        fontSize="12" fontWeight="800" fill="#0f172a">{wW}m</text>
+      <text x={MARGIN-16} y={toY(wL/2)} textAnchor="middle"
+        fontSize="12" fontWeight="800" fill="#0f172a"
+        transform={`rotate(-90,${MARGIN-16},${toY(wL/2)})`}>{wL}m</text>
 
-      {/* Total area label */}
-      <text x={toX(wW/2)} y={SVG_H-4} textAnchor="middle"
-        fontSize="10" fill="#64748b">
-        Recommended warehouse: {wW}m × {wL}m = {(wW*wL).toLocaleString()} m²
+      {/* Footer label */}
+      <text x={toX(wW/2)} y={SVG_H-6} textAnchor="middle" fontSize="10" fill="#64748b">
+        {`${dockSide==='one'?'One-side docks':dockSide==='both'?'Opposite-side docks':'Corner docks'} — ${wW}×${wL}m = ${(wW*wL).toLocaleString()}m² gross`}
       </text>
     </svg>
   );
@@ -609,13 +880,24 @@ function exportPPT(analysis, design, params) {
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function WarehouseDesignerTool() {
   // Params
-  const [clearH,  setClearH]  = useState('9');
-  const [dockCount,setDockCount]=useState('4');
+  // Warehouse params
+  const [clearH,   setClearH]  = useState('9');
   const [dockSide, setDockSide]= useState('one');
+  const [dockConfig,setDockConfig]=useState('shared');
+  const [dockPitch, setDockPitch]=useState('4.5');
   const [forkType, setForkType]= useState('reach');
   const [aisleW,   setAisleW]  = useState('3.0');
   const [shifts,   setShifts]  = useState('1');
-  const [peakOrders,setPeakOrders]=useState('');
+  // Truck mix
+  const [truckMix, setTruckMix]= useState([
+    { type:'medium', stagingDepth:'8', inboundVehicles:'5', outboundVehicles:'5' },
+  ]);
+  // Dwell times
+  const [inboundDwellH,  setInboundDwellH]  = useState('4');
+  const [outboundDwellH, setOutboundDwellH] = useState('2');
+  // Packing
+  const [packingInDispatch, setPackingInDispatch] = useState(true);
+  const [packingBenches,    setPackingBenches]    = useState('4');
 
   // Data
   const [masterText, setMasterText] = useState('');
@@ -628,9 +910,23 @@ export default function WarehouseDesignerTool() {
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState('');
 
-  const params = { clearH:parseFloat(clearH)||9, dockCount:parseInt(dockCount)||4,
-    dockSide, forkType, aisleW:parseFloat(aisleW)||3.0, shifts:parseInt(shifts)||1,
-    peakOrders:parseInt(peakOrders)||0 };
+  const params = {
+    clearH:parseFloat(clearH)||9,
+    dockSide, dockConfig, dockPitch,
+    forkType,
+    aisleW:parseFloat(aisleW)||3.0,
+    shifts:parseInt(shifts)||1,
+    truckMix, inboundDwellH, outboundDwellH,
+    packingInDispatch, packingBenches:parseInt(packingBenches)||0,
+  };
+  // Truck mix helpers
+  const addTruck = () => setTruckMix(m=>[...m,{type:'medium',stagingDepth:'8',inboundVehicles:'2',outboundVehicles:'2'}]);
+  const removeTruck = i => setTruckMix(m=>m.filter((_,idx)=>idx!==i));
+  const updateTruck = (i, field, val) => setTruckMix(m=>m.map((t,idx)=>idx===i?{...t,[field]:val}:t));
+  const onTruckTypeChange = (i, type) => {
+    const tt = TRUCK_TYPES[type]||TRUCK_TYPES.medium;
+    setTruckMix(m=>m.map((t,idx)=>idx===i?{...t,type,stagingDepth:String(tt.stagingDepth)}:t));
+  };
 
   const runAll = () => {
     setError(''); setLoading(true);
@@ -703,18 +999,18 @@ export default function WarehouseDesignerTool() {
               {stepCircle(1, false)}
               <div style={S.cardTitle}>Warehouse Parameters</div>
             </div>
+
+            {/* Building params */}
+            <div style={{fontSize:'11px',fontWeight:'700',color:'#7c3aed',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'8px'}}>Building</div>
             <div style={S.grid2}>
               <div><label style={lbl}>Clear Height (m)</label>
                 <input style={inp} type="number" min="4" max="20" step="0.5" value={clearH}
                   onChange={e=>setClearH(e.target.value)} placeholder="9"/></div>
-              <div><label style={lbl}>Dock Doors</label>
-                <input style={inp} type="number" min="1" max="20" value={dockCount}
-                  onChange={e=>setDockCount(e.target.value)} placeholder="4"/></div>
-              <div><label style={lbl}>Dock Position</label>
-                <select style={inp} value={dockSide} onChange={e=>setDockSide(e.target.value)}>
-                  <option value="one">One side</option>
-                  <option value="both">Opposite sides</option>
-                  <option value="corner">Corner</option>
+              <div><label style={lbl}>Working Shifts</label>
+                <select style={inp} value={shifts} onChange={e=>setShifts(e.target.value)}>
+                  <option value="1">1 shift (8h/day)</option>
+                  <option value="2">2 shifts (16h/day)</option>
+                  <option value="3">3 shifts (24h/day)</option>
                 </select></div>
               <div><label style={lbl}>Forklift Type</label>
                 <select style={inp} value={forkType} onChange={e=>setForkType(e.target.value)}>
@@ -730,16 +1026,130 @@ export default function WarehouseDesignerTool() {
                   <option value="3.0">3.0m — Standard</option>
                   <option value="3.5">3.5m — Wide</option>
                 </select></div>
-              <div><label style={lbl}>Working Shifts</label>
-                <select style={inp} value={shifts} onChange={e=>setShifts(e.target.value)}>
-                  <option value="1">1 shift</option>
-                  <option value="2">2 shifts</option>
-                  <option value="3">3 shifts</option>
+            </div>
+
+            {/* Dock configuration */}
+            <div style={{fontSize:'11px',fontWeight:'700',color:'#7c3aed',textTransform:'uppercase',letterSpacing:'0.05em',margin:'14px 0 8px'}}>Dock Configuration</div>
+            <div style={S.grid2}>
+              <div><label style={lbl}>Dock Wall Position</label>
+                <select style={inp} value={dockSide} onChange={e=>setDockSide(e.target.value)}>
+                  <option value="one">One side (south wall)</option>
+                  <option value="both">Opposite sides (cross-dock)</option>
+                  <option value="corner">Corner (south + east)</option>
+                </select></div>
+              <div><label style={lbl}>Dock Allocation</label>
+                <select style={inp} value={dockConfig} onChange={e=>setDockConfig(e.target.value)}>
+                  <option value="shared">Shared inbound + outbound</option>
+                  <option value="separate">Separate inbound / outbound</option>
+                </select></div>
+              <div><label style={lbl}>Dock Pitch (centre-to-centre)</label>
+                <select style={inp} value={dockPitch} onChange={e=>setDockPitch(e.target.value)}>
+                  <option value="4.0">4.0m — Compact</option>
+                  <option value="4.5">4.5m — Standard</option>
+                  <option value="5.0">5.0m — Wide</option>
                 </select></div>
             </div>
-            <div><label style={lbl}>Peak Daily Orders (units, optional)</label>
-              <input style={inp} type="number" min="0" value={peakOrders}
-                onChange={e=>setPeakOrders(e.target.value)} placeholder="e.g. 500"/></div>
+            <div style={{fontSize:'11px',color:'#9ca3af',marginTop:'4px'}}>
+              Dock count is calculated from your vehicle mix below — not entered manually.
+            </div>
+
+            {/* Truck mix table */}
+            <div style={{fontSize:'11px',fontWeight:'700',color:'#7c3aed',textTransform:'uppercase',letterSpacing:'0.05em',margin:'14px 0 8px'}}>
+              Vehicle Mix
+            </div>
+            <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'hidden',marginBottom:'8px'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
+                <thead><tr style={{background:'#f8fafc'}}>
+                  {['Truck Type','Staging Depth (m)','Inbound/day','Outbound/day',''].map(h=>(
+                    <th key={h} style={{padding:'7px 10px',textAlign:'left',fontWeight:'600',
+                      fontSize:'10px',color:'#6b7280',textTransform:'uppercase',
+                      borderBottom:'1px solid #e2e8f0'}}>{h}</th>))}
+                </tr></thead>
+                <tbody>
+                  {truckMix.map((t,i)=>(
+                    <tr key={i} style={{background:i%2===0?'#fff':'#fafbfc'}}>
+                      <td style={{padding:'6px 8px'}}>
+                        <select value={t.type}
+                          onChange={e=>onTruckTypeChange(i,e.target.value)}
+                          style={{...inp,marginBottom:0,fontSize:'11px',padding:'4px 6px'}}>
+                          {Object.entries(TRUCK_TYPES).map(([k,v])=>(
+                            <option key={k} value={k}>{v.label}</option>))}
+                        </select>
+                      </td>
+                      <td style={{padding:'6px 8px'}}>
+                        <input type="number" min="1" max="20"
+                          value={t.stagingDepth}
+                          onChange={e=>updateTruck(i,'stagingDepth',e.target.value)}
+                          style={{...inp,marginBottom:0,width:'60px',fontSize:'11px',padding:'4px 6px'}}/>
+                      </td>
+                      <td style={{padding:'6px 8px'}}>
+                        <input type="number" min="0"
+                          value={t.inboundVehicles}
+                          onChange={e=>updateTruck(i,'inboundVehicles',e.target.value)}
+                          style={{...inp,marginBottom:0,width:'60px',fontSize:'11px',padding:'4px 6px'}}/>
+                      </td>
+                      <td style={{padding:'6px 8px'}}>
+                        <input type="number" min="0"
+                          value={t.outboundVehicles}
+                          onChange={e=>updateTruck(i,'outboundVehicles',e.target.value)}
+                          style={{...inp,marginBottom:0,width:'60px',fontSize:'11px',padding:'4px 6px'}}/>
+                      </td>
+                      <td style={{padding:'6px 8px',textAlign:'center'}}>
+                        {truckMix.length > 1 && (
+                          <button onClick={()=>removeTruck(i)}
+                            style={{background:'none',border:'none',color:'#be185d',
+                              cursor:'pointer',fontSize:'16px',lineHeight:1}}>×</button>)}
+                      </td>
+                    </tr>))}
+                </tbody>
+              </table>
+            </div>
+            <button onClick={addTruck}
+              style={{fontSize:'12px',fontWeight:'600',color:'#7c3aed',background:'#f5f3ff',
+                border:'1px dashed #c4b5fd',borderRadius:'6px',padding:'6px 14px',
+                cursor:'pointer',width:'100%',marginBottom:'4px'}}>
+              + Add Truck Type
+            </button>
+
+            {/* Dwell times */}
+            <div style={{fontSize:'11px',fontWeight:'700',color:'#7c3aed',textTransform:'uppercase',letterSpacing:'0.05em',margin:'14px 0 8px'}}>Staging Dwell Time</div>
+            <div style={S.grid2}>
+              <div><label style={lbl}>Inbound dwell (before put-away)</label>
+                <select style={inp} value={inboundDwellH} onChange={e=>setInboundDwellH(e.target.value)}>
+                  <option value="2">2 hours</option>
+                  <option value="4">4 hours</option>
+                  <option value="8">8 hours (next shift)</option>
+                  <option value="16">16 hours</option>
+                  <option value="24">24 hours (next day)</option>
+                </select></div>
+              <div><label style={lbl}>Outbound dwell (before loading)</label>
+                <select style={inp} value={outboundDwellH} onChange={e=>setOutboundDwellH(e.target.value)}>
+                  <option value="1">1 hour</option>
+                  <option value="2">2 hours</option>
+                  <option value="4">4 hours</option>
+                  <option value="8">8 hours (next shift)</option>
+                </select></div>
+            </div>
+
+            {/* Packing area */}
+            <div style={{fontSize:'11px',fontWeight:'700',color:'#7c3aed',textTransform:'uppercase',letterSpacing:'0.05em',margin:'14px 0 8px'}}>Packing / Value-Add</div>
+            <div style={{display:'flex',gap:'8px',marginBottom:'8px'}}>
+              {[['true','In dispatch area (no separate zone)'],['false','Separate packing area']].map(([v,l])=>(
+                <button key={v} onClick={()=>setPackingInDispatch(v==='true')}
+                  style={{flex:1,padding:'7px 10px',borderRadius:'7px',fontSize:'11px',fontWeight:'600',
+                    cursor:'pointer',border:`1px solid ${String(packingInDispatch)===v?'#7c3aed':'#e2e8f0'}`,
+                    background:String(packingInDispatch)===v?'#f5f3ff':'#fff',
+                    color:String(packingInDispatch)===v?'#7c3aed':'#6b7280'}}>
+                  {l}
+                </button>))}
+            </div>
+            <div style={S.grid2}>
+              <div><label style={lbl}>No. of packing benches</label>
+                <input style={inp} type="number" min="0" value={packingBenches}
+                  onChange={e=>setPackingBenches(e.target.value)} placeholder="4"/>
+                <div style={{fontSize:'10px',color:'#9ca3af',marginTop:'2px'}}>Each bench = 4m² incl. access</div>
+              </div>
+            </div>
           </div>
 
           {/* Step 2: Master SKU */}
@@ -817,13 +1227,53 @@ export default function WarehouseDesignerTool() {
                 ['Locations Needed', analysis.metrics.totLocs.toLocaleString(), '#f5f3ff','#7c3aed'],
                 ['Recommended Size', `${design.wW}×${design.wL}m`, '#f0fdf4','#166534'],
                 ['Gross Area', `${(design.wW*design.wL).toLocaleString()}m²`, '#fef9c3','#854d0e'],
-                ['Long/Awkward SKUs', analysis.metrics.longCount, '#fdf4ff','#9333ea'],
+                ['Dock Doors (calc.)', `${design.inboundDocks} inb + ${design.outboundDocks} out = ${design.totalDocks}`, '#e0f2fe','#0369a1'],
                 ['No-Movement SKUs', analysis.metrics.nmCount, '#fff1f2','#be185d'],
               ].map(([l,v,bg,col])=>(
                 <div key={l} style={{background:bg,borderRadius:'10px',padding:'12px',textAlign:'center',border:`1px solid ${col}22`}}>
-                  <div style={{fontSize:'18px',fontWeight:'800',color:col}}>{v}</div>
-                  <div style={{fontSize:'10px',color:'#6b7280',marginTop:'3px',fontWeight:'600',textTransform:'uppercase'}}>{l}</div>
+                  <div style={{fontSize:'16px',fontWeight:'800',color:col,lineHeight:1.2}}>{v}</div>
+                  <div style={{fontSize:'10px',color:'#6b7280',marginTop:'4px',fontWeight:'600',textTransform:'uppercase'}}>{l}</div>
                 </div>))}
+            </div>
+
+            {/* Staging breakdown */}
+            {design.staging && (
+              <div style={{...S.card,background:'#f0f9ff',border:'1px solid #bae6fd',marginBottom:'12px',padding:'14px 18px'}}>
+                <div style={{fontWeight:'700',fontSize:'13px',color:'#0369a1',marginBottom:'10px'}}>
+                  📦 Staging Area Breakdown
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',fontSize:'12px'}}>
+                  <div style={{background:'#fff',borderRadius:'8px',padding:'10px'}}>
+                    <div style={{fontWeight:'700',color:'#0284c7',marginBottom:'6px'}}>
+                      ⬅ Inbound / Receiving — {design.receivingArea}m²
+                    </div>
+                    <div style={{color:'#374151',lineHeight:1.8}}>
+                      <div>Pallets/day: <strong>{design.staging.inbPallets}</strong> ({design.staging.inbVehicles} vehicles)</div>
+                      <div>In dwell ({params.inboundDwellH}h): <strong>{design.staging.inbPalletsInDwell?.toFixed(0)} pallets</strong></div>
+                      <div>Storage buffer: {design.staging.stagingBreakdown?.inbStorage}m²</div>
+                      <div>GRN apron: {design.staging.stagingBreakdown?.grnApron}m²</div>
+                      <div style={{marginTop:'4px',fontWeight:'700',color:'#0369a1'}}>Inbound docks: {design.inboundDocks}</div>
+                    </div>
+                  </div>
+                  <div style={{background:'#fff',borderRadius:'8px',padding:'10px'}}>
+                    <div style={{fontWeight:'700',color:'#d97706',marginBottom:'6px'}}>
+                      ➡ Outbound / Dispatch — {design.dispatchArea}m²
+                    </div>
+                    <div style={{color:'#374151',lineHeight:1.8}}>
+                      <div>Pallets/day: <strong>{design.staging.outPallets}</strong> ({design.staging.outVehicles} vehicles)</div>
+                      <div>In dwell ({params.outboundDwellH}h): <strong>{design.staging.outPalletsInDwell?.toFixed(0)} pallets</strong></div>
+                      <div>Storage buffer: {design.staging.stagingBreakdown?.outStorage}m²</div>
+                      <div>Packing area: {design.staging.stagingBreakdown?.packingArea}m²</div>
+                      <div>Dispatch apron: {design.staging.stagingBreakdown?.dispatchApron}m²</div>
+                      <div style={{marginTop:'4px',fontWeight:'700',color:'#d97706'}}>Outbound docks: {design.outboundDocks}</div>
+                    </div>
+                  </div>
+                </div>
+                <div style={{fontSize:'10px',color:'#0369a1',marginTop:'8px',fontStyle:'italic'}}>
+                  Sizing: pallets in dwell × 1.2m² footprint × 1.5 safety + dock apron ({params.dockPitch}m pitch × 2m depth × docks)
+                </div>
+              </div>
+            )}
             </div>
 
             {/* Floor Plan SVG */}
