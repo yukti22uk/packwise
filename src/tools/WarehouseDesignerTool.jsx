@@ -1274,7 +1274,6 @@ export default function WarehouseDesignerTool() {
                 </div>
               </div>
             )}
-            </div>
 
             {/* Floor Plan SVG */}
             <div style={S.card}>
