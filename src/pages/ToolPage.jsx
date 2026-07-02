@@ -7,7 +7,8 @@ import ShipmentPlanner from '../tools/ShipmentPlanner.jsx';
 import MultiSKUTool from '../tools/MultiSKUTool.jsx';
 import ContainerSkuTool from '../tools/BulkSKUTool.jsx';
 import SKUGrouperTool from '../tools/SKUGrouperTool.jsx';
-import OrderAnalyserTool from '../tools/OrderAnalyserTool.jsx';
+import OrderAnalyserTool     from '../tools/OrderAnalyserTool.jsx';
+import WarehouseDesignerTool from '../tools/WarehouseDesignerTool.jsx';
 function ToolPage({isPro,setIsPro,modalOpen,setModalOpen,initialTab,onTabMounted}){
   const[tab,setTab]=useState(initialTab||"box");
   const[multiSKUPreset,setMultiSKUPreset]=useState(null);
@@ -23,6 +24,7 @@ function ToolPage({isPro,setIsPro,modalOpen,setModalOpen,initialTab,onTabMounted
     ["sku","🗃️ Bulk SKU Calculator",false],
     ["grouper","🔀 SKU Grouper",false],
     ["analyser","📊 Order Analyser",true],
+    ["warehouse","🏭 WH Designer",true],
   ];
   const handleSendToMultiSKU=(rows)=>{setMultiSKUPreset(rows);setTab("multisku");};
   return(
@@ -54,6 +56,7 @@ function ToolPage({isPro,setIsPro,modalOpen,setModalOpen,initialTab,onTabMounted
           {tab==="sku"&&<ContainerSkuTool isPro={isPro} onUpgrade={()=>setModalOpen(true)}/>}
           {tab==="grouper"&&<SKUGrouperTool onSendToMultiSKU={handleSendToMultiSKU}/>}
           {tab==="analyser"&&(isPro?<OrderAnalyserTool/>:<ProGate feature="Order Analyser" onUpgrade={()=>setModalOpen(true)}/>)}
+          {tab==="warehouse"&&(isPro?<WarehouseDesignerTool/>:<ProGate feature="Warehouse Designer" onUpgrade={()=>setModalOpen(true)}/>)}
         </div>
       </div>
     </div>
