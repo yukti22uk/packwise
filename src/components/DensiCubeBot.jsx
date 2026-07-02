@@ -8,7 +8,8 @@ const TOOLS = [
   { id:'shipment', label:'🚚 Shipment Planner',       tab:'shipment' },
   { id:'sku',      label:'🗃️ Bulk SKU Calculator',   tab:'sku'      },
   { id:'grouper',  label:'🔀 SKU Grouper',            tab:'grouper'  },
-  { id:'analyser', label:'📊 Order Analyser',         tab:'analyser' },
+  { id:'analyser',   label:'📊 Order Analyser',         tab:'analyser' },
+  { id:'warehouse',  label:'🏭 Warehouse Designer',      tab:'warehouse' },
 ];
 
 const PROBLEMS = [
@@ -65,6 +66,12 @@ const PROBLEMS = [
     question: 'How do I plan shipment for multiple SKUs across many trucks?',
     tool: 'shipment',
     answer: 'Use the Shipment Planner in Multi-SKU mode — it plans how multiple box sizes fill each container and gives you a per-container manifest for every truck.',
+  },
+  {
+    id: 'p11',
+    question: 'How do I design my warehouse storage layout?',
+    tool: 'warehouse',
+    answer: 'The Warehouse Designer takes your SKU dimensions, order history and inventory data and generates a complete warehouse design — velocity zones, rack type recommendations, warehouse sizing, and a visual floor plan with zone layout.',
   },
   {
     id: 'p10',
