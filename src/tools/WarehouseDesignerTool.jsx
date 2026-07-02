@@ -462,11 +462,13 @@ function exportExcel(analysis, design, params) {
     ['SKU SLOTTING DETAIL'],[],
     ['SKU Code','L (mm)','W (mm)','H (mm)','Vol (cm³)','Max Dim','Long?',
      'Pick Lines','Velocity Band','Size Band','Combined Band',
-     'Bin/Container','Rack Type','Storage Zone','Units/Bin','Stock','Locs Required'],
+     'Bin/Container','Location Size (mm)','Rack Type','Storage Zone','Units/Bin','Stock','Locs Required'],
     ...slotted.map(r=>[r.sku,r.L,r.W,r.H,r.volCm3.toFixed(0),r.maxDim,r.isLong?'YES':'',
-      r.pickLines,r.vb,r.sb,`${r.vb}-${r.sb}`,r.binName,r.rackName,r.zoneName,
+      r.pickLines,r.vb,r.sb,`${r.vb}-${r.sb}`,r.binName,
+      BIN_CATALOG[r.bin]?.dims||'—',
+      r.rackName,r.zoneName,
       r.upb,r.stock,r.locsReq]),
-  ],[22,8,8,8,10,10,8,12,14,10,14,22,24,34,10,10,14]),'3. SKU Slotting');
+  ],[22,8,8,8,10,10,8,12,14,10,14,22,20,24,34,10,10,14]),'3. SKU Slotting');
 
   // Sheet 4: Rack Schedule
   XLSX.utils.book_append_sheet(wb, ws([
