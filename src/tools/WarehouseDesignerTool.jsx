@@ -346,7 +346,12 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params) {
     const bin   = isLong ? 'LONG' : sb;
     const upb   = isLong ? 1 : unitsPerBin(m.L, m.W, m.H, m.volCm3, bin);
     const stock = invMap[sku]||0;
-    const locsReq = stock > 0 ? Math.max(1, Math.ceil(stock/upb)) : 0;
+    // Slow-mover pick-face sharing:
+    // S movers: 2 SKUs share 1 location | VS: 4 per loc | NM: 8 per loc
+    const LOC_SHARE = { VF:1, F:1, M:1, S:2, VS:4, NM:8 };
+    const share = Math.min(LOC_SHARE[vb]||1, Math.max(1, upb));
+    const rawLocs = stock > 0 ? Math.max(1, Math.ceil(stock/upb)) : 0;
+    const locsReq = rawLocs > 0 ? Math.max(1, Math.ceil(rawLocs/share)) : 0;
     const pl    = pickMap[sku]||0;
     slotted.push({ sku, ...m, vb, sb, isLong, zone, rack, bin,
       upb, stock, locsReq, pickLines:pl,
@@ -451,14 +456,16 @@ function recalcCfg(cfg) {
       ? Math.ceil(locs / locsPerBayTotal) : 0;
     const aisleMm = cfg.shelvingAisle || SHELVING_AISLE_MM;
     const bayFP   = (bayW/1000)*(bayD/1000);
-    const aisleA  = baysNeeded*(bayW/1000)*(aisleMm/1000);
+    // Bays arranged back-to-back sharing aisles → each bay "owns" half an aisle
+    const aisleA  = baysNeeded*(bayW/1000)*(aisleMm/1000/2);
     return { ...cfg, ...r, o1, o2, locsPerBayTotal, baysNeeded,
       area: +(baysNeeded*bayFP + aisleA).toFixed(1) };
   } else {
     const baysNeeded = cfg.locsPerBay>0 ? Math.ceil(cfg.locs/cfg.locsPerBay) : 0;
     const bayFP  = (cfg.bayW/1000)*(cfg.bayD/1000);
     const aisleM = (cfg.aisleW||3000)/1000;
-    const area   = +(baysNeeded*bayFP + baysNeeded*(cfg.bayW/1000)*aisleM).toFixed(1);
+    // Shared aisle model: each bay owns half the aisle on one side
+    const area   = +(baysNeeded*bayFP + baysNeeded*(cfg.bayW/1000)*(aisleM/2)).toFixed(1);
     return { ...cfg, baysNeeded, area };
   }
 }
@@ -489,7 +496,11 @@ function generateRackConfig(analysis, params) {
 
     if (['shelving','liveStorage'].includes(g.rack) && binDims) {
       const [bL,bW,bH] = binDims;
-      const bayW = 900;
+      // Use widest standard bay that's a clean multiple of bin width
+      // Wider bays = more bins per level = fewer bays = slightly less area
+      const stdBayWidths = [1800, 1500, 1200, 900];
+      const bayW = stdBayWidths.find(bw => bw % Math.min(bL,bW) === 0) ||
+                   stdBayWidths.find(bw => Math.floor(bw/Math.min(bL,bW)) >= 2) || 900;
       const bayD = Math.max(Math.max(bL,bW)+50, 400); // min depth to fit 1 bin
       const clearance = 50;
       const o1 = tryShelfOrientation(binDims,bayW,bayD,shelfMaxH,clearance,'LW');
@@ -572,7 +583,9 @@ function calcWarehouseSize(analysis, params, customRackAreas) {
         locsPerBay = 4;
       }
       const bays = Math.ceil(locs/Math.max(1,locsPerBay));
-      ra[rk] = +(bays*rd.bayW*rd.bayD*AISLE_FACTOR).toFixed(1);
+      // Correct aisle model: AISLE_FACTOR uses shared aisle (halved)
+      const correctFactor = 1 + (parseFloat(aisleW)||3.0) / 2 / rd.bayD;
+      ra[rk] = +(bays*rd.bayW*rd.bayD*correctFactor).toFixed(1);
     });
     return ra;
   })();
@@ -1084,6 +1097,122 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
   );
 }
 
+
+// ─── RACK LOCATION DRILL-DOWN DOWNLOAD ───────────────────────────────────────
+function downloadRackLocations(cfg, analysis) {
+  if (!cfg || !analysis) return;
+  const wb    = XLSX.utils.book_new();
+  const today = new Date().toLocaleDateString();
+  const ws    = (data, cols) => {
+    const s = XLSX.utils.aoa_to_sheet(data);
+    if (cols) s['!cols'] = cols.map(w => ({ wch: w }));
+    return s;
+  };
+
+  const isShelving = ['shelving','liveStorage'].includes(cfg.rack);
+  const tierH      = parseFloat(cfg.tierHeight) || cfg.shelfH || 0;
+  const tiers      = parseInt(cfg.tiers) || 1;
+  const locsPerBay = cfg.locsPerBayTotal || cfg.locsPerBay || 0;
+  const binD       = cfg.binDims || [];
+
+  // Filter slotted SKUs for this exact rack + bin combination
+  const skusInCfg = (analysis.slotted || [])
+    .filter(s => s.rack === cfg.rack && s.bin === cfg.bin)
+    .sort((a, b) => b.locsReq - a.locsReq);
+
+  // ── Sheet 1: Calculation Summary ─────────────────────────────────────────
+  const calcRows = [
+    [`LOCATION CALCULATION — ${cfg.rackName.toUpperCase()}`],
+    ['Bin / Container Type:', cfg.binName],
+    ['Generated:', today],
+    [],
+    ['RACK BAY CONFIGURATION'],
+    ['Bay Width',  `${cfg.bayW} mm`],
+    ['Bay Depth',  `${cfg.bayD} mm`],
+    ...(isShelving ? [
+      ['Height per Tier',         `${tierH} mm`],
+      ['Shelf clearance per level',`${cfg.clearance} mm`],
+      ['Number of tiers',          tiers],
+      ['Bin orientation',          cfg.orientation==='LW'?`L (${binD[0]}mm) along bay width`:`W (${binD[1]}mm) along bay width`],
+    ] : [
+      ['Rack levels',  cfg.levels],
+    ]),
+    [],
+    ['STEP-BY-STEP CALCULATION'],
+    ...(isShelving && binD.length ? [
+      ['Bin dimensions (L × W × H)', `${binD[0]} × ${binD[1]} × ${binD[2]} mm`],
+      ['Step 1 — Bins across bay width',
+        `floor(${cfg.bayW} ÷ ${cfg.orientation==='LW'?binD[0]:binD[1]}) = ${cfg.acrossW} bins`],
+      ['Step 2 — Bins along bay depth',
+        `floor(${cfg.bayD} ÷ ${cfg.orientation==='LW'?binD[1]:binD[0]}) = ${cfg.acrossD} bins`],
+      ['Step 3 — Shelf levels per tier',
+        `floor(${tierH} ÷ (${binD[2]} bin height + ${cfg.clearance} clearance)) = ${cfg.levels} levels`],
+      ['Step 4 — Locations per bay (1 tier)',
+        `${cfg.acrossW} across × ${cfg.acrossD} deep × ${cfg.levels} levels = ${cfg.locsPerBay} locations`],
+      ...(tiers > 1 ? [
+        ['Step 5 — Locations per bay (all tiers)',
+          `${cfg.locsPerBay} × ${tiers} tiers = ${locsPerBay} locations`],
+      ] : []),
+    ] : [
+      ['Locations per bay', locsPerBay],
+    ]),
+    ['Bays required',
+      `ceil(${cfg.locs} total locations ÷ ${locsPerBay} per bay) = ${cfg.baysNeeded} bays`],
+    [],
+    ['RESULT SUMMARY'],
+    ['Rack type',               cfg.rackName],
+    ['Total SKUs in config',    skusInCfg.length],
+    ['Total locations needed',  cfg.locs],
+    ['Number of bays',          cfg.baysNeeded],
+    ['Floor area (incl. aisles)', `${cfg.area || 0} m²`],
+    [],
+    ['PER-SKU FORMULA'],
+    ['Locations per SKU', '= ceil( ceil(Stock Qty ÷ Units per Location) ÷ Sharing Factor )'],
+    ['Units per Location', 'Physical fit check: bins × depth × levels in bay; capped by volume estimate'],
+    ['Sharing Factor', 'VF/F/M = 1 (dedicated) | S = 2 | VS = 4 | NM = 8 SKUs share one location'],
+    ['Aisle model', 'Shared-aisle (back-to-back rows): each bay owns half an aisle (aisleW ÷ 2)'],
+    ['Total locations', 'Sum of all SKU effective location requirements after sharing'],
+  ];
+
+  XLSX.utils.book_append_sheet(wb,
+    ws(calcRows, [40, 42]), '1. Calculation Summary');
+
+  // ── Sheet 2: Per-SKU Detail ───────────────────────────────────────────────
+  const skuRows = [
+    [`SKU LOCATION DETAIL — ${cfg.rackName} (${cfg.binName})`],
+    [`Config: ${cfg.bayW}mm W × ${cfg.bayD}mm D${isShelving?` × ${tierH}mm H/tier × ${tiers} tier(s)`:''} · ${locsPerBay} locations/bay`],
+    [],
+    ['SKU Code','L (mm)','W (mm)','H (mm)','Vol (cm³)','Velocity','Size Band',
+     'Units / Location','Stock Qty','Locations Needed','Calculation','Zone'],
+    ...skusInCfg.map(s => [
+      s.sku,
+      s.L  > 0 ? s.L  : '—',
+      s.W  > 0 ? s.W  : '—',
+      s.H  > 0 ? s.H  : '—',
+      s.volCm3 > 0 ? +s.volCm3.toFixed(0) : '—',
+      s.vb, s.sb,
+      s.upb,
+      s.stock,
+      s.locsReq,
+      s.stock > 0 && s.upb > 0
+        ? `ceil(${s.stock} ÷ ${s.upb}) = ${s.locsReq}`
+        : s.stock === 0 ? 'No stock' : '—',
+      s.zoneName || '—',
+    ]),
+    [],
+    ['TOTALS','','','','','','','',
+      skusInCfg.reduce((s,r)=>s+r.stock,   0),
+      skusInCfg.reduce((s,r)=>s+r.locsReq, 0),
+      '', ''],
+  ];
+
+  XLSX.utils.book_append_sheet(wb,
+    ws(skuRows, [22,8,8,8,10,10,10,16,12,16,28,20]),
+    '2. SKU Detail');
+
+  const fname = `Locations_${cfg.rack}_${cfg.bin}_${today.replace(/\//g,'-')}.xlsx`;
+  XLSX.writeFile(wb, fname);
+}
 
 // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
 function exportExcel(analysis, design, params, rackConfig) {
@@ -1970,6 +2099,10 @@ export default function WarehouseDesignerTool() {
                 <div style={{fontSize:'12px',color:'#6b7280',marginBottom:'14px'}}>
                   Auto-generated from bin sizes. Both orientations shown — select the better one.
                   Edit bay dims or tiers, then click <strong>Confirm</strong>.
+                  <span style={{marginLeft:'8px',background:'#fffbeb',border:'1px solid #fde68a',
+                    borderRadius:'6px',padding:'2px 8px',fontSize:'11px',color:'#92400e'}}>
+                    ℹ S movers: 2 SKUs/loc · VS: 4/loc · NM: 8/loc (pick-face sharing applied)
+                  </span>
                 </div>
 
                 {rackConfig.map(cfg => {
@@ -2139,7 +2272,7 @@ export default function WarehouseDesignerTool() {
                           </div>
                         )}
 
-                        {/* Result row */}
+                        {/* Result row + download */}
                         <div style={{background:cfg.feasible===false?'#fff1f2':'#f0fdf4',
                           borderRadius:'8px',padding:'9px 12px',
                           display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'6px'}}>
@@ -2150,10 +2283,21 @@ export default function WarehouseDesignerTool() {
                                 : `✓ ${cfg.acrossW||2} wide × ${cfg.acrossD||1} deep × ${cfg.levels} levels = ${cfg.locsPerBay}/bay`
                             )}
                           </div>
-                          <div style={{display:'flex',gap:'16px',fontSize:'12px'}}>
-                            <span><strong style={{color:'#7c3aed'}}>{cfg.baysNeeded}</strong> bays</span>
-                            <span><strong style={{color:'#0369a1'}}>{((cfg.bayW/1000)*(cfg.bayD/1000)).toFixed(2)}m²</strong>/bay footprint</span>
-                            <span><strong style={{color:'#059669'}}>{cfg.area}m²</strong> total area</span>
+                          <div style={{display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
+                            <div style={{display:'flex',gap:'16px',fontSize:'12px'}}>
+                              <span><strong style={{color:'#7c3aed'}}>{cfg.baysNeeded}</strong> bays</span>
+                              <span><strong style={{color:'#0369a1'}}>{((cfg.bayW/1000)*(cfg.bayD/1000)).toFixed(2)}m²</strong>/bay</span>
+                              <span><strong style={{color:'#059669'}}>{cfg.area}m²</strong> total</span>
+                            </div>
+                            <button
+                              onClick={()=>downloadRackLocations(cfg, analysis)}
+                              title="Download location calculation with per-SKU detail"
+                              style={{padding:'5px 12px',background:'#f0fdf4',
+                                border:'1px solid #86efac',borderRadius:'7px',
+                                fontSize:'11px',fontWeight:'700',color:'#166534',
+                                cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>
+                              ⬇ Locations
+                            </button>
                           </div>
                         </div>
                       </div>
