@@ -3123,9 +3123,60 @@ export default function WarehouseDesignerTool() {
         const rc = generateRackConfig(a, params);
         setAnalysis(a); setRackConfig(rc);
         setDesign(null); setConfigConfirmed(false);
-        // Preliminary design with estimated areas (before config confirmed)
         const d = calcWarehouseSize(a, params);
         setDesign(d);
+
+        // If in user defined mode, ALSO run user calc immediately
+        if (storageMode === 'user') {
+          const ORI=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+          const RZM={shelving:'golden',liveStorage:'golden',selective:'reserve',
+            doubleDeep:'reserve',driveIn:'bulk',cantilever:'long'};
+          const vB=userBins.filter(b=>parseFloat(b.L)>0&&parseFloat(b.W)>0&&parseFloat(b.H)>0);
+          const vR=userRacks.filter(rk=>parseFloat(rk.bayW)>0&&parseFloat(rk.bayD)>0);
+          const r2=vB.length>0?calcUserDefinedStorage(a.slotted,userBins,userRacks,params):null;
+          setUserResult(r2||{stored:[],overflow:[],totLocs:0,totArea:0,
+            totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
+          const uC=[];
+          if(vB.length>0&&vR.length>0){
+            vB.forEach((b,bi)=>{
+              const bL=parseFloat(b.L),bW=parseFloat(b.W),bH=parseFloat(b.H);
+              vR.forEach((rk,ri)=>{
+                const rW=parseFloat(rk.bayW),rD=parseFloat(rk.bayD);
+                const rH=parseFloat(rk.bayH)||2200,tiers=parseInt(rk.levels)||1,clr=50,dim=[bL,bW,bH];
+                let bestLPB=0,bestAW=0,bestAD=0,bestLvl=0,bestO='LW';
+                ORI.forEach(([x,y,z])=>{
+                  const aw=Math.floor(rW/dim[x]),ad=Math.floor(rD/dim[y]);
+                  const lv=dim[z]>0?Math.floor(rH/(dim[z]+clr)):0;
+                  const lpb=aw*ad*lv*tiers;
+                  if(lpb>bestLPB){bestLPB=lpb;bestO=x===0?'LW':'WL';bestAW=aw;bestAD=ad;bestLvl=lv;}
+                });
+                const locs=Math.ceil((r2?.totLocs||a.metrics.totLocs||0)/Math.max(1,vB.length));
+                const bays=bestLPB>0?Math.ceil(locs/bestLPB):0;
+                const ah=(parseFloat(params.aisleW)||3.0)/2;
+                const area=+(bays*(rW/1000)*((rD/1000)+ah)).toFixed(1);
+                const rt=rk.rackType||'shelving';
+                uC.push({id:`u-${bi}-${ri}`,rack:rt,bin:`USER_${bi}`,
+                  rackName:rk.name||`Custom Rack ${ri+1}`,binName:b.name||`Custom Bin ${bi+1}`,
+                  binDims:[bL,bW,bH],bayW:rW,bayD:rD,shelfH:rH,tierHeight:rH,clearance:clr,
+                  orientation:bestO,tiers,acrossW:bestAW,acrossD:bestAD,levels:bestLvl,
+                  locsPerBay:bestLPB>0?Math.floor(bestLPB/tiers):0,locsPerBayTotal:bestLPB,
+                  locs,baysNeeded:bays,area,feasible:bestLPB>0,zone:RZM[rt]||'golden',
+                  o1:{acrossW:Math.floor(rW/bL),acrossD:Math.floor(rD/bW),feasible:Math.floor(rW/bL)>0,
+                      levels:bH>0?Math.floor(rH/(bH+clr)):0,locsPerBay:Math.floor(rW/bL)*Math.floor(rD/bW)*(bH>0?Math.floor(rH/(bH+clr)):0)},
+                  o2:{acrossW:Math.floor(rW/bW),acrossD:Math.floor(rD/bL),feasible:Math.floor(rW/bW)>0,
+                      levels:bH>0?Math.floor(rH/(bH+clr)):0,locsPerBay:Math.floor(rW/bW)*Math.floor(rD/bL)*(bH>0?Math.floor(rH/(bH+clr)):0)},
+                });
+              });
+            });
+          } else {
+            rc.forEach(cfg=>uC.push({...cfg}));
+          }
+          setUserRackConfig(uC.length>0?uC:null);
+          const ca2={};
+          uC.forEach(c=>{ca2[c.rack]=(ca2[c.rack]||0)+(c.area||0);});
+          if(!Object.keys(ca2).length) Object.assign(ca2,rackAreasFromConfig(rc));
+          setUserDesign(calcWarehouseSize(a,params,ca2));
+        }
       } catch(e) { setError(e.message); }
       setLoading(false);
     }, 100);
@@ -3887,7 +3938,9 @@ export default function WarehouseDesignerTool() {
               border:'none',borderRadius:'10px',fontWeight:'700',fontSize:'15px',
               cursor:masterText.trim()&&!loading?'pointer':'not-allowed',fontFamily:'inherit',
               boxShadow:masterText.trim()?'0 4px 14px rgba(124,58,237,0.35)':'none'}}>
-            {loading?'⏳ Analysing...':'🏭 Generate Warehouse Design'}
+            {loading?'⏳ Analysing...'
+              :storageMode==='user'?'🏭 Generate Warehouse Design (User Defined)'
+              :'🏭 Generate Warehouse Design'}
           </button>
         </div>
 
@@ -3905,74 +3958,7 @@ export default function WarehouseDesignerTool() {
             </div>
           )}
 
-          {analysis && design && (<>
-
-            {/* Headline metrics */}
-            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px',marginBottom:'16px'}}>
-              {[
-                ['Total SKUs', analysis.metrics.totSKUs.toLocaleString(), '#eff6ff','#1d4ed8'],
-                ['Locations Needed', analysis.metrics.totLocs.toLocaleString(), '#f5f3ff','#7c3aed'],
-                ['Recommended Size', `${design.wW}×${design.wL}m`, '#f0fdf4','#166534'],
-                ['Gross Area', `${(design.wW*design.wL).toLocaleString()}m²\n(${Math.round(design.wW*design.wL*10.7639).toLocaleString()} sq ft)`, '#fef9c3','#854d0e'],
-                ['Dock Doors (calc.)', `${design.inboundDocks} inb + ${design.outboundDocks} out = ${design.totalDocks}`, '#e0f2fe','#0369a1'],
-                ['No-Movement SKUs', analysis.metrics.nmCount, '#fff1f2','#be185d'],
-              ].map(([l,v,bg,col])=>(
-                <div key={l} style={{background:bg,borderRadius:'10px',padding:'12px',textAlign:'center',border:`1px solid ${col}22`}}>
-                  <div style={{fontSize:'16px',fontWeight:'800',color:col,lineHeight:1.2}}>{v}</div>
-                  <div style={{fontSize:'10px',color:'#6b7280',marginTop:'4px',fontWeight:'600',textTransform:'uppercase'}}>{l}</div>
-                </div>))}
-            </div>
-
-            {/* Staging breakdown */}
-            {design.staging && (
-              <div style={{...S.card,background:'#f0f9ff',border:'1px solid #bae6fd',marginBottom:'12px',padding:'14px 18px'}}>
-                <div style={{fontWeight:'700',fontSize:'13px',color:'#0369a1',marginBottom:'10px'}}>
-                  📦 Staging Area Breakdown
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',fontSize:'12px'}}>
-                  <div style={{background:'#fff',borderRadius:'8px',padding:'10px'}}>
-                    <div style={{fontWeight:'700',color:'#0284c7',marginBottom:'6px'}}>
-                      ⬅ Inbound / Receiving — {design.receivingArea}m²
-                    </div>
-                    <div style={{color:'#374151',lineHeight:1.8,fontSize:'12px'}}>
-                      <div>{design.staging.inbLabel==='boxes'?'Boxes':'Pallets'}/day: <strong>{design.staging.inbUnits?.toFixed(0)||0}</strong></div>
-                      <div>In dwell ({params.inboundDwellH}h): <strong>{design.staging.inbPalletsInDwell?.toFixed(0)||'—'} {design.staging.inbLabel}</strong></div>
-                      <div>Storage buffer: {design.staging.stagingBreakdown?.inbStorage}m²</div>
-                      <div>GRN apron: {design.staging.stagingBreakdown?.grnApron}m²</div>
-                      <div style={{marginTop:'4px',fontWeight:'700',color:'#0369a1'}}>Inbound docks: {design.inboundDocks}</div>
-                    </div>
-                  </div>
-                  <div style={{background:'#fff',borderRadius:'8px',padding:'10px'}}>
-                    <div style={{fontWeight:'700',color:'#d97706',marginBottom:'6px'}}>
-                      ➡ Outbound / Dispatch — {design.dispatchArea}m²
-                    </div>
-                    <div style={{color:'#374151',lineHeight:1.8,fontSize:'12px'}}>
-                      <div>{design.staging.outLabel==='boxes'?'Boxes':'Pallets'}/day: <strong>{design.staging.outUnits?.toFixed(0)||0}</strong>
-                        {design.staging.outDailyVolM3>0&&<span style={{color:'#9ca3af',fontSize:'10px'}}> ({design.staging.outDailyVolM3}m³)</span>}
-                      </div>
-                      <div>In dwell ({params.outboundDwellH}h): <strong>{design.staging.outPalletsInDwell?.toFixed(0)||'—'} {design.staging.outLabel}</strong></div>
-                      <div>Storage buffer: {design.staging.stagingBreakdown?.outStorage}m²</div>
-                      <div>Packing area: {design.staging.stagingBreakdown?.packingArea}m²</div>
-                      <div>Dispatch apron: {design.staging.stagingBreakdown?.dispatchApron}m²</div>
-                      {design.staging.trucksNeeded>0&&<div style={{color:'#d97706',fontWeight:'600'}}>Trucks needed: {design.staging.trucksNeeded}</div>}
-                      <div style={{marginTop:'4px',fontWeight:'700',color:'#d97706'}}>Outbound docks: {design.outboundDocks}</div>
-                    </div>
-                  </div>
-                </div>
-                <div style={{fontSize:'10px',color:'#0369a1',marginTop:'8px',fontStyle:'italic'}}>
-                  Sizing: pallets in dwell × 1.2m² footprint × 1.5 safety + dock apron ({params.dockPitch}m pitch × 2m depth × docks)
-                </div>
-                {design.mheArea > 0 && (
-                  <div style={{marginTop:'8px',background:'#fdf4ff',border:'1px solid #e9d5ff',
-                    borderRadius:'6px',padding:'8px 12px',fontSize:'12px',color:'#7c3aed',fontWeight:'600'}}>
-                    ⚡ MHE Charging Area: <strong>{design.mheArea}m²</strong>
-                    {' '}({design.nMHE} {params.forkType} truck{design.nMHE>1?'s':''} × {design.mheBayM2}m² × 1.3 circulation factor)
-                  </div>
-                )}
-              </div>
-            )}
-
-          {/* ── USER DEFINED RESULTS ────────────────────────────────── */}
+          {/* ── USER DEFINED RESULTS ──────────────────────────────────────────────── */}
           {storageMode==='user' && (userResult||userDesign) && (<>
 
             {/* Comparison table (when both results exist) */}
@@ -4222,6 +4208,76 @@ export default function WarehouseDesignerTool() {
               </div>
             )}
           </>)}
+          </>)}
+
+          {analysis && (<>
+
+            {/* Headline metrics - only in system mode (needs design) */}
+            {storageMode==='system' && design && <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px',marginBottom:'16px'}}>
+              {[
+                ['Total SKUs', analysis.metrics.totSKUs.toLocaleString(), '#eff6ff','#1d4ed8'],
+                ['Locations Needed', analysis.metrics.totLocs.toLocaleString(), '#f5f3ff','#7c3aed'],
+                ['Recommended Size', `${design.wW}×${design.wL}m`, '#f0fdf4','#166534'],
+                ['Gross Area', `${(design.wW*design.wL).toLocaleString()}m²\n(${Math.round(design.wW*design.wL*10.7639).toLocaleString()} sq ft)`, '#fef9c3','#854d0e'],
+                ['Dock Doors (calc.)', `${design.inboundDocks} inb + ${design.outboundDocks} out = ${design.totalDocks}`, '#e0f2fe','#0369a1'],
+                ['No-Movement SKUs', analysis.metrics.nmCount, '#fff1f2','#be185d'],
+              ].map(([l,v,bg,col])=>(
+                <div key={l} style={{background:bg,borderRadius:'10px',padding:'12px',textAlign:'center',border:`1px solid ${col}22`}}>
+                  <div style={{fontSize:'16px',fontWeight:'800',color:col,lineHeight:1.2}}>{v}</div>
+                  <div style={{fontSize:'10px',color:'#6b7280',marginTop:'4px',fontWeight:'600',textTransform:'uppercase'}}>{l}</div>
+                </div>))}
+            </div>
+
+            {/* Staging breakdown */}
+            {design.staging && (
+              <div style={{...S.card,background:'#f0f9ff',border:'1px solid #bae6fd',marginBottom:'12px',padding:'14px 18px'}}>
+                <div style={{fontWeight:'700',fontSize:'13px',color:'#0369a1',marginBottom:'10px'}}>
+                  📦 Staging Area Breakdown
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',fontSize:'12px'}}>
+                  <div style={{background:'#fff',borderRadius:'8px',padding:'10px'}}>
+                    <div style={{fontWeight:'700',color:'#0284c7',marginBottom:'6px'}}>
+                      ⬅ Inbound / Receiving — {design.receivingArea}m²
+                    </div>
+                    <div style={{color:'#374151',lineHeight:1.8,fontSize:'12px'}}>
+                      <div>{design.staging.inbLabel==='boxes'?'Boxes':'Pallets'}/day: <strong>{design.staging.inbUnits?.toFixed(0)||0}</strong></div>
+                      <div>In dwell ({params.inboundDwellH}h): <strong>{design.staging.inbPalletsInDwell?.toFixed(0)||'—'} {design.staging.inbLabel}</strong></div>
+                      <div>Storage buffer: {design.staging.stagingBreakdown?.inbStorage}m²</div>
+                      <div>GRN apron: {design.staging.stagingBreakdown?.grnApron}m²</div>
+                      <div style={{marginTop:'4px',fontWeight:'700',color:'#0369a1'}}>Inbound docks: {design.inboundDocks}</div>
+                    </div>
+                  </div>
+                  <div style={{background:'#fff',borderRadius:'8px',padding:'10px'}}>
+                    <div style={{fontWeight:'700',color:'#d97706',marginBottom:'6px'}}>
+                      ➡ Outbound / Dispatch — {design.dispatchArea}m²
+                    </div>
+                    <div style={{color:'#374151',lineHeight:1.8,fontSize:'12px'}}>
+                      <div>{design.staging.outLabel==='boxes'?'Boxes':'Pallets'}/day: <strong>{design.staging.outUnits?.toFixed(0)||0}</strong>
+                        {design.staging.outDailyVolM3>0&&<span style={{color:'#9ca3af',fontSize:'10px'}}> ({design.staging.outDailyVolM3}m³)</span>}
+                      </div>
+                      <div>In dwell ({params.outboundDwellH}h): <strong>{design.staging.outPalletsInDwell?.toFixed(0)||'—'} {design.staging.outLabel}</strong></div>
+                      <div>Storage buffer: {design.staging.stagingBreakdown?.outStorage}m²</div>
+                      <div>Packing area: {design.staging.stagingBreakdown?.packingArea}m²</div>
+                      <div>Dispatch apron: {design.staging.stagingBreakdown?.dispatchApron}m²</div>
+                      {design.staging.trucksNeeded>0&&<div style={{color:'#d97706',fontWeight:'600'}}>Trucks needed: {design.staging.trucksNeeded}</div>}
+                      <div style={{marginTop:'4px',fontWeight:'700',color:'#d97706'}}>Outbound docks: {design.outboundDocks}</div>
+                    </div>
+                  </div>
+                </div>
+                <div style={{fontSize:'10px',color:'#0369a1',marginTop:'8px',fontStyle:'italic'}}>
+                  Sizing: pallets in dwell × 1.2m² footprint × 1.5 safety + dock apron ({params.dockPitch}m pitch × 2m depth × docks)
+                </div>
+                {design.mheArea > 0 && (
+                  <div style={{marginTop:'8px',background:'#fdf4ff',border:'1px solid #e9d5ff',
+                    borderRadius:'6px',padding:'8px 12px',fontSize:'12px',color:'#7c3aed',fontWeight:'600'}}>
+                    ⚡ MHE Charging Area: <strong>{design.mheArea}m²</strong>
+                    {' '}({design.nMHE} {params.forkType} truck{design.nMHE>1?'s':''} × {design.mheBayM2}m² × 1.3 circulation factor)
+                  </div>
+                )}
+              </div>
+            )}
+
+          {/* ── USER DEFINED RESULTS ────────────────────────────────── */}
 
           {/* ── SYSTEM DEFINED RESULTS (shown when in system mode) ────── */}
           {storageMode==='system' && (<>
