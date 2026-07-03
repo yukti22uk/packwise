@@ -3237,89 +3237,81 @@ export default function WarehouseDesignerTool() {
     setUserLoading(true);
     setTimeout(()=>{
       try {
-        // If no analysis yet, run it first
-        const mData=parseTable(masterText);
-        const oData=parseTable(orderText);
-        const iData=parseTable(invText);
-        const currentAnalysis = analysis || runAnalysis(mData,oData,iData,params,preferredBins);
-        if(!analysis) setAnalysis(currentAnalysis);
+        // Step 1: get or run analysis
+        const mData=parseTable(masterText),oData=parseTable(orderText),iData=parseTable(invText);
+        const curA=analysis||runAnalysis(mData,oData,iData,params,preferredBins);
+        if(!analysis) setAnalysis(curA);
 
-        const r = calcUserDefinedStorage(currentAnalysis.slotted, userBins, userRacks, params);
-        setUserResult(r);
+        // Step 2: SKU storage calc (safe — may return null if no valid bins)
+        const vBins=userBins.filter(b=>parseFloat(b.L)>0&&parseFloat(b.W)>0&&parseFloat(b.H)>0);
+        const vRacks=userRacks.filter(rk=>parseFloat(rk.bayW)>0&&parseFloat(rk.bayD)>0);
+        const r=vBins.length>0
+          ? calcUserDefinedStorage(curA.slotted,userBins,userRacks,params)
+          : null;
+        // Always set a non-null userResult so the panel renders
+        setUserResult(r||{stored:[],overflow:[],totLocs:0,totArea:0,
+          totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
 
-        // ── Build userRackConfig from user bins + racks ──────────────────
-        const ORIENTS_U=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
-        const validBins2 = userBins.filter(b=>parseFloat(b.L)>0&&parseFloat(b.W)>0&&parseFloat(b.H)>0);
-        const validRacks2= userRacks.filter(rk=>parseFloat(rk.bayW)>0&&parseFloat(rk.bayD)>0);
+        // Step 3: build userRackConfig
+        const ORI=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+        const RZM={shelving:'golden',liveStorage:'golden',selective:'reserve',
+          doubleDeep:'reserve',driveIn:'bulk',cantilever:'long'};
         const uCfgs=[];
 
-        // Fallback: if user hasn't filled bins/racks, use system rackConfig as-is
-        if(validBins2.length===0||validRacks2.length===0){
-          const sysRc=rackConfig||generateRackConfig(currentAnalysis,params);
-          sysRc.forEach(cfg=>uCfgs.push({...cfg}));
-        } else {
-          validBins2.forEach((b,bi)=>{
+        if(vBins.length>0&&vRacks.length>0){
+          vBins.forEach((b,bi)=>{
             const bL=parseFloat(b.L),bW=parseFloat(b.W),bH=parseFloat(b.H);
-            const fill=parseFloat(b.fill)||0.55;
-            validRacks2.forEach((rk,ri)=>{
-              const rW=parseFloat(rk.bayW), rD=parseFloat(rk.bayD);
-              const rH=parseFloat(rk.bayH)||2200, tiers=parseInt(rk.levels)||1;
-              const clr=50, dim=[bL,bW,bH];
-              let bestLPB=0,bestAW=0,bestAD=0,bestLvl=0,bestOrient='LW';
-              ORIENTS_U.forEach(([x,y,z])=>{
+            vRacks.forEach((rk,ri)=>{
+              const rW=parseFloat(rk.bayW),rD=parseFloat(rk.bayD);
+              const rH=parseFloat(rk.bayH)||2200,tiers=parseInt(rk.levels)||1,clr=50;
+              const dim=[bL,bW,bH];
+              let bestLPB=0,bestAW=0,bestAD=0,bestLvl=0,bestO='LW';
+              ORI.forEach(([x,y,z])=>{
                 const aw=Math.floor(rW/dim[x]),ad=Math.floor(rD/dim[y]);
                 const lv=dim[z]>0?Math.floor(rH/(dim[z]+clr)):0;
                 const lpb=aw*ad*lv*tiers;
-                if(lpb>bestLPB){bestLPB=lpb;bestOrient=x===0?'LW':'WL';bestAW=aw;bestAD=ad;bestLvl=lv;}
+                if(lpb>bestLPB){bestLPB=lpb;bestO=x===0?'LW':'WL';bestAW=aw;bestAD=ad;bestLvl=lv;}
               });
-              const binUtil=r.binUtil?.[b.id]||{};
-              const locs=binUtil.locs||Math.ceil((r.totLocs||0)/Math.max(1,validBins2.length));
-              const baysNeeded=bestLPB>0?Math.ceil(locs/bestLPB):0;
-              const aisleHalf=(parseFloat(params.aisleW)||3.0)/2;
-              const area=+(baysNeeded*(rW/1000)*((rD/1000)+aisleHalf)).toFixed(1);
-              const userRackType=rk.rackType||'shelving';
-              // Zone derived from rack type (same mapping as system)
-              const RACK_ZONE_MAP={shelving:'golden',liveStorage:'golden',
-                selective:'reserve',doubleDeep:'reserve',driveIn:'bulk',cantilever:'long'};
+              const bu=r?.binUtil?.[b.id]||{};
+              const locs=bu.locs||Math.ceil((r?.totLocs||curA.metrics.totLocs||0)/Math.max(1,vBins.length));
+              const bays=bestLPB>0?Math.ceil(locs/bestLPB):0;
+              const ah=(parseFloat(params.aisleW)||3.0)/2;
+              const area=+(bays*(rW/1000)*((rD/1000)+ah)).toFixed(1);
+              const rt=rk.rackType||'shelving';
               uCfgs.push({
-                id:`u-${bi}-${ri}`,
-                rack:userRackType,          // ← actual rack type for 3D geometry
-                bin:`USER_${bi}`,
+                id:`u-${bi}-${ri}`,rack:rt,bin:`USER_${bi}`,
                 rackName:rk.name||`Custom Rack ${ri+1}`,
                 binName:b.name||`Custom Bin ${bi+1}`,
-                binDims:[bL,bW,bH], bayW:rW, bayD:rD,
-                shelfH:rH, tierHeight:rH, clearance:clr,
-                orientation:bestOrient, tiers,
-                acrossW:bestAW, acrossD:bestAD, levels:bestLvl,
-                locsPerBay:bestLPB>0?Math.floor(bestLPB/tiers):0,
-                locsPerBayTotal:bestLPB,
-                locs, baysNeeded, area, feasible:bestLPB>0,
-                zone:RACK_ZONE_MAP[userRackType]||'golden',
-                o1:{acrossW:Math.floor(rW/bL),acrossD:Math.floor(rD/bW),
-                    levels:bH>0?Math.floor(rH/(bH+clr)):0,feasible:Math.floor(rW/bL)>0,
+                binDims:[bL,bW,bH],bayW:rW,bayD:rD,shelfH:rH,tierHeight:rH,clearance:clr,
+                orientation:bestO,tiers,acrossW:bestAW,acrossD:bestAD,levels:bestLvl,
+                locsPerBay:bestLPB>0?Math.floor(bestLPB/tiers):0,locsPerBayTotal:bestLPB,
+                locs,baysNeeded:bays,area,feasible:bestLPB>0,zone:RZM[rt]||'golden',
+                o1:{acrossW:Math.floor(rW/bL),acrossD:Math.floor(rD/bW),feasible:Math.floor(rW/bL)>0,
+                    levels:bH>0?Math.floor(rH/(bH+clr)):0,
                     locsPerBay:Math.floor(rW/bL)*Math.floor(rD/bW)*(bH>0?Math.floor(rH/(bH+clr)):0)},
-                o2:{acrossW:Math.floor(rW/bW),acrossD:Math.floor(rD/bL),
-                    levels:bH>0?Math.floor(rH/(bH+clr)):0,feasible:Math.floor(rW/bW)>0,
+                o2:{acrossW:Math.floor(rW/bW),acrossD:Math.floor(rD/bL),feasible:Math.floor(rW/bW)>0,
+                    levels:bH>0?Math.floor(rH/(bH+clr)):0,
                     locsPerBay:Math.floor(rW/bW)*Math.floor(rD/bL)*(bH>0?Math.floor(rH/(bH+clr)):0)},
               });
             });
           });
+        } else {
+          // Fallback to system rackConfig or auto-generate
+          const sys=(rackConfig&&rackConfig.length>0)?rackConfig
+            :(generateRackConfig(curA,params)||[]);
+          sys.forEach(cfg=>uCfgs.push({...cfg}));
         }
         setUserRackConfig(uCfgs.length>0?uCfgs:null);
 
-        // ── Compute userDesign for 3D/2D layout ────────────────────────
-        const userTotalArea=uCfgs.reduce((s,cfg)=>s+(cfg.area||0),0)||r.totArea||0;
-        const customAreas=uCfgs.length>0
-          ? (() => { const a={}; uCfgs.forEach(cfg=>{a[cfg.rack]=(a[cfg.rack]||0)+(cfg.area||0);}); return a; })()
-          : {shelving:userTotalArea};
-        const ud=calcWarehouseSize(currentAnalysis,params,customAreas);
-        setUserDesign(ud);
+        // Step 4: ALWAYS compute layout
+        const ca={};
+        uCfgs.forEach(cfg=>{ca[cfg.rack]=(ca[cfg.rack]||0)+(cfg.area||0);});
+        if(!Object.keys(ca).length) ca.shelving=r?.totArea||50;
+        setUserDesign(calcWarehouseSize(curA,params,ca));
 
-      } catch(e) {
-        console.error('User calc error:', e);
-      }
+      } catch(e){ console.error('User calc error:',e.message,e); }
       setUserLoading(false);
-    }, 80);
+    },80);
   };
 
   // Helpers for user-defined bin/rack editing
@@ -3981,7 +3973,7 @@ export default function WarehouseDesignerTool() {
             )}
 
           {/* ── USER DEFINED RESULTS ────────────────────────────────── */}
-          {storageMode==='user' && userResult && (<>
+          {storageMode==='user' && (userResult||userDesign) && (<>
 
             {/* Comparison table (when both results exist) */}
             {analysis && configConfirmed && design && (<>
