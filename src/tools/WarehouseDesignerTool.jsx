@@ -82,6 +82,294 @@ function selectBin(skuL, skuW, skuH, volCm3, isLong, preferredBins) {
   return preferred[preferred.length-1] || 'XL';
 }
 
+// ─── RACK ELEVATION SVG ───────────────────────────────────────────────────────
+function RackElevationSVG({ cfg, W: svgW=260, H: svgH=190 }) {
+  const rack    = cfg.rack;
+  const levels  = cfg.levels  || 4;
+  const tiers   = parseInt(cfg.tiers)||1;
+  const bayWmm  = cfg.bayW    || 2700;
+  const tierHmm = parseFloat(cfg.tierHeight)||cfg.shelfH||2200;
+  const clearMm = cfg.clearance||50;
+  const binD    = cfg.binDims; // [L,W,H] mm
+  const acrossW = cfg.acrossW || 2;
+  const palLevH = 1500; // pallet + beam mm
+  const totalHmm= rack==='selective'||rack==='driveIn'||rack==='doubleDeep'
+    ? palLevH*levels + 400
+    : tierHmm * tiers + 200;
+
+  // Colours
+  const STEEL='#475569', BEAM='#94a3b8', PALLET='#d97706',
+        BIN='#3b82f6', DIM='#be185d', LABEL='#374151',
+        GROUND='#1e293b', MEZZANINE='#7c3aed';
+
+  // Layout margins
+  const ML=40,MR=36,MT=22,MB=28;
+  const DW=svgW-ML-MR, DH=svgH-MT-MB;
+  const sX = DW/bayWmm;
+  const sY = DH/(totalHmm||1);
+
+  // Coordinate helpers (Y is flipped: 0=ground=bottom)
+  const px  = mm => ML + mm*sX;
+  const py  = mm => MT + (totalHmm-mm)*sY;
+  const pw  = mm => Math.max(1,mm*sX);
+  const ph  = mm => Math.max(1,mm*sY);
+  const upW = Math.max(3, pw(60)); // upright width in px
+
+  // Dimension annotation
+  const dimH = (x1,y1,x2,y2,label,side='right') => {
+    const mx=(x1+x2)/2, my=(y1+y2)/2;
+    return (
+      <g>
+        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={DIM} strokeWidth="1"/>
+        <line x1={x1-4} y1={y1} x2={x1+4} y2={y1} stroke={DIM} strokeWidth="1"/>
+        <line x1={x2-4} y1={y2} x2={x2+4} y2={y2} stroke={DIM} strokeWidth="1"/>
+        <text x={mx+(side==='right'?4:-4)} y={my} fontSize="7" fill={DIM}
+          dominantBaseline="middle" textAnchor={side==='right'?'start':'end'}
+          transform={`rotate(-90,${mx+(side==='right'?4:-4)},${my})`}>{label}</text>
+      </g>
+    );
+  };
+  const dimW = (x1,x2,y,label) => (
+    <g>
+      <line x1={x1} y1={y} x2={x2} y2={y} stroke={DIM} strokeWidth="1"/>
+      <line x1={x1} y1={y-4} x2={x1} y2={y+4} stroke={DIM} strokeWidth="1"/>
+      <line x1={x2} y1={y-4} x2={x2} y2={y+4} stroke={DIM} strokeWidth="1"/>
+      <text x={(x1+x2)/2} y={y-5} fontSize="7" fill={DIM} textAnchor="middle">{label}</text>
+    </g>
+  );
+
+  // ── SHELVING / LIVE STORAGE (front elevation) ─────────────────────────────
+  if (rack==='shelving'||rack==='liveStorage') {
+    const binH  = binD?binD[2]:200;
+    const slotH = binH + clearMm;
+    const levPT = Math.max(1,Math.floor(tierHmm/slotH)); // levels per tier
+    const bW    = Math.max(4, pw((bayWmm-120)/Math.max(1,acrossW)) - 2);
+
+    return (
+      <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} style={{display:'block'}}>
+        <rect width={svgW} height={svgH} fill="#f8fafc" rx="6"/>
+        {/* Left + right uprights */}
+        <rect x={px(0)} y={py(totalHmm-200)} width={upW} height={ph(totalHmm-200)} fill={STEEL}/>
+        <rect x={px(bayWmm)-upW} y={py(totalHmm-200)} width={upW} height={ph(totalHmm-200)} fill={STEEL}/>
+        {/* Tiers & levels */}
+        {Array.from({length:tiers},(_,tier)=>
+          Array.from({length:levPT},(_,lev)=>{
+            const shY = tier*tierHmm + lev*slotH;
+            return (
+              <g key={`${tier}-${lev}`}>
+                {/* Shelf board */}
+                <rect x={px(60)} y={py(shY+slotH)-ph(28)} width={pw(bayWmm-120)} height={ph(28)} fill={BEAM}/>
+                {/* Bins */}
+                {Array.from({length:acrossW},(_,b)=>{
+                  const bx=px(70+b*(bayWmm-140)/Math.max(1,acrossW));
+                  const bHpx=Math.max(4,ph(binH*0.88));
+                  return(
+                    <rect key={b} x={bx} y={py(shY+slotH)-ph(28)-bHpx}
+                      width={bW} height={bHpx}
+                      fill={rack==='liveStorage'?'#60a5fa':'#3b82f6'}
+                      rx="1" opacity="0.9"/>
+                  );
+                })}
+              </g>
+            );
+          })
+        )}
+        {/* Mezzanine decks */}
+        {tiers>1&&Array.from({length:tiers-1},(_,t)=>(
+          <g key={t}>
+            <rect x={px(0)} y={py((t+1)*tierHmm)-ph(60)} width={pw(bayWmm)} height={ph(60)} fill="#c4b5fd" opacity="0.7"/>
+            <text x={px(bayWmm/2)} y={py((t+1)*tierHmm)-ph(30)} textAnchor="middle" fontSize="7" fill={MEZZANINE} fontWeight="700">MEZZANINE</text>
+          </g>
+        ))}
+        {/* Live-storage: incline arrow */}
+        {rack==='liveStorage'&&(
+          <text x={px(bayWmm/2)} y={py(tierHmm/2)} textAnchor="middle" fontSize="9" fill="#1d4ed8">→ FIFO</text>
+        )}
+        {/* Ground line */}
+        <line x1={px(0)} y1={py(0)} x2={px(bayWmm)} y2={py(0)} stroke={GROUND} strokeWidth="2.5"/>
+        {/* Dimensions */}
+        {dimW(px(0),px(bayWmm),MT-4,`${(bayWmm/1000).toFixed(1)}m`)}
+        {dimH(px(bayWmm)+10,py(0),px(bayWmm)+10,py(totalHmm-200),`${(tierHmm*tiers/1000).toFixed(1)}m`)}
+        <text x={svgW/2} y={svgH-6} textAnchor="middle" fontSize="8" fontWeight="700" fill={LABEL}>
+          Shelving — {levPT*tiers} levels{tiers>1?` × ${tiers} tiers`:''}
+        </text>
+      </svg>
+    );
+  }
+
+  // ── SELECTIVE PALLET RACK (front elevation) ───────────────────────────────
+  if (rack==='selective') {
+    const palH=1200, beamH=200, palW=1200;
+    return (
+      <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} style={{display:'block'}}>
+        <rect width={svgW} height={svgH} fill="#f8fafc" rx="6"/>
+        {/* Upright frames (double line) */}
+        {[0, bayWmm].map((x,i)=>(
+          <g key={i}>
+            <rect x={px(x)-(i>0?upW:0)} y={py(palLevH*levels+100)} width={upW} height={ph(palLevH*levels+100)} fill={STEEL}/>
+          </g>
+        ))}
+        <rect x={px(bayWmm/2)-upW/2} y={py(palLevH*levels+100)} width={upW} height={ph(palLevH*levels+100)} fill={STEEL} opacity="0.5"/>
+        {/* Beam levels + pallets */}
+        {Array.from({length:levels},(_,lev)=>{
+          const beamY=lev*palLevH, palY=beamY+beamH;
+          return (
+            <g key={lev}>
+              {/* Beam */}
+              <rect x={px(0)} y={py(beamY+beamH)-ph(beamH)} width={pw(bayWmm)} height={ph(beamH)} fill={BEAM} rx="1"/>
+              {/* 2 pallets per level */}
+              {[0,1].map(p=>{
+                const pxStart=px(40+p*(bayWmm/2-20));
+                return(
+                  <g key={p}>
+                    {/* Pallet board */}
+                    <rect x={pxStart} y={py(palY+palH)-ph(120)} width={pw(palW*0.85)} height={ph(120)} fill='#92400e' rx="1"/>
+                    {/* Load on pallet */}
+                    <rect x={pxStart+1} y={py(palY+palH)-ph(120)-ph(palH-200)} width={pw(palW*0.85)-2} height={ph(palH-200)} fill={PALLET} rx="2" opacity="0.85"/>
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })}
+        <line x1={px(0)} y1={py(0)} x2={px(bayWmm)} y2={py(0)} stroke={GROUND} strokeWidth="2.5"/>
+        {dimW(px(0),px(bayWmm),MT-4,`${(bayWmm/1000).toFixed(1)}m`)}
+        {dimH(px(bayWmm)+10,py(0),px(bayWmm)+10,py(palLevH*levels),`${(palLevH*levels/1000).toFixed(1)}m`)}
+        <text x={svgW/2} y={svgH-6} textAnchor="middle" fontSize="8" fontWeight="700" fill={LABEL}>
+          Selective Pallet Rack — {levels} beam levels
+        </text>
+      </svg>
+    );
+  }
+
+  // ── DRIVE-IN RACK (side elevation — shows depth) ──────────────────────────
+  if (rack==='driveIn') {
+    const depthMm=cfg.bayD||6600, palW=1100, palH=1200, beamH=150;
+    const nDeep=Math.max(1,Math.round(depthMm/palW));
+    const sideX=DW/depthMm, totalSideH=palLevH*levels+300;
+    const sideY=DH/(totalSideH||1);
+    const sx=mm=>ML+mm*sideX, sy=mm=>MT+(totalSideH-mm)*sideY;
+
+    return (
+      <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} style={{display:'block'}}>
+        <rect width={svgW} height={svgH} fill="#f8fafc" rx="6"/>
+        {/* Side columns */}
+        <rect x={sx(0)} y={sy(totalSideH-300)} width={pw(60)} height={ph(totalSideH-300)} fill={STEEL}/>
+        <rect x={sx(depthMm)-pw(60)} y={sy(totalSideH-300)} width={pw(60)} height={ph(totalSideH-300)} fill={STEEL}/>
+        {/* Levels */}
+        {Array.from({length:levels},(_,lev)=>(
+          <g key={lev}>
+            {/* Rail beams (side view: horizontal lines) */}
+            <rect x={sx(60)} y={sy(lev*palLevH+beamH)-ph(beamH)} width={sx(depthMm-60)-sx(60)} height={ph(beamH)} fill={BEAM} rx="1" opacity="0.7"/>
+            {/* Pallets deep */}
+            {Array.from({length:nDeep},(_,d)=>(
+              <g key={d}>
+                <rect x={sx(d*palW+70)+1} y={sy(lev*palLevH+palH+beamH)-ph(palH)} width={sx((d+1)*palW+70)-sx(d*palW+70)-2} height={ph(palH)} fill={PALLET} rx="1" opacity="0.8"/>
+                <rect x={sx(d*palW+70)} y={sy(lev*palLevH+beamH)-ph(beamH/2)} width={sx((d+1)*palW+70)-sx(d*palW+70)} height={ph(beamH/2)} fill='#92400e' rx="0"/>
+              </g>
+            ))}
+          </g>
+        ))}
+        {/* Loading arrow */}
+        <text x={sx(depthMm/2)} y={sy(-60)} textAnchor="middle" fontSize="8" fill="#1d4ed8" fontWeight="700">← LOAD / UNLOAD</text>
+        <line x1={sx(0)} y1={sy(0)} x2={sx(depthMm)} y2={sy(0)} stroke={GROUND} strokeWidth="2.5"/>
+        {dimW(sx(0),sx(depthMm),MT-4,`${(depthMm/1000).toFixed(1)}m deep (${nDeep} pallets)`)}
+        {dimH(sx(depthMm)+10,sy(0),sx(depthMm)+10,sy(palLevH*levels),`${(palLevH*levels/1000).toFixed(1)}m`)}
+        <text x={svgW/2} y={svgH-6} textAnchor="middle" fontSize="8" fontWeight="700" fill={LABEL}>
+          Drive-In Rack — {nDeep} deep × {levels} levels (LIFO)
+        </text>
+      </svg>
+    );
+  }
+
+  // ── DOUBLE-DEEP RACK (side elevation) ────────────────────────────────────
+  if (rack==='doubleDeep') {
+    const depthMm=cfg.bayD||2400, palW=1100, palH=1200, beamH=150;
+    const sideX=DW/depthMm, totalSideH=palLevH*levels+300;
+    const sideY=DH/(totalSideH||1);
+    const sx=mm=>ML+mm*sideX, sy=mm=>MT+(totalSideH-mm)*sideY;
+
+    return (
+      <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} style={{display:'block'}}>
+        <rect width={svgW} height={svgH} fill="#f8fafc" rx="6"/>
+        <rect x={sx(0)} y={sy(totalSideH-300)} width={pw(60)} height={ph(totalSideH-300)} fill={STEEL}/>
+        <rect x={sx(depthMm)-pw(60)} y={sy(totalSideH-300)} width={pw(60)} height={ph(totalSideH-300)} fill={STEEL}/>
+        {Array.from({length:levels},(_,lev)=>(
+          <g key={lev}>
+            <rect x={sx(60)} y={sy(lev*palLevH+beamH)-ph(beamH)} width={sx(depthMm-60)-sx(60)} height={ph(beamH)} fill={BEAM} rx="1" opacity="0.7"/>
+            {[0,1].map(d=>(
+              <g key={d}>
+                <rect x={sx(d*palW+70)+1} y={sy(lev*palLevH+palH+beamH)-ph(palH)}
+                  width={sx((d+1)*palW+70)-sx(d*palW+70)-2} height={ph(palH)}
+                  fill={d===0?PALLET:'#f59e0b'} rx="1" opacity="0.85"/>
+                <rect x={sx(d*palW+70)} y={sy(lev*palLevH+beamH)-ph(beamH/2)}
+                  width={sx((d+1)*palW+70)-sx(d*palW+70)} height={ph(beamH/2)} fill='#92400e'/>
+              </g>
+            ))}
+          </g>
+        ))}
+        {/* Reach truck arm indicator */}
+        <rect x={sx(0)-20} y={sy(palLevH/2+palH)} width={20} height={ph(100)} fill="#64748b" rx="2"/>
+        <text x={sx(0)-10} y={sy(palLevH/2+palH)+ph(50)} textAnchor="middle" fontSize="7" fill="#64748b"
+          transform={`rotate(-90,${sx(0)-10},${sy(palLevH/2+palH)+ph(50)})`}>REACH</text>
+        <line x1={sx(0)} y1={sy(0)} x2={sx(depthMm)} y2={sy(0)} stroke={GROUND} strokeWidth="2.5"/>
+        {dimW(sx(0),sx(depthMm),MT-4,`${(depthMm/1000).toFixed(1)}m (2 pallets deep)`)}
+        {dimH(sx(depthMm)+10,sy(0),sx(depthMm)+10,sy(palLevH*levels),`${(palLevH*levels/1000).toFixed(1)}m`)}
+        <text x={svgW/2} y={svgH-6} textAnchor="middle" fontSize="8" fontWeight="700" fill={LABEL}>
+          Double-Deep — 2 pallets deep × {levels} levels
+        </text>
+      </svg>
+    );
+  }
+
+  // ── CANTILEVER RACK (front elevation) ─────────────────────────────────────
+  if (rack==='cantilever') {
+    const spineW=150, armLen=1000, armH=80, armStep=600;
+    const totalW=spineW+armLen*2, totalHC=armStep*levels+400;
+    const cX=DW/totalW, cY=DH/totalHC;
+    const cx=mm=>ML+mm*cX, cy=mm=>MT+(totalHC-mm)*cY;
+
+    return (
+      <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} style={{display:'block'}}>
+        <rect width={svgW} height={svgH} fill="#f8fafc" rx="6"/>
+        {/* Central spine */}
+        <rect x={cx(armLen)} y={cy(totalHC-400)} width={cx(armLen+spineW)-cx(armLen)} height={cy(0)-cy(totalHC-400)+2} fill={STEEL}/>
+        {/* Arms per level */}
+        {Array.from({length:levels},(_,lev)=>{
+          const armY=200+lev*armStep;
+          return (
+            <g key={lev}>
+              {/* Left arm */}
+              <rect x={cx(0)} y={cy(armY+armH)-cy(armY)} width={cx(armLen)-cx(0)} height={Math.max(4,cy(armY)-cy(armY+armH))} fill={BEAM} rx="2"/>
+              {/* Right arm */}
+              <rect x={cx(armLen+spineW)} y={cy(armY+armH)-cy(armY)} width={cx(totalW)-cx(armLen+spineW)} height={Math.max(4,cy(armY)-cy(armY+armH))} fill={BEAM} rx="2"/>
+              {/* Long items on arms */}
+              <rect x={cx(0)+2} y={cy(armY+armH)-cy(armY)-ph(80)} width={cx(armLen)-cx(0)-4} height={ph(80)} fill="#fb923c" rx="1" opacity="0.85"/>
+              <rect x={cx(armLen+spineW)+2} y={cy(armY+armH)-cy(armY)-ph(80)} width={cx(totalW)-cx(armLen+spineW)-4} height={ph(80)} fill="#fb923c" rx="1" opacity="0.85"/>
+            </g>
+          );
+        })}
+        <line x1={cx(0)} y1={cy(0)} x2={cx(totalW)} y2={cy(0)} stroke={GROUND} strokeWidth="2.5"/>
+        {dimW(cx(0),cx(totalW),MT-4,`${(totalW/1000).toFixed(1)}m span`)}
+        {dimH(cx(totalW)+10,cy(0),cx(totalW)+10,cy(armStep*levels),`${(armStep*levels/1000).toFixed(1)}m`)}
+        <text x={svgW/2} y={svgH-6} textAnchor="middle" fontSize="8" fontWeight="700" fill={LABEL}>
+          Cantilever Rack — {levels} arm levels (long goods)
+        </text>
+      </svg>
+    );
+  }
+
+  // ── FALLBACK ─────────────────────────────────────────────────────────────
+  return (
+    <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} style={{display:'block'}}>
+      <rect width={svgW} height={svgH} fill="#f8fafc" rx="6"/>
+      <text x={svgW/2} y={svgH/2} textAnchor="middle" fontSize="11" fill={LABEL}>
+        {cfg.rackName}
+      </text>
+    </svg>
+  );
+}
+
 // ─── BIN CONSOLIDATION ────────────────────────────────────────────────────────
 // Merge minority bin types into adjacent bins to reduce variety
 const LOC_SHARE_MAP = { VF:1, F:1, M:1, S:2, VS:4, NM:8 };
@@ -1360,6 +1648,299 @@ function downloadRackLocations(cfg, analysis) {
   XLSX.writeFile(wb, fname);
 }
 
+// ─── 3D ISOMETRIC WAREHOUSE VIEW ─────────────────────────────────────────────
+function WarehouseIso3DSVG({ analysis, design, params, rackConfig }) {
+  const { wW, wL, zoneAreas={}, receivingArea=80, dispatchArea=80,
+    mheArea=0, officeArea=50, totalDocks=4, inboundDocks=2, outboundDocks=2 } = design;
+  const { dockSide, aisleW:aisleWP, clearH:clearHP, dockPitch } = params;
+  const clearH = parseFloat(clearHP)||9;
+  const aisleM = parseFloat(aisleWP)||3.0;
+
+  const SVG_W=960, SVG_H=600;
+  const cos30=Math.cos(Math.PI/6), sin30=Math.sin(Math.PI/6);
+
+  // Dynamic iso scale to fit warehouse in canvas
+  const ISO_byW=(SVG_W-80)/((wW+wL)*cos30);
+  const ISO_byH=(SVG_H-100)/((wW+wL)*sin30 + clearH*1.3);
+  const ISO=Math.min(ISO_byW,ISO_byH)*0.85;
+
+  // World: x=east(0→wW), y=north/depth(0=south-docks→wL=back), z=up(0=floor→clearH)
+  // Camera: south-west, looking NE-up
+  const OX=40+wL*ISO*cos30;
+  const OY=SVG_H-45;
+  const iso=(wx,wy,wz)=>({
+    x: OX+(wx-wy)*ISO*cos30,
+    y: OY-(wx+wy)*ISO*sin30-wz*ISO
+  });
+
+  // Path builders
+  const pt=p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+  const isoBox=(wx,wy,wz,dx,dy,dz)=>{
+    const [p000,p100,p010,p110,p001,p101,p011,p111]=[
+      iso(wx,wy,wz),iso(wx+dx,wy,wz),iso(wx,wy+dy,wz),iso(wx+dx,wy+dy,wz),
+      iso(wx,wy,wz+dz),iso(wx+dx,wy,wz+dz),iso(wx,wy+dy,wz+dz),iso(wx+dx,wy+dy,wz+dz)
+    ];
+    return {
+      top:  `M${pt(p001)}L${pt(p101)}L${pt(p111)}L${pt(p011)}Z`,
+      front:`M${pt(p000)}L${pt(p100)}L${pt(p101)}L${pt(p001)}Z`,
+      side: `M${pt(p100)}L${pt(p110)}L${pt(p111)}L${pt(p101)}Z`,
+    };
+  };
+  const isoFloor=(wx,wy,dx,dy)=>{
+    const [p00,p10,p11,p01]=[iso(wx,wy,0),iso(wx+dx,wy,0),iso(wx+dx,wy+dy,0),iso(wx,wy+dy,0)];
+    return `M${pt(p00)}L${pt(p10)}L${pt(p11)}L${pt(p01)}Z`;
+  };
+  const isoWall_NS=(wx,wy,dx,dz)=>{  // south/north wall (constant y)
+    const [p0,p1,p2,p3]=[iso(wx,wy,0),iso(wx+dx,wy,0),iso(wx+dx,wy,dz),iso(wx,wy,dz)];
+    return `M${pt(p0)}L${pt(p1)}L${pt(p2)}L${pt(p3)}Z`;
+  };
+  const isoWall_EW=(wx,wy,dy,dz)=>{  // east/west wall (constant x)
+    const [p0,p1,p2,p3]=[iso(wx,wy,0),iso(wx,wy+dy,0),iso(wx,wy+dy,dz),iso(wx,wy,dz)];
+    return `M${pt(p0)}L${pt(p1)}L${pt(p2)}L${pt(p3)}Z`;
+  };
+
+  // ── ZONE LAYOUT (world coords: y=0=south/docks, y=wL=north) ──────────────
+  const stagingH = Math.max(4,(receivingArea||80)/wW);
+  const supportH = Math.max(2,((officeArea||50)+(mheArea||0))/wW);
+  const availH   = Math.max(4, wL-stagingH-supportH);
+  const totZA    = Object.values(zoneAreas).reduce((s,a)=>s+a,0)||1;
+  const ZONE_ORDER=['golden','mid','reserve','bulk','long'];
+  let yCur=stagingH;
+  const zPos={};
+  ZONE_ORDER.forEach(z=>{
+    const h=((zoneAreas[z]||0)/totZA)*availH;
+    zPos[z]={y0:yCur, h:Math.max(0,h)};
+    yCur+=h;
+  });
+
+  // ── RACK HEIGHT PER ZONE ─────────────────────────────────────────────────
+  const RACK_DEPTH={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
+  const RACK_CLR  ={shelving:'#64748b',liveStorage:'#2563eb',selective:'#374151',
+    driveIn:'#1e293b',doubleDeep:'#475569',cantilever:'#7c3aed'};
+
+  const getZoneRackH=(zone)=>{
+    if (!rackConfig) return 3.0;
+    const cfgs=(rackConfig||[]).filter(cfg=>{
+      const z=(analysis?.slotted||[]).find(s=>s.rack===cfg.rack)?.zone;
+      return z===zone;
+    });
+    if (!cfgs.length) return 3.0;
+    const cfg=cfgs[0];
+    if (['shelving','liveStorage'].includes(cfg.rack))
+      return (parseFloat(cfg.tierHeight)||cfg.shelfH||2200)*(parseInt(cfg.tiers)||1)/1000;
+    return (cfg.levels||4)*1.5+0.3;
+  };
+  const getDomRack=(zone)=>{
+    const m={};
+    (analysis?.slotted||[]).filter(s=>s.zone===zone).forEach(r=>{m[r.rack]=(m[r.rack]||0)+1;});
+    return Object.entries(m).sort((a,b)=>b[1]-a[1])[0]?.[0]||'shelving';
+  };
+
+  // ── BUILD DRAW ELEMENTS (back→front) ──────────────────────────────────────
+  const elements=[];
+
+  // 1. NORTH WALL (y=wL, farthest back)
+  elements.push({key:'north-wall', z_sort:wL+100,
+    render:<path d={isoWall_NS(0,wL,wW,clearH*0.9)} fill="#e2e8f0" stroke="#94a3b8" strokeWidth="0.8"/>});
+
+  // 2. EAST WALL (x=wW, back-right)
+  elements.push({key:'east-wall', z_sort:wW+50,
+    render:<path d={isoWall_EW(wW,0,wL,clearH*0.9)} fill="#cbd5e1" stroke="#94a3b8" strokeWidth="0.8"/>});
+
+  // 3. FLOOR ZONES (large y → small y)
+  // Support area (north)
+  ['office','mhe'].forEach((s,i)=>{
+    const x=i===0?0:wW/2, w=wW/2, y0=wL-supportH;
+    elements.push({key:`sup-${s}`, z_sort:-(y0+supportH/2),
+      render:<>
+        <path d={isoFloor(x,y0,w,supportH)} fill={i===0?'#dbeafe':'#fdf4ff'} stroke="#94a3b8" strokeWidth="0.5"/>
+        <text {...(() => { const lp=iso(x+w/2,y0+supportH/2,0.1); return {x:lp.x,y:lp.y}; })()} textAnchor="middle" fontSize="7" fill={i===0?'#1d4ed8':'#7c3aed'} fontWeight="700">
+          {i===0?'OFFICE':'MHE'}
+        </text>
+      </>
+    });
+  });
+
+  // Storage zones
+  ZONE_ORDER.forEach(z=>{
+    const {y0,h}=zPos[z]||{y0:0,h:0}; if(h<0.5) return;
+    const zd=ZONE_DEFS[z]||{};
+    elements.push({key:`zone-${z}`, z_sort:-(y0+h/2),
+      render:<>
+        <path d={isoFloor(0,y0,wW,h)} fill={zd.color||'#f1f5f9'} stroke={zd.border||'#94a3b8'} strokeWidth="0.5" opacity="0.92"/>
+        {h>3&&(()=>{ const lp=iso(wW/2,y0+h/2,0.1); return(
+          <text x={lp.x} y={lp.y} textAnchor="middle" fontSize="8" fill={zd.textColor||'#374151'} fontWeight="700">{zd.label||z}</text>
+        );})()} 
+      </>
+    });
+
+    // RACK ROWS within zone
+    const dom=getDomRack(z); const rd=RACK_DEPTH[dom]||0.6;
+    const rh=getZoneRackH(z); const slot=rd+aisleM;
+    const nRows=Math.max(1,Math.floor(h/slot));
+    for(let r=0;r<nRows;r++){
+      const ry=y0+r*slot+aisleM*0.5;
+      if(ry+rd>y0+h-0.3) break;
+      const bx=isoBox(0.2,ry,0,wW-0.4,rd,rh);
+      const baseClr=RACK_CLR[dom]||'#64748b';
+      elements.push({key:`rack-${z}-${r}`, z_sort:-(ry+rd/2),
+        render:<>
+          <path d={bx.top}   fill={baseClr} opacity="0.55"/>
+          <path d={bx.front} fill={baseClr} opacity="0.75" stroke="rgba(255,255,255,0.2)" strokeWidth="0.5"/>
+          <path d={bx.side}  fill={baseClr} opacity="0.45"/>
+          {/* Shelf lines on front face for shelving */}
+          {(dom==='shelving'||dom==='liveStorage')&&Array.from({length:Math.min(6,Math.floor(rh/0.35))},(_,sl)=>{
+            const slZ=sl*(rh/Math.min(6,Math.floor(rh/0.35)));
+            const p0=iso(0.2,ry,slZ), p1=iso(wW-0.4,ry,slZ);
+            return <line key={sl} x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="rgba(255,255,255,0.4)" strokeWidth="0.6"/>;
+          })}
+          {/* Beam lines for pallet racks */}
+          {(dom==='selective'||dom==='doubleDeep')&&Array.from({length:Math.min(5,Math.floor(rh/1.5))},(_,lv)=>{
+            const lZ=lv*1.5+0.3;
+            const p0=iso(0.2,ry,lZ),p1=iso(wW-0.4,ry,lZ);
+            return <line key={lv} x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="#f59e0b" strokeWidth="0.8"/>;
+          })}
+        </>
+      });
+    }
+  });
+
+  // 4. STAGING (south end, y=0 to stagingH)
+  const isOne=dockSide==='one', isBoth=dockSide==='both';
+  const stagingZones=[
+    {x:0,y:0,w:wW/2,h:stagingH,label:'RECEIVING',color:'#bfdbfe',stroke:'#2563eb'},
+    {x:wW/2,y:0,w:wW/2,h:stagingH,label:'DISPATCH',color:'#fde68a',stroke:'#d97706'},
+  ];
+  stagingZones.forEach((s,i)=>{
+    elements.push({key:`stag-${i}`, z_sort:-(s.y+s.h/2),
+      render:<>
+        <path d={isoFloor(s.x,s.y,s.w,s.h)} fill={s.color} stroke={s.stroke} strokeWidth="1" opacity="0.9"/>
+        {(()=>{ const lp=iso(s.x+s.w/2,s.y+s.h/2,0.1); return(
+          <text x={lp.x} y={lp.y} textAnchor="middle" fontSize="8" fill={s.stroke} fontWeight="800">{s.label}</text>
+        );})()} 
+        {/* Staging pallets */}
+        {Array.from({length:Math.min(8,Math.floor(s.w/1.3))},(_,p)=>{
+          const px=s.x+0.4+p*1.3;
+          if(px+1.0>s.x+s.w-0.2) return null;
+          const pb=isoBox(px,s.y+0.3,0,1.0,1.0,0.15);
+          const pb2=isoBox(px,s.y+0.3,0.15,1.0,1.0,0.8);
+          return(<g key={p}>
+            <path d={pb.top}   fill="#92400e"/><path d={pb.front} fill="#92400e"/><path d={pb.side} fill="#78350f"/>
+            <path d={pb2.top}  fill={i===0?'#d97706':'#f59e0b'} opacity="0.85"/>
+            <path d={pb2.front} fill={i===0?'#fbbf24':'#fcd34d'} opacity="0.85"/>
+            <path d={pb2.side}  fill={i===0?'#d97706':'#f59e0b'} opacity="0.7"/>
+          </g>);
+        })}
+      </>
+    });
+  });
+
+  // 5. WEST WALL (x=0, near-left — only bottom strip for visual)
+  elements.push({key:'west-wall-strip', z_sort:9000,
+    render:<path d={isoWall_EW(0,0,wL,Math.min(1.0,clearH*0.12))} fill="#f8fafc" stroke="#94a3b8" strokeWidth="0.8" opacity="0.7"/>});
+
+  // 6. SOUTH WALL FRAME (y=0, nearest — dock posts)
+  const pitch=parseFloat(dockPitch)||4.5;
+  const nDocks=totalDocks||4;
+  elements.push({key:'south-wall-partial', z_sort:9500,
+    render:<>
+      {/* Floor edge */}
+      <path d={`M${pt(iso(0,0,0))}L${pt(iso(wW,0,0))}`} stroke="#1e293b" strokeWidth="2"/>
+      {/* Column posts at dock spacing */}
+      {Array.from({length:nDocks+1},(_,i)=>{
+        const dx=i*(wW/(nDocks));
+        if(dx>wW) return null;
+        const pst=isoBox(dx-0.1,0,0,0.2,0.3,Math.min(3.5,clearH*0.4));
+        return(<g key={i}>
+          <path d={pst.front} fill="#374151"/>
+          <path d={pst.side}  fill="#1e293b"/>
+        </g>);
+      })}
+      {/* Dock labels */}
+      {Array.from({length:nDocks},(_,i)=>{
+        const dx=(i+0.5)*(wW/nDocks);
+        const lp=iso(dx,0,0);
+        return <text key={i} x={lp.x} y={lp.y+12} textAnchor="middle" fontSize="8" fill="#1d4ed8" fontWeight="700">D{i+1}</text>;
+      })}
+    </>
+  });
+
+  // Sort all elements back→front (most negative z_sort first)
+  elements.sort((a,b)=>a.z_sort-b.z_sort);
+
+  // ── DIMENSION ANNOTATIONS ─────────────────────────────────────────────────
+  const sw=iso(0,0,0), se=iso(wW,0,0), nw=iso(0,wL,0), ne=iso(wW,wL,0);
+  const top_sw=iso(0,0,clearH), top_nw=iso(0,wL,clearH);
+
+  return (
+    <svg width={SVG_W} height={SVG_H} viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+      style={{display:'block',background:'#f0f9ff',borderRadius:'10px',width:'100%',height:'auto'}}>
+
+      {/* Sky gradient */}
+      <defs>
+        <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#e0f2fe"/>
+          <stop offset="100%" stopColor="#f0f9ff"/>
+        </linearGradient>
+        <linearGradient id="floorGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#f8fafc"/>
+          <stop offset="100%" stopColor="#e2e8f0"/>
+        </linearGradient>
+      </defs>
+      <rect width={SVG_W} height={SVG_H} fill="url(#skyGrad)"/>
+
+      {/* Roof wireframe (transparent) */}
+      <path d={`M${pt(top_sw)}L${pt(iso(wW,0,clearH))}L${pt(iso(wW,wL,clearH))}L${pt(top_nw)}Z`}
+        fill="none" stroke="#94a3b8" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.5"/>
+      <line x1={top_sw.x} y1={top_sw.y} x2={sw.x} y2={sw.y} stroke="#94a3b8" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.5"/>
+      <line x1={top_nw.x} y1={top_nw.y} x2={nw.x} y2={nw.y} stroke="#94a3b8" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.5"/>
+
+      {/* All scene elements */}
+      {elements.map(e=>(<g key={e.key}>{e.render}</g>))}
+
+      {/* Dimension lines */}
+      {/* Width (south edge) */}
+      <line x1={sw.x} y1={sw.y+14} x2={se.x} y2={se.y+14} stroke="#be185d" strokeWidth="1"/>
+      <line x1={sw.x} y1={sw.y+10} x2={sw.x} y2={sw.y+18} stroke="#be185d" strokeWidth="1"/>
+      <line x1={se.x} y1={se.y+10} x2={se.x} y2={se.y+18} stroke="#be185d" strokeWidth="1"/>
+      <text x={(sw.x+se.x)/2} y={sw.y+26} textAnchor="middle" fontSize="9" fill="#be185d" fontWeight="700">{wW}m wide ({(wW*3.28).toFixed(0)} ft)</text>
+
+      {/* Length (west edge) */}
+      <line x1={sw.x-12} y1={sw.y} x2={nw.x-12} y2={nw.y} stroke="#be185d" strokeWidth="1"/>
+      <line x1={sw.x-16} y1={sw.y} x2={sw.x-8} y2={sw.y} stroke="#be185d" strokeWidth="1"/>
+      <line x1={nw.x-16} y1={nw.y} x2={nw.x-8} y2={nw.y} stroke="#be185d" strokeWidth="1"/>
+      <text x={sw.x-14} y={(sw.y+nw.y)/2} textAnchor="middle" fontSize="9" fill="#be185d" fontWeight="700"
+        transform={`rotate(-90,${sw.x-14},${(sw.y+nw.y)/2})`}>{wL}m deep ({(wL*3.28).toFixed(0)} ft)</text>
+
+      {/* Clear height */}
+      {(()=>{ const h0=iso(wW,0,0),h1=iso(wW,0,clearH);
+        return(<>
+          <line x1={h0.x+14} y1={h0.y} x2={h1.x+14} y2={h1.y} stroke="#be185d" strokeWidth="1"/>
+          <line x1={h0.x+10} y1={h0.y} x2={h0.x+18} y2={h0.y} stroke="#be185d" strokeWidth="1"/>
+          <line x1={h1.x+10} y1={h1.y} x2={h1.x+18} y2={h1.y} stroke="#be185d" strokeWidth="1"/>
+          <text x={h1.x+20} y={(h0.y+h1.y)/2} fontSize="9" fill="#be185d" fontWeight="700" dominantBaseline="middle">{clearH}m</text>
+        </>);
+      })()}
+
+      {/* Legend */}
+      {[
+        ['#64748b','Shelving'],['#374151','Pallet Rack'],['#1e293b','Drive-in'],
+        ['#7c3aed','Cantilever'],['#bfdbfe','Receiving'],['#fde68a','Dispatch'],
+      ].map(([col,lbl],i)=>(
+        <g key={i}>
+          <rect x={8} y={SVG_H-16-i*14} width={10} height={8} fill={col} rx="1"/>
+          <text x={22} y={SVG_H-9-i*14} fontSize="8" fill="#374151">{lbl}</text>
+        </g>
+      ))}
+
+      {/* Title */}
+      <text x={SVG_W/2} y={16} textAnchor="middle" fontSize="11" fontWeight="800" fill="#0f172a">
+        Warehouse 3D Layout — {wW}×{wL}m · {clearH}m clear height · {totalDocks} dock doors
+      </text>
+    </svg>
+  );
+}
+
 // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
 function exportExcel(analysis, design, params, rackConfig) {
   const wb   = XLSX.utils.book_new();
@@ -1827,6 +2408,7 @@ export default function WarehouseDesignerTool() {
   const [rackConfig,setRackConfig]= useState(null);
   const [design,    setDesign]    = useState(null);
   const [configConfirmed,setConfigConfirmed]=useState(false);
+  const [viewMode3D, setViewMode3D] = useState('3d'); // '2d' | '3d'
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState('');
 
@@ -2861,7 +3443,20 @@ export default function WarehouseDesignerTool() {
                         </span>
                       </div>
 
-                      <div style={{padding:'12px 14px'}}>
+                      {/* Elevation view + params side by side */}
+                      <div style={{display:'grid',gridTemplateColumns:'260px 1fr',gap:'0'}}>
+                        {/* Elevation diagram */}
+                        <div style={{padding:'10px',background:'#fafafa',
+                          borderRight:'1px solid #e2e8f0',display:'flex',flexDirection:'column',
+                          alignItems:'center',gap:'6px'}}>
+                          <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
+                            textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                            Elevation View — Front
+                          </div>
+                          <RackElevationSVG cfg={cfg} W={240} H={175}/>
+                        </div>
+
+                        <div style={{padding:'12px 14px'}}>
                         {/* Editable bay params */}
                         <div style={{display:'grid',
                           gridTemplateColumns: isShelving ? 'repeat(4,1fr)' : 'repeat(3,1fr)',
@@ -3050,7 +3645,10 @@ export default function WarehouseDesignerTool() {
                             </button>
                           </div>
                         </div>
+                        </div>
+                        {/* end params column */}
                       </div>
+                      {/* end elevation+params grid */}
                     </div>
                   );
                 })}
@@ -3081,23 +3679,41 @@ export default function WarehouseDesignerTool() {
             {/* ── FLOOR PLAN (only after confirmed) ───────────────────── */}
             {configConfirmed && design && (<>
             <div style={S.card}>
-              <div style={{fontWeight:'700',fontSize:'14px',color:'#0f172a',marginBottom:'12px'}}>
-                🗺 Recommended Floor Layout
-              </div>
-              <FloorPlanSVG analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>
-              {/* Legend */}
-              <div style={{display:'flex',gap:'12px',flexWrap:'wrap',marginTop:'12px'}}>
-                {Object.entries(ZONE_DEFS).map(([k,z])=>(
-                  <div key={k} style={{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px'}}>
-                    <div style={{width:'14px',height:'14px',background:z.color,border:`1px solid ${z.border}`,borderRadius:'3px'}}/>
-                    <span style={{color:z.textColor,fontWeight:'600'}}>{z.label}</span>
-                  </div>
-                ))}
-                <div style={{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px'}}>
-                  <div style={{width:'14px',height:'14px',background:'#e0f2fe',border:'1px solid #0284c7',borderRadius:'3px'}}/>
-                  <span style={{color:'#0369a1',fontWeight:'600'}}>Receiving</span>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}}>
+                <div style={{fontWeight:'700',fontSize:'14px',color:'#0f172a'}}>
+                  {viewMode3D==='3d'?'🧊 3D Isometric View':'🗺 Plan View (Top)'}
+                </div>
+                <div style={{display:'flex',gap:'6px'}}>
+                  {[['2d','📐 Plan'],['3d','🧊 3D']].map(([m,l])=>(
+                    <button key={m} onClick={()=>setViewMode3D(m)}
+                      style={{padding:'5px 14px',borderRadius:'7px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                        border:`2px solid ${viewMode3D===m?'#7c3aed':'#e2e8f0'}`,
+                        background:viewMode3D===m?'#f5f3ff':'#fff',
+                        color:viewMode3D===m?'#7c3aed':'#6b7280'}}>
+                      {l}
+                    </button>))}
                 </div>
               </div>
+
+              {viewMode3D==='3d'
+                ? <WarehouseIso3DSVG analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>
+                : <FloorPlanSVG      analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>}
+
+              {/* Legend (2D only) */}
+              {viewMode3D==='2d'&&(
+                <div style={{display:'flex',gap:'12px',flexWrap:'wrap',marginTop:'12px'}}>
+                  {Object.entries(ZONE_DEFS).map(([k,z])=>(
+                    <div key={k} style={{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px'}}>
+                      <div style={{width:'14px',height:'14px',background:z.color,border:`1px solid ${z.border}`,borderRadius:'3px'}}/>
+                      <span style={{color:z.textColor,fontWeight:'600'}}>{z.label}</span>
+                    </div>))}
+                  <div style={{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px'}}>
+                    <div style={{width:'14px',height:'14px',background:'#e0f2fe',border:'1px solid #0284c7',borderRadius:'3px'}}/>
+                    <span style={{color:'#0369a1',fontWeight:'600'}}>Receiving</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Zone breakdown */}
