@@ -4208,12 +4208,11 @@ export default function WarehouseDesignerTool() {
               </div>
             )}
           </>)}
-          </>)}
 
           {analysis && (<>
 
             {/* Headline metrics - only in system mode (needs design) */}
-            {storageMode==='system' && design && <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px',marginBottom:'16px'}}>
+            {storageMode==='system' && design && (<div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px',marginBottom:'16px'}}>
               {[
                 ['Total SKUs', analysis.metrics.totSKUs.toLocaleString(), '#eff6ff','#1d4ed8'],
                 ['Locations Needed', analysis.metrics.totLocs.toLocaleString(), '#f5f3ff','#7c3aed'],
@@ -4226,10 +4225,10 @@ export default function WarehouseDesignerTool() {
                   <div style={{fontSize:'16px',fontWeight:'800',color:col,lineHeight:1.2}}>{v}</div>
                   <div style={{fontSize:'10px',color:'#6b7280',marginTop:'4px',fontWeight:'600',textTransform:'uppercase'}}>{l}</div>
                 </div>))}
-            </div>
+            </div>)}
 
             {/* Staging breakdown */}
-            {design.staging && (
+            {design && design.staging && (
               <div style={{...S.card,background:'#f0f9ff',border:'1px solid #bae6fd',marginBottom:'12px',padding:'14px 18px'}}>
                 <div style={{fontWeight:'700',fontSize:'13px',color:'#0369a1',marginBottom:'10px'}}>
                   📦 Staging Area Breakdown
