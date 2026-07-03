@@ -311,6 +311,54 @@ function calcStagingParams(params, analysis) {
   };
 }
 
+// ─── QUANTITY-AWARE BIN SELECTION ────────────────────────────────────────────
+// Target: find the SMALLEST bin where all stock fits in ≤ BIN_LOC_TARGET locations.
+// If nothing achieves the target, use the LARGEST fitting bin (fewest locations).
+// This ensures high-qty SKUs get bigger bins; small bins only for low-qty SKUs.
+const BIN_LOC_TARGET = 2; // aim for stock to sit in ≤ 2 locations per SKU
+
+function selectBinByQty(skuL, skuW, skuH, volCm3, stock, preferredBins) {
+  const ALL  = ['XS','S','M','L','XL'];
+  const pref = preferredBins && preferredBins.length > 0
+    ? ALL.filter(b => preferredBins.includes(b)) : ALL;
+
+  // No stock → smallest fitting bin (dimension-based only)
+  if (!stock || stock <= 0)
+    return selectBin(skuL, skuW, skuH, volCm3, false, preferredBins);
+
+  // Physically fitting candidates
+  let cands;
+  if (skuL > 0 && skuW > 0 && skuH > 0) {
+    cands = pref.filter(b => fitsInBin(skuL, skuW, skuH, b));
+    if (!cands.length) cands = ALL.filter(b => fitsInBin(skuL, skuW, skuH, b));
+  } else {
+    // No dims — volume fallback
+    const VOL = {XS:500,S:3000,M:15000,L:50000,XL:Infinity};
+    const src  = pref.length ? pref : ALL;
+    if (!volCm3) return src[0]||'S';
+    return src.find(b=>volCm3<=(VOL[b]||Infinity))||src[src.length-1]||'XL';
+  }
+  if (!cands.length) return 'XL';
+  if (cands.length === 1) return cands[0];
+
+  // Score each candidate by locations needed
+  const scored = cands.map(b => {
+    const upb  = unitsPerBin(skuL, skuW, skuH, volCm3, b);
+    const locs = upb > 0 ? Math.ceil(stock / upb) : 9999;
+    return { b, upb, locs };
+  }).filter(s => s.upb > 0);
+  if (!scored.length) return cands[0];
+
+  // Pass 1 — smallest bin where locs <= BIN_LOC_TARGET
+  const pass1 = scored.filter(s => s.locs <= BIN_LOC_TARGET);
+  if (pass1.length) return pass1[0].b; // smallest achieving target
+
+  // Pass 2 — no bin achieves target → minimum locations (largest useful bin)
+  const minL = Math.min(...scored.map(s => s.locs));
+  return scored.find(s => s.locs === minL)?.b || cands[0];
+}
+
+
 // ─── RACK SELECTION ───────────────────────────────────────────────────────────
 function selectRackType(sb, vb, isLong, clearH, forkType) {
   if (isLong) return 'cantilever';
@@ -399,22 +447,30 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params, preferredBins
   allSkus.forEach(sku => {
     const m  = master[sku] || { L:0,W:0,H:0, volCm3:0, maxDim:0, isLong:false, sb:'S' };
     const vb = velocityMap[sku] || 'NM';
-    const sb = m.sb;
+    const sb = m.sb; // size-band for velocity×size matrix (volume-based, unchanged)
     const isLong = m.isLong;
     const zone  = getZone(vb, isLong);
     const rack  = selectRackType(sb, vb, isLong, clearH, forkType);
-    const bin   = isLong ? 'LONG' : sb; // sb already computed via selectBin
-    const upb   = isLong ? 1 : unitsPerBin(m.L, m.W, m.H, m.volCm3, bin);
-    const stock = invMap[sku]||0;
+    const stock = invMap[sku]||0; // stock loaded FIRST so bin selection is qty-aware
+    // Quantity-aware bin selection:
+    // High-qty SKU → larger bin (fit all stock in ≤ 2 locations)
+    // Low-qty SKU → smallest fitting bin
+    const bin       = isLong ? 'LONG'
+      : selectBinByQty(m.L, m.W, m.H, m.volCm3, stock, preferredBins);
+    // Track if bin was upgraded from dim-only selection due to qty
+    const dimOnlyBin = isLong ? 'LONG'
+      : selectBin(m.L, m.W, m.H, m.volCm3, isLong, preferredBins);
+    const qtyUpgraded = !isLong && bin !== dimOnlyBin;
+    const upb  = isLong ? 1 : unitsPerBin(m.L, m.W, m.H, m.volCm3, bin);
     // Slow-mover pick-face sharing:
-    // S movers: 2 SKUs share 1 location | VS: 4 per loc | NM: 8 per loc
     const LOC_SHARE = { VF:1, F:1, M:1, S:2, VS:4, NM:8 };
-    const share = Math.min(LOC_SHARE[vb]||1, Math.max(1, upb));
+    const share   = Math.min(LOC_SHARE[vb]||1, Math.max(1, upb));
     const rawLocs = stock > 0 ? Math.max(1, Math.ceil(stock/upb)) : 0;
     const locsReq = rawLocs > 0 ? Math.max(1, Math.ceil(rawLocs/share)) : 0;
     const pl    = pickMap[sku]||0;
     slotted.push({ sku, ...m, vb, sb, isLong, zone, rack, bin,
-      upb, stock, locsReq, pickLines:pl,
+      upb, stock, locsReq, pickLines:pl, qtyUpgraded,
+      dimOnlyBin: qtyUpgraded ? dimOnlyBin : null,
       binName: BIN_CATALOG[bin]?.name || '—',
       rackName: RACK_DEFS[rack]?.name || '—',
       zoneName: ZONE_DEFS[zone]?.label || '—' });
@@ -471,14 +527,15 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params, preferredBins
   finalSlotted.forEach(r=>{ if(!rackSum2[r.rack]) rackSum2[r.rack]={locs:0,skus:0};
     rackSum2[r.rack].locs+=r.locsReq; rackSum2[r.rack].skus+=1; });
   const binSummary = {};
+  let totalQtyUpgrades = 0;
   finalSlotted.filter(s=>s.stock>0).forEach(s=>{
-    if(!binSummary[s.bin]) binSummary[s.bin]={skus:0,locs:0,stock:0,capacity:0,name:s.binName};
+    if(!binSummary[s.bin]) binSummary[s.bin]={skus:0,locs:0,stock:0,capacity:0,name:s.binName,upgrades:0};
     binSummary[s.bin].skus++;
     binSummary[s.bin].locs     += s.locsReq;
     binSummary[s.bin].stock    += s.stock;
-    binSummary[s.bin].capacity += s.locsReq * s.upb; // total unit capacity allocated
+    binSummary[s.bin].capacity += s.locsReq * s.upb;
+    if (s.qtyUpgraded) { binSummary[s.bin].upgrades++; totalQtyUpgrades++; }
   });
-  // Compute utilisation per bin type
   Object.values(binSummary).forEach(b => {
     b.utilPct = b.capacity > 0 ? Math.round(b.stock / b.capacity * 100) : 0;
   });
@@ -504,7 +561,7 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params, preferredBins
   const fTotLocs  = finalSlotted.reduce((s,r)=>s+r.locsReq,0);
   const fTotStock = finalSlotted.reduce((s,r)=>s+r.stock,0);
   return { slotted:finalSlotted, matrix, zoneSummary:zoneSum2, rackSummary:rackSum2,
-    binSummary, binConsolidation,
+    binSummary, binConsolidation, totalQtyUpgrades,
     metrics: { totSKUs:finalSlotted.length, totLocs:fTotLocs, totStock:fTotStock,
       longCount, nmCount, nmStock },
     dailyOutboundVolM3: +dailyOutboundVolM3.toFixed(3),
@@ -2704,7 +2761,13 @@ export default function WarehouseDesignerTool() {
                           <div style={{fontWeight:'800',fontSize:'14px',color:col}}>{band}</div>
                           <div style={{fontSize:'10px',color:col,opacity:0.8,marginBottom:'3px'}}>{info.name}</div>
                           <div style={{fontSize:'12px',fontWeight:'600',color:'#0f172a'}}>{info.skus.toLocaleString()} SKUs</div>
-                          <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'5px'}}>{info.locs.toLocaleString()} locs · {pct}% of SKUs</div>
+                          <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'5px'}}>
+                            {info.locs.toLocaleString()} locs · {pct}% of SKUs
+                            {info.upgrades>0&&<span style={{marginLeft:'6px',background:'#eff6ff',
+                              color:'#1d4ed8',borderRadius:'99px',padding:'1px 6px',fontSize:'10px',fontWeight:'700'}}>
+                              ↑{info.upgrades} qty-upgraded
+                            </span>}
+                          </div>
                           {/* Bin utilization bar */}
                           <div style={{marginTop:'4px'}}>
                             <div style={{display:'flex',justifyContent:'space-between',
@@ -2726,6 +2789,16 @@ export default function WarehouseDesignerTool() {
                       );
                     })}
                 </div>
+                {/* Quantity upgrade note */}
+                {analysis.totalQtyUpgrades > 0 && (
+                  <div style={{background:'#eff6ff',border:'1px solid #93c5fd',
+                    borderRadius:'8px',padding:'8px 12px',fontSize:'12px',color:'#1d4ed8',marginBottom:'6px'}}>
+                    <strong>📦 Quantity-driven upgrades:</strong>{' '}
+                    {analysis.totalQtyUpgrades.toLocaleString()} SKU{analysis.totalQtyUpgrades>1?'s were':' was'} assigned
+                    to a larger bin than their size alone required, to fit stock in ≤{BIN_LOC_TARGET} locations.
+                    This reduces total location count significantly.
+                  </div>
+                )}
                 {/* Consolidation report */}
                 {analysis.binConsolidation && analysis.binConsolidation.length > 0 && (
                   <div style={{background:'#f0fdf4',border:'1px solid #86efac',
