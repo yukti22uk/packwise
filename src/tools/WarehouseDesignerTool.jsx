@@ -56,41 +56,101 @@ function fitsInBin(skuL, skuW, skuH, binKey) {
   return sku[0]<=bin[0] && sku[1]<=bin[1] && sku[2]<=bin[2];
 }
 
-// Select smallest bin that physically fits the SKU
-// Falls back to volume-based selection if dimensions unknown
-function selectBin(skuL, skuW, skuH, volCm3, isLong) {
+// Select optimal bin considering preferred types and fill efficiency
+function selectBin(skuL, skuW, skuH, volCm3, isLong, preferredBins) {
   if (isLong) return 'LONG';
+  const ALL_BINS = ['XS','S','M','L','XL'];
+  // Use preferred bins if specified, else all bins
+  const preferred = (preferredBins && preferredBins.length > 0)
+    ? ALL_BINS.filter(b => preferredBins.includes(b))
+    : ALL_BINS;
+
   if (skuL > 0 && skuW > 0 && skuH > 0) {
-    // Physical fit check — smallest bin that fits wins
-    for (const band of ['XS','S','M','L','XL']) {
-      if (fitsInBin(skuL, skuW, skuH, band)) return band;
-    }
-    return 'XL'; // larger than XL pallet — needs custom handling
+    // 1st pass: smallest PREFERRED bin that physically fits
+    const fitPreferred = preferred.filter(b => fitsInBin(skuL, skuW, skuH, b));
+    if (fitPreferred.length > 0) return fitPreferred[0];
+    // 2nd pass: any bin that fits (fallback when preferred set can't accommodate)
+    const fitAny = ALL_BINS.filter(b => fitsInBin(skuL, skuW, skuH, b));
+    return fitAny[0] || 'XL';
   }
-  // Fallback to volume-only when dimensions missing
-  if (!volCm3)       return 'S';
-  if (volCm3 <= 500)  return 'XS';
-  if (volCm3 <= 3000) return 'S';
-  if (volCm3 <= 15000)return 'M';
-  if (volCm3 <= 50000)return 'L';
-  return 'XL';
+  // Volume-only fallback — prefer from preferred set
+  if (!volCm3) return preferred[0] || 'S';
+  const VOL = { XS:500, S:3000, M:15000, L:50000, XL:Infinity };
+  for (const b of preferred) {
+    if (volCm3 <= (VOL[b]||Infinity)) return b;
+  }
+  return preferred[preferred.length-1] || 'XL';
+}
+
+// ─── BIN CONSOLIDATION ────────────────────────────────────────────────────────
+// Merge minority bin types into adjacent bins to reduce variety
+const LOC_SHARE_MAP = { VF:1, F:1, M:1, S:2, VS:4, NM:8 };
+
+function consolidateBins(slotted) {
+  const SEQ = ['XS','S','M','L','XL'];
+  const counts = {};
+  slotted.filter(s=>s.stock>0&&SEQ.includes(s.bin)).forEach(s=>{
+    counts[s.bin] = (counts[s.bin]||0)+1;
+  });
+  const total = Object.values(counts).reduce((a,b)=>a+b,0)||1;
+  const used  = SEQ.filter(b=>counts[b]>0);
+  const report = [];
+
+  if (used.length <= 2) return { slotted, report }; // already minimal
+
+  // Minority = bin used by < 5% of SKUs AND < 15 absolute SKUs
+  const THRESH = Math.max(15, total * 0.05);
+  const minority = used.filter(b => counts[b] <= THRESH && b !== 'XL');
+
+  if (minority.length === 0) return { slotted, report };
+
+  const updated = slotted.map(s => {
+    if (!minority.includes(s.bin)||s.isLong||!SEQ.includes(s.bin)) return s;
+    const idx = SEQ.indexOf(s.bin);
+    for (let i = idx+1; i < SEQ.length; i++) {
+      const target = SEQ[i];
+      if (minority.includes(target) && i < SEQ.length-1) continue; // skip if target is also minority
+      const fits = (s.L>0&&s.W>0&&s.H>0) ? fitsInBin(s.L,s.W,s.H,target) : true;
+      if (!fits) continue;
+      const newUpb  = unitsPerBin(s.L, s.W, s.H, s.volCm3, target);
+      const share   = Math.min(LOC_SHARE_MAP[s.vb]||1, Math.max(1,newUpb));
+      const rawLocs = s.stock > 0 ? Math.max(1, Math.ceil(s.stock/newUpb)) : 0;
+      const newLocs = rawLocs > 0 ? Math.max(1, Math.ceil(rawLocs/share)) : 0;
+      return { ...s, bin:target, binName:BIN_CATALOG[target]?.name||target,
+        sb:target, upb:newUpb, locsReq:newLocs, consolidatedFrom:s.bin };
+    }
+    return s;
+  });
+
+  // Build consolidation report
+  minority.forEach(from => {
+    const moved = updated.filter(s=>s.consolidatedFrom===from);
+    if (moved.length === 0) return;
+    const byTarget = {};
+    moved.forEach(s=>{ byTarget[s.bin]=(byTarget[s.bin]||0)+1; });
+    report.push({ from, fromName:BIN_CATALOG[from]?.name||from,
+      actions:Object.entries(byTarget).map(([to,n])=>
+        ({to, toName:BIN_CATALOG[to]?.name||to, n})),
+      totalMoved:moved.length });
+  });
+
+  return { slotted:updated, report };
 }
 
 function unitsPerBin(skuL, skuW, skuH, skuVolCm3, band) {
   const b = BIN_CATALOG[band];
   if (!b || !b.volCm3 || !skuVolCm3) return 1;
-  // Physical layout: how many fit per layer × layers
   if (b.phys && skuL > 0 && skuW > 0 && skuH > 0) {
-    // Try orientation where SKU height = tallest dim (standing up)
-    const skuDims = [skuL, skuW, skuH].sort((a,b)=>b-a);
-    const binDims = [...b.phys].sort((a,b)=>b-a);
-    const perRow = Math.floor(binDims[1] / skuDims[1]);
-    const perCol = Math.floor(binDims[2] / skuDims[2]);
-    const layers = Math.floor(binDims[0] / skuDims[0]);
-    const byLayout = Math.max(1, perRow * perCol * layers);
-    // Also volume-based estimate
+    const [bL, bW, bH] = b.phys;
+    const d = [skuL, skuW, skuH];
+    // Try all 6 orientations of the SKU — pick best packing
+    const ORIENTS = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+    const byLayout = Math.max(1,
+      ORIENTS.reduce((best, [x,y,z]) =>
+        Math.max(best, Math.floor(bL/d[x]) * Math.floor(bW/d[y]) * Math.floor(bH/d[z]))
+      , 0)
+    );
     const byVolume = Math.max(1, Math.floor(b.volCm3 * b.fill / skuVolCm3));
-    // Use the lower (more conservative) of the two
     return Math.min(byLayout, byVolume);
   }
   return Math.max(1, Math.floor(b.volCm3 * b.fill / skuVolCm3));
@@ -297,7 +357,7 @@ function getZone(vb, isLong) {
 }
 
 // ─── MAIN ANALYSIS ────────────────────────────────────────────────────────────
-function runAnalysis(masterRows, orderRows, inventoryRows, params) {
+function runAnalysis(masterRows, orderRows, inventoryRows, params, preferredBins) {
   const { clearH, forkType } = params;
 
   // Parse master SKU
@@ -343,7 +403,7 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params) {
     const isLong = m.isLong;
     const zone  = getZone(vb, isLong);
     const rack  = selectRackType(sb, vb, isLong, clearH, forkType);
-    const bin   = isLong ? 'LONG' : sb;
+    const bin   = isLong ? 'LONG' : sb; // sb already computed via selectBin
     const upb   = isLong ? 1 : unitsPerBin(m.L, m.W, m.H, m.volCm3, bin);
     const stock = invMap[sku]||0;
     // Slow-mover pick-face sharing:
@@ -398,6 +458,31 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params) {
   const nmCount    = slotted.filter(r=>r.vb==='NM'&&r.stock>0).length;
   const nmStock    = slotted.filter(r=>r.vb==='NM').reduce((s,r)=>s+r.stock,0);
 
+  // ── Consolidation pass — reduce bin variety ───────────────────────────────
+  const { slotted: consolidatedSlotted, report: binConsolidation } = consolidateBins(slotted);
+  const finalSlotted = consolidatedSlotted;
+  // Recompute zone/rack summaries on consolidated data
+  const zoneSum2 = {}; Object.keys(ZONE_DEFS).forEach(z=>{
+    const rows=finalSlotted.filter(r=>r.zone===z);
+    zoneSum2[z]={ skus:rows.length, locs:rows.reduce((s,r)=>s+r.locsReq,0),
+      stock:rows.reduce((s,r)=>s+r.stock,0), pickLines:rows.reduce((s,r)=>s+r.pickLines,0) };
+  });
+  const rackSum2 = {};
+  finalSlotted.forEach(r=>{ if(!rackSum2[r.rack]) rackSum2[r.rack]={locs:0,skus:0};
+    rackSum2[r.rack].locs+=r.locsReq; rackSum2[r.rack].skus+=1; });
+  const binSummary = {};
+  finalSlotted.filter(s=>s.stock>0).forEach(s=>{
+    if(!binSummary[s.bin]) binSummary[s.bin]={skus:0,locs:0,stock:0,capacity:0,name:s.binName};
+    binSummary[s.bin].skus++;
+    binSummary[s.bin].locs     += s.locsReq;
+    binSummary[s.bin].stock    += s.stock;
+    binSummary[s.bin].capacity += s.locsReq * s.upb; // total unit capacity allocated
+  });
+  // Compute utilisation per bin type
+  Object.values(binSummary).forEach(b => {
+    b.utilPct = b.capacity > 0 ? Math.round(b.stock / b.capacity * 100) : 0;
+  });
+
   // Daily outbound metrics for staging calculation
   const qtyMap = {};
   orderRows.forEach(r => {
@@ -416,8 +501,12 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params) {
   const avgBoxFootprintM2   = validSkus.length > 0
     ? validSkus.reduce((s,r)=>s+(r.L/1000)*(r.W/1000),0)/validSkus.length : 0.06;
 
-  return { slotted, matrix, zoneSummary, rackSummary,
-    metrics: { totSKUs, totLocs, totStock, longCount, nmCount, nmStock },
+  const fTotLocs  = finalSlotted.reduce((s,r)=>s+r.locsReq,0);
+  const fTotStock = finalSlotted.reduce((s,r)=>s+r.stock,0);
+  return { slotted:finalSlotted, matrix, zoneSummary:zoneSum2, rackSummary:rackSum2,
+    binSummary, binConsolidation,
+    metrics: { totSKUs:finalSlotted.length, totLocs:fTotLocs, totStock:fTotStock,
+      longCount, nmCount, nmStock },
     dailyOutboundVolM3: +dailyOutboundVolM3.toFixed(3),
     dailyOutboundBoxes: +dailyOutboundBoxes.toFixed(1),
     avgBoxFootprintM2:  +avgBoxFootprintM2.toFixed(4) };
@@ -1509,6 +1598,117 @@ function exportPPT(analysis, design, params) {
   prs.writeFile({fileName:`Warehouse_Design_${today.replace(/\//g,'-')}.pptx`});
 }
 
+
+// ─── USER-DEFINED STORAGE CALCULATION ────────────────────────────────────────
+function calcUserDefinedStorage(slotted, userBins, userRacks, params) {
+  const validBins  = userBins.filter(b=>parseFloat(b.L)>0&&parseFloat(b.W)>0&&parseFloat(b.H)>0);
+  const validRacks = userRacks.filter(r=>parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
+  if (!validBins.length) return null;
+
+  const aisleM = (parseFloat(params.aisleW)||1.2)/2; // shared aisle
+  const LOC_SHARE_U = { VF:1,F:1,M:1,S:2,VS:4,NM:8 };
+
+  // Sort user bins smallest to largest by volume
+  const sortedBins = [...validBins].sort((a,b)=>
+    parseFloat(a.L)*parseFloat(a.W)*parseFloat(a.H) -
+    parseFloat(b.L)*parseFloat(b.W)*parseFloat(b.H));
+
+  const ORIENTS = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+
+  const fitInBin = (sL,sW,sH,bL,bW,bH) => {
+    if (!sL||!sW||!sH) return true; // no dims → fits
+    const s=[sL,sW,sH].sort((a,b)=>b-a), b=[bL,bW,bH].sort((a,b)=>b-a);
+    return s[0]<=b[0]&&s[1]<=b[1]&&s[2]<=b[2];
+  };
+
+  const upbUser = (sL,sW,sH,sVol,bL,bW,bH,fill) => {
+    const binVol = bL/10*bW/10*bH/10;
+    if (sL>0&&sW>0&&sH>0) {
+      const d=[sL,sW,sH];
+      let maxL=0;
+      ORIENTS.forEach(([x,y,z])=>{
+        const n=Math.floor(bL/d[x])*Math.floor(bW/d[y])*Math.floor(bH/d[z]);
+        if(n>maxL) maxL=n;
+      });
+      const byVol = sVol>0?Math.max(1,Math.floor(binVol*fill/sVol)):1;
+      return Math.min(Math.max(1,maxL),byVol);
+    }
+    return sVol>0?Math.max(1,Math.floor(binVol*fill/sVol)):1;
+  };
+
+  // Per-SKU calculation
+  const skuResults = slotted.map(s => {
+    if (s.stock===0) return {...s,userBin:null,userUpb:0,userLocs:0,overflow:false,overflowQty:0};
+    let chosenBin=null;
+    for (const b of sortedBins) {
+      const bL=parseFloat(b.L),bW=parseFloat(b.W),bH=parseFloat(b.H);
+      if (fitInBin(s.L,s.W,s.H,bL,bW,bH)) { chosenBin={...b,bL,bW,bH,fill:parseFloat(b.fill)||0.55}; break; }
+    }
+    if (!chosenBin) return {...s,userBin:null,userUpb:0,userLocs:0,
+      overflow:true,overflowQty:s.stock,overflowReason:'Exceeds all custom bin dimensions'};
+    const upb   = upbUser(s.L,s.W,s.H,s.volCm3,chosenBin.bL,chosenBin.bW,chosenBin.bH,chosenBin.fill);
+    const share = Math.min(LOC_SHARE_U[s.vb]||1,Math.max(1,upb));
+    const raw   = Math.max(1,Math.ceil(s.stock/upb));
+    const locs  = Math.max(1,Math.ceil(raw/share));
+    const util  = Math.round((s.stock/(locs*upb))*100);
+    return {...s,userBin:chosenBin,userBinName:chosenBin.name||`Bin ${chosenBin.id}`,
+      userUpb:upb,userLocs:locs,overflow:false,utilPct:util};
+  });
+
+  // Bin group summaries
+  const binGroupLocs={};
+  skuResults.filter(s=>!s.overflow&&s.userLocs>0).forEach(s=>{
+    const k=s.userBin?.id||0;
+    binGroupLocs[k]=(binGroupLocs[k]||0)+s.userLocs;
+  });
+
+  // Rack calculations
+  const rackResults = validRacks.map(rack=>{
+    const rW=parseFloat(rack.bayW),rD=parseFloat(rack.bayD);
+    const rH=parseFloat(rack.bayH)||2200;
+    const lvl=parseInt(rack.levels)||1;
+    const clr=50;
+    const perBinType={};
+    sortedBins.forEach(b=>{
+      const bL=parseFloat(b.L),bW=parseFloat(b.W),bH=parseFloat(b.H);
+      let best=0;
+      ORIENTS.forEach(([x,y,z])=>{
+        const d=[bL,bW,bH];
+        const n=Math.floor(rW/d[x])*Math.floor(rD/d[y])*Math.floor(rH/(d[z]+clr));
+        if(n>best) best=n;
+      });
+      const lpb=Math.max(0,best)*lvl;
+      const needed=binGroupLocs[b.id]||0;
+      const bays=lpb>0?Math.ceil(needed/lpb):0;
+      const fp=(rW/1000)*(rD/1000);
+      const aisleA=bays*(rW/1000)*aisleM;
+      perBinType[b.id]={lpb,needed,bays,area:+(bays*fp+aisleA).toFixed(1)};
+    });
+    const tot=Object.values(perBinType);
+    return{...rack,perBinType,totalBays:tot.reduce((s,v)=>s+v.bays,0),
+      totalArea:+tot.reduce((s,v)=>s+v.area,0).toFixed(1)};
+  });
+
+  const overflow  = skuResults.filter(s=>s.overflow);
+  const stored    = skuResults.filter(s=>!s.overflow&&s.userLocs>0);
+  const totLocs   = stored.reduce((s,r)=>s+r.userLocs,0);
+  const totStock  = stored.reduce((s,r)=>s+r.stock,0);
+  const totCap    = stored.reduce((s,r)=>s+r.userLocs*r.userUpb,0);
+  const totArea   = rackResults.reduce((s,r)=>s+r.totalArea,0);
+
+  // Bin utilisation per bin
+  const binUtil={};
+  stored.forEach(s=>{
+    const k=s.userBin?.id||0;
+    if(!binUtil[k]) binUtil[k]={name:s.userBinName,locs:0,stock:0,cap:0};
+    binUtil[k].locs+=s.userLocs;binUtil[k].stock+=s.stock;binUtil[k].cap+=s.userLocs*s.userUpb;
+  });
+  Object.values(binUtil).forEach(b=>{b.utilPct=b.cap>0?Math.round(b.stock/b.cap*100):0;});
+
+  return{skuResults,rackResults,overflow,stored,totLocs,totArea,totStock,totCap,binUtil,
+    overallUtil:totCap>0?Math.round(totStock/totCap*100):0};
+}
+
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function WarehouseDesignerTool() {
   // Params
@@ -1550,6 +1750,20 @@ export default function WarehouseDesignerTool() {
   const [masterText, setMasterText] = useState('');
   const [orderText,  setOrderText]  = useState('');
   const [invText,    setInvText]    = useState('');
+  const [preferredBins, setPreferredBins] = useState(['S','M','L','XL']); // default: 4 types, no XS
+  // Storage design mode
+  const [storageMode, setStorageMode] = useState('system'); // 'system' | 'user'
+  // User-defined bins (up to 5)
+  const [userBins, setUserBins] = useState([
+    {id:1,name:'Custom Bin 1',L:'',W:'',H:'',fill:'0.55'},
+  ]);
+  // User-defined racks (up to 5)
+  const [userRacks, setUserRacks] = useState([
+    {id:1,name:'Custom Rack 1',bayW:'',bayD:'',bayH:'',levels:''},
+  ]);
+  // User-defined results
+  const [userResult, setUserResult] = useState(null);
+  const [userLoading, setUserLoading] = useState(false);
 
   // Results
   const [analysis,  setAnalysis]  = useState(null);
@@ -1598,7 +1812,7 @@ export default function WarehouseDesignerTool() {
         const invRows    = invText.trim()    ? parseTSV(invText).filter(r=>r[0])           : [];
         const iData  = invRows.length && isHeaderRow(invRows[0]) ? invRows.slice(1) : invRows;
         if (!mData.length) throw new Error('No valid SKU rows found in Master SKU data.');
-        const a = runAnalysis(mData, oData, iData, params);
+        const a = runAnalysis(mData, oData, iData, params, preferredBins);
         const rc = generateRackConfig(a, params);
         setAnalysis(a); setRackConfig(rc);
         setDesign(null); setConfigConfirmed(false);
@@ -1634,6 +1848,54 @@ export default function WarehouseDesignerTool() {
     }));
     setConfigConfirmed(false); // needs reconfirm after edit
   };
+
+  // Copy system config to user-defined inputs
+  const copyFromSystem = () => {
+    if (!rackConfig || !analysis) return;
+    const usedBins = [...new Set(rackConfig.map(cfg=>cfg.bin))].filter(b=>BIN_CATALOG[b]?.phys);
+    if (usedBins.length > 0) {
+      setUserBins(usedBins.map((b,i)=>({
+        id:i+1, name:BIN_CATALOG[b]?.name||b,
+        L:String(BIN_CATALOG[b].phys[0]),
+        W:String(BIN_CATALOG[b].phys[1]),
+        H:String(BIN_CATALOG[b].phys[2]),
+        fill:'0.55',
+      })));
+    }
+    const uniqueRacks = rackConfig.filter((c,i,a)=>a.findIndex(x=>x.rack===c.rack)===i);
+    if (uniqueRacks.length > 0) {
+      setUserRacks(uniqueRacks.map((cfg,i)=>({
+        id:i+1, name:cfg.rackName,
+        bayW:String(cfg.bayW),
+        bayD:String(cfg.bayD),
+        bayH:String(cfg.tierHeight||cfg.shelfH||2200),
+        levels:String(cfg.levels||1),
+      })));
+    }
+    setStorageMode('user');
+    setUserResult(null);
+  };
+
+  // Run user-defined storage calculation
+  const runUserCalc = () => {
+    if (!analysis) return;
+    setUserLoading(true);
+    setTimeout(()=>{
+      try {
+        const r = calcUserDefinedStorage(analysis.slotted, userBins, userRacks, params);
+        setUserResult(r);
+      } catch(e) { console.error(e); }
+      setUserLoading(false);
+    }, 80);
+  };
+
+  // Helpers for user-defined bin/rack editing
+  const updateUserBin  = (id,field,val) => setUserBins(prev=>prev.map(b=>b.id===id?{...b,[field]:val}:b));
+  const updateUserRack = (id,field,val) => setUserRacks(prev=>prev.map(r=>r.id===id?{...r,[field]:val}:r));
+  const addUserBin     = () => { const id=Date.now(); setUserBins(prev=>[...prev,{id,name:`Custom Bin ${prev.length+1}`,L:'',W:'',H:'',fill:'0.55'}]); };
+  const addUserRack    = () => { const id=Date.now(); setUserRacks(prev=>[...prev,{id,name:`Custom Rack ${prev.length+1}`,bayW:'',bayD:'',bayH:'',levels:''}]); };
+  const removeUserBin  = id => setUserBins(prev=>prev.filter(b=>b.id!==id));
+  const removeUserRack = id => setUserRacks(prev=>prev.filter(r=>r.id!==id));
 
   const inp = {...S.input, marginBottom:'4px'};
   const lbl = {...S.label};
@@ -1950,13 +2212,194 @@ export default function WarehouseDesignerTool() {
             </div>
           </div>
 
-          {/* Step 2: Master SKU */}
+          {/* ── STORAGE DESIGN MODE TOGGLE ──────────────────────────── */}
+          <div style={{...S.card,padding:'12px 16px'}}>
+            <div style={{fontSize:'11px',fontWeight:'700',color:'#374151',
+              textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'8px'}}>
+              Storage Design Mode
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
+              {[['system','⚙ System Defined','Tool selects optimal bins & racks'],
+                ['user',  '✏ User Defined',  'Enter your own bin & rack sizes']
+               ].map(([val,label,sub])=>(
+                <button key={val} onClick={()=>setStorageMode(val)}
+                  style={{padding:'10px 12px',borderRadius:'9px',textAlign:'left',cursor:'pointer',
+                    border:`2px solid ${storageMode===val?'#7c3aed':'#e2e8f0'}`,
+                    background:storageMode===val?'#f5f3ff':'#fff'}}>
+                  <div style={{fontWeight:'700',fontSize:'12px',
+                    color:storageMode===val?'#7c3aed':'#374151'}}>{label}</div>
+                  <div style={{fontSize:'10px',color:'#9ca3af',marginTop:'2px'}}>{sub}</div>
+                </button>
+              ))}
+            </div>
+            {storageMode==='user' && analysis && rackConfig && (
+              <button onClick={copyFromSystem}
+                style={{marginTop:'8px',width:'100%',padding:'7px',
+                  background:'#eff6ff',border:'1px dashed #93c5fd',borderRadius:'7px',
+                  fontSize:'12px',fontWeight:'700',color:'#1d4ed8',cursor:'pointer',fontFamily:'inherit'}}>
+                ⬇ Copy bin & rack sizes from System Defined
+              </button>
+            )}
+          </div>
+
+          {/* ── USER DEFINED BIN & RACK INPUTS ──────────────────────── */}
+          {storageMode==='user' && (<>
+
+            {/* Custom bin sizes */}
+            <div style={S.card}>
+              <div style={S.cardTitle}>📦 Your Bin / Pallet Sizes</div>
+              <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'10px'}}>
+                Enter the bin or pallet sizes available in your warehouse. Tool will assign SKUs
+                to the smallest fitting bin and flag SKUs that don't fit in any.
+              </div>
+              <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'hidden',marginBottom:'8px'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                  <thead><tr style={{background:'#f8fafc'}}>
+                    {['Bin Name','L (mm)','W (mm)','H (mm)','Fill %',''].map(h=>(
+                      <th key={h} style={{padding:'6px 8px',textAlign:'left',fontWeight:'700',
+                        fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0'}}>{h}</th>))}
+                  </tr></thead>
+                  <tbody>
+                    {userBins.map((b,i)=>(
+                      <tr key={b.id} style={{background:i%2===0?'#fff':'#fafbfc'}}>
+                        <td style={{padding:'4px 6px'}}>
+                          <input value={b.name} onChange={e=>updateUserBin(b.id,'name',e.target.value)}
+                            style={{...inp,marginBottom:0,fontSize:'11px',padding:'3px 5px',width:'100%'}}/>
+                        </td>
+                        {['L','W','H'].map(f=>(
+                          <td key={f} style={{padding:'4px 6px'}}>
+                            <input type="number" min="1" value={b[f]}
+                              onChange={e=>updateUserBin(b.id,f,e.target.value)}
+                              style={{...inp,marginBottom:0,width:'60px',fontSize:'11px',padding:'3px 5px'}}/>
+                          </td>))}
+                        <td style={{padding:'4px 6px'}}>
+                          <input type="number" min="0.1" max="1" step="0.05" value={b.fill}
+                            onChange={e=>updateUserBin(b.id,'fill',e.target.value)}
+                            style={{...inp,marginBottom:0,width:'52px',fontSize:'11px',padding:'3px 5px'}}/>
+                        </td>
+                        <td style={{padding:'4px 6px',textAlign:'center'}}>
+                          {userBins.length>1&&<button onClick={()=>removeUserBin(b.id)}
+                            style={{background:'none',border:'none',color:'#be185d',cursor:'pointer',fontSize:'15px'}}>×</button>}
+                        </td>
+                      </tr>))}
+                  </tbody>
+                </table>
+              </div>
+              {userBins.length<5&&<button onClick={addUserBin}
+                style={{fontSize:'11px',fontWeight:'600',color:'#059669',background:'#f0fdf4',
+                  border:'1px dashed #86efac',borderRadius:'6px',padding:'5px 12px',
+                  cursor:'pointer',width:'100%'}}>+ Add Bin Type</button>}
+            </div>
+
+            {/* Custom rack sizes */}
+            <div style={S.card}>
+              <div style={S.cardTitle}>🗄 Your Rack / Shelf Sizes</div>
+              <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'10px'}}>
+                Enter your rack bay dimensions. Tool calculates how many bins fit per bay
+                and how many bays are needed.
+              </div>
+              <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'hidden',marginBottom:'8px'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                  <thead><tr style={{background:'#f8fafc'}}>
+                    {['Rack Name','Bay W (mm)','Bay D (mm)','Bay H (mm)','Levels',''].map(h=>(
+                      <th key={h} style={{padding:'6px 8px',textAlign:'left',fontWeight:'700',
+                        fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0'}}>{h}</th>))}
+                  </tr></thead>
+                  <tbody>
+                    {userRacks.map((r,i)=>(
+                      <tr key={r.id} style={{background:i%2===0?'#fff':'#fafbfc'}}>
+                        <td style={{padding:'4px 6px'}}>
+                          <input value={r.name} onChange={e=>updateUserRack(r.id,'name',e.target.value)}
+                            style={{...inp,marginBottom:0,fontSize:'11px',padding:'3px 5px',width:'100%'}}/>
+                        </td>
+                        {['bayW','bayD','bayH','levels'].map(f=>(
+                          <td key={f} style={{padding:'4px 6px'}}>
+                            <input type="number" min="1" value={r[f]}
+                              onChange={e=>updateUserRack(r.id,f,e.target.value)}
+                              style={{...inp,marginBottom:0,width:'60px',fontSize:'11px',padding:'3px 5px'}}/>
+                          </td>))}
+                        <td style={{padding:'4px 6px',textAlign:'center'}}>
+                          {userRacks.length>1&&<button onClick={()=>removeUserRack(r.id)}
+                            style={{background:'none',border:'none',color:'#be185d',cursor:'pointer',fontSize:'15px'}}>×</button>}
+                        </td>
+                      </tr>))}
+                  </tbody>
+                </table>
+              </div>
+              {userRacks.length<5&&<button onClick={addUserRack}
+                style={{fontSize:'11px',fontWeight:'600',color:'#7c3aed',background:'#f5f3ff',
+                  border:'1px dashed #c4b5fd',borderRadius:'6px',padding:'5px 12px',
+                  cursor:'pointer',width:'100%'}}>+ Add Rack Type</button>}
+            </div>
+
+            {/* Run user calc button */}
+            <button onClick={runUserCalc} disabled={!analysis||userLoading}
+              style={{width:'100%',padding:'11px',marginBottom:'6px',
+                background:analysis&&!userLoading?'linear-gradient(135deg,#059669,#047857)':'#e2e8f0',
+                color:analysis&&!userLoading?'#fff':'#9ca3af',
+                border:'none',borderRadius:'9px',fontWeight:'700',fontSize:'14px',
+                cursor:analysis&&!userLoading?'pointer':'not-allowed',fontFamily:'inherit'}}>
+              {userLoading?'⏳ Calculating...':'▶ Calculate User Defined Storage'}
+            </button>
+            {!analysis&&<div style={{fontSize:'11px',color:'#9ca3af',textAlign:'center'}}>
+              Run "Generate Warehouse Design" first (System mode) to load SKU data
+            </div>}
+          </>)}
+
+          {/* Step 2: Master SKU — with preferred bin selector */}
           <div style={S.card}>
             <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'12px'}}>
               {stepCircle(2, !!masterText.trim())}
               <div style={S.cardTitle}>Master SKU Data</div>
             </div>
             {colHint(['SKU Code','Length (mm)','Width (mm)','Height (mm)','Weight (kg)'])}
+
+            {/* Preferred bin types */}
+            <div style={{marginBottom:'10px'}}>
+              <div style={{fontSize:'11px',fontWeight:'700',color:'#7c3aed',
+                textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'6px'}}>
+                Preferred Bin Types
+              </div>
+              <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'6px'}}>
+                SKUs will be assigned to the smallest selected bin that physically fits.
+                Fewer types = simpler operations. De-select XS to avoid very small trays.
+              </div>
+              <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
+                {[
+                  ['XS','Compartment Tray\n300×200×100mm','#f1f5f9','#64748b'],
+                  ['S', 'Small Tote\n400×300×200mm',     '#eff6ff','#1d4ed8'],
+                  ['M', 'Shelf Bin\n600×400×300mm',      '#f5f3ff','#7c3aed'],
+                  ['L', 'Stack Crate\n800×600×400mm',    '#f0fdf4','#166534'],
+                  ['XL','Std Pallet\n1200×1000mm',       '#fef9c3','#854d0e'],
+                ].map(([band,label,bg,col])=>{
+                  const selected = preferredBins.includes(band);
+                  return (
+                    <button key={band}
+                      onClick={()=>{
+                        if(selected && preferredBins.length<=1) return; // min 1
+                        setPreferredBins(prev=>selected
+                          ? prev.filter(b=>b!==band)
+                          : [...prev,band].sort((a,b)=>['XS','S','M','L','XL'].indexOf(a)-['XS','S','M','L','XL'].indexOf(b)));
+                      }}
+                      style={{padding:'6px 12px',borderRadius:'8px',cursor:'pointer',
+                        border:`2px solid ${selected?col:'#e2e8f0'}`,
+                        background:selected?bg:'#fff',
+                        color:selected?col:'#9ca3af',
+                        fontSize:'11px',fontWeight:'700',textAlign:'left',minWidth:'120px'}}>
+                      <div>{selected?'✓ ':''}{band}</div>
+                      <div style={{fontSize:'9px',fontWeight:'400',whiteSpace:'pre-line',
+                        color:selected?col:'#9ca3af',marginTop:'2px'}}>{label}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              {preferredBins.length > 0 && (
+                <div style={{fontSize:'10px',color:'#9ca3af',marginTop:'4px'}}>
+                  Using {preferredBins.length} bin type{preferredBins.length>1?'s':''}: {preferredBins.join(' → ')}
+                  {!preferredBins.includes('XS')&&' · XS excluded — tiny items upgrade to S automatically'}
+                </div>
+              )}
+            </div>
             {textarea(masterText, setMasterText,
               'Paste SKU master data (Ctrl+V)\n\nExample:\nSKU-001\t300\t200\t150\t2.5\nSKU-002\t650\t80\t80\t1.2')}
           </div>
@@ -2078,6 +2521,222 @@ export default function WarehouseDesignerTool() {
                     borderRadius:'6px',padding:'8px 12px',fontSize:'12px',color:'#7c3aed',fontWeight:'600'}}>
                     ⚡ MHE Charging Area: <strong>{design.mheArea}m²</strong>
                     {' '}({design.nMHE} {params.forkType} truck{design.nMHE>1?'s':''} × {design.mheBayM2}m² × 1.3 circulation factor)
+                  </div>
+                )}
+              </div>
+            )}
+
+          {/* ── USER DEFINED RESULTS ────────────────────────────────── */}
+          {storageMode==='user' && userResult && (<>
+
+            {/* Comparison table (when both results exist) */}
+            {analysis && configConfirmed && design && (<>
+              <div style={{...S.card,background:'linear-gradient(135deg,#f0f9ff,#f5f3ff)',
+                marginBottom:'12px'}}>
+                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'12px'}}>
+                  ⚖ System Defined vs User Defined — Comparison
+                </div>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
+                  <thead><tr>
+                    {['Metric','System Defined','User Defined','Difference'].map((h,i)=>(
+                      <th key={h} style={{padding:'8px 10px',background:'#0f172a',color:'#fff',
+                        textAlign:i===0?'left':'right',fontWeight:'700',fontSize:'11px'}}>{h}</th>))}
+                  </tr></thead>
+                  <tbody>
+                    {[
+                      ['Total Locations',
+                        analysis.metrics.totLocs.toLocaleString(),
+                        userResult.totLocs.toLocaleString(),
+                        userResult.totLocs - analysis.metrics.totLocs],
+                      ['Floor Area (m²)',
+                        (design.netRackArea||0).toFixed(0),
+                        userResult.totArea.toFixed(0),
+                        +(userResult.totArea - (design.netRackArea||0)).toFixed(0)],
+                      ['Bin Utilisation',
+                        (Object.values(analysis.binSummary||{}).reduce((s,b)=>s+b.utilPct,0)/Math.max(1,Object.keys(analysis.binSummary||{}).length)).toFixed(0)+'%',
+                        userResult.overallUtil+'%',
+                        userResult.overallUtil - (Object.values(analysis.binSummary||{}).reduce((s,b)=>s+b.utilPct,0)/Math.max(1,Object.keys(analysis.binSummary||{}).length))],
+                      ['Overflow SKUs', '0', userResult.overflow.length.toLocaleString(), userResult.overflow.length],
+                      ['Bin Types Used',
+                        Object.keys(analysis.binSummary||{}).length,
+                        userBins.filter(b=>parseFloat(b.L)>0).length,
+                        userBins.filter(b=>parseFloat(b.L)>0).length - Object.keys(analysis.binSummary||{}).length],
+                    ].map(([label,sys,usr,diff],i)=>{
+                      const numDiff = typeof diff==='number' ? diff : parseFloat(diff)||0;
+                      const isGood = label.includes('Utilisation') ? numDiff>=0 : numDiff<=0;
+                      const diffColor = numDiff===0?'#6b7280' : isGood?'#166534':'#be185d';
+                      const diffLabel = numDiff===0?'=':(numDiff>0?'+':'')+String(typeof diff==='number'?diff.toLocaleString():diff);
+                      return(<tr key={i} style={{background:i%2===0?'#fff':'#f8fafc',borderBottom:'1px solid #e2e8f0'}}>
+                        <td style={{padding:'8px 10px',fontWeight:'600',color:'#0f172a'}}>{label}</td>
+                        <td style={{padding:'8px 10px',textAlign:'right',color:'#7c3aed',fontWeight:'700'}}>{sys}</td>
+                        <td style={{padding:'8px 10px',textAlign:'right',color:'#059669',fontWeight:'700'}}>{usr}</td>
+                        <td style={{padding:'8px 10px',textAlign:'right',fontWeight:'700',color:diffColor}}>{diffLabel}</td>
+                      </tr>);
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>)}
+
+            {/* User result headline metrics */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'12px'}}>
+              {[
+                [userResult.stored.length.toLocaleString(),'SKUs Stored','#f0fdf4','#166534'],
+                [userResult.totLocs.toLocaleString(),'Total Locations','#f5f3ff','#7c3aed'],
+                [userResult.overflow.length?userResult.overflow.length.toLocaleString():'0','Overflow SKUs',
+                  userResult.overflow.length?'#fff1f2':'#f0fdf4',userResult.overflow.length?'#be185d':'#166534'],
+                [userResult.totArea.toFixed(0)+'m²','Floor Area','#fef9c3','#854d0e'],
+                [userResult.overallUtil+'%','Bin Utilisation',
+                  userResult.overallUtil>=80?'#f0fdf4':userResult.overallUtil>=50?'#fffbeb':'#fff1f2',
+                  userResult.overallUtil>=80?'#166534':userResult.overallUtil>=50?'#854d0e':'#be185d'],
+                [userRacks.filter(r=>parseFloat(r.bayW)>0).length,'Rack Types','#eff6ff','#1d4ed8'],
+              ].map(([v,l,bg,col])=>(
+                <div key={l} style={{background:bg,borderRadius:'9px',padding:'10px',
+                  textAlign:'center',border:`1px solid ${col}22`}}>
+                  <div style={{fontSize:'16px',fontWeight:'800',color:col}}>{v}</div>
+                  <div style={{fontSize:'9px',color:'#6b7280',marginTop:'2px',fontWeight:'600',
+                    textTransform:'uppercase'}}>{l}</div>
+                </div>))}
+            </div>
+
+            {/* Bin utilisation per user bin */}
+            <div style={{...S.card,padding:'12px',marginBottom:'10px'}}>
+              <div style={{fontWeight:'700',fontSize:'12px',marginBottom:'8px'}}>Bin Utilisation</div>
+              {Object.values(userResult.binUtil).map((b,i)=>(
+                <div key={i} style={{marginBottom:'8px'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',marginBottom:'2px'}}>
+                    <span style={{fontWeight:'600'}}>{b.name}</span>
+                    <span>{b.locs.toLocaleString()} locs · {b.stock.toLocaleString()} / {b.cap.toLocaleString()} units</span>
+                    <span style={{fontWeight:'800',
+                      color:b.utilPct>=80?'#166534':b.utilPct>=50?'#d97706':'#be185d'}}>{b.utilPct}%</span>
+                  </div>
+                  <div style={{background:'#e2e8f0',borderRadius:'99px',height:'6px'}}>
+                    <div style={{height:'6px',borderRadius:'99px',
+                      background:b.utilPct>=80?'#16a34a':b.utilPct>=50?'#d97706':'#be185d',
+                      width:`${Math.min(b.utilPct,100)}%`}}/>
+                  </div>
+                </div>))}
+            </div>
+
+            {/* Rack results */}
+            {userResult.rackResults.length>0&&(
+              <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
+                <div style={{padding:'10px 14px',borderBottom:'1px solid #f1f5f9',fontWeight:'700',fontSize:'12px'}}>
+                  Rack Requirements
+                </div>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                  <thead><tr style={{background:'#f8fafc'}}>
+                    {['Rack','Bay W','Bay D','Bay H','Levels','Total Bays','Area (m²)'].map(h=>(
+                      <th key={h} style={{padding:'7px 10px',textAlign:'left',fontWeight:'700',
+                        fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0'}}>{h}</th>))}
+                  </tr></thead>
+                  <tbody>
+                    {userResult.rackResults.map((r,i)=>(
+                      <tr key={i} style={{background:i%2===0?'#fff':'#fafbfc'}}>
+                        <td style={{padding:'7px 10px',fontWeight:'600'}}>{r.name}</td>
+                        <td style={{padding:'7px 10px'}}>{r.bayW}mm</td>
+                        <td style={{padding:'7px 10px'}}>{r.bayD}mm</td>
+                        <td style={{padding:'7px 10px'}}>{r.bayH}mm</td>
+                        <td style={{padding:'7px 10px'}}>{r.levels}</td>
+                        <td style={{padding:'7px 10px',fontWeight:'700',color:'#7c3aed'}}>{r.totalBays}</td>
+                        <td style={{padding:'7px 10px',fontWeight:'700',color:'#059669'}}>{r.totalArea}m²</td>
+                      </tr>))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Overflow SKUs */}
+            {userResult.overflow.length>0&&(
+              <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
+                <div style={{padding:'10px 14px',borderBottom:'1px solid #fecaca',
+                  background:'#fff1f2',fontWeight:'700',fontSize:'12px',color:'#991b1b',
+                  display:'flex',justifyContent:'space-between'}}>
+                  <span>⚠ Overflow SKUs — Cannot fit in your bins ({userResult.overflow.length})</span>
+                </div>
+                <div style={{overflowY:'auto',maxHeight:'200px'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                    <thead><tr style={{background:'#fff8f8'}}>
+                      {['SKU','L','W','H','Stock Qty','Reason'].map(h=>(
+                        <th key={h} style={{padding:'6px 10px',textAlign:'left',fontWeight:'700',
+                          fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0'}}>{h}</th>))}
+                    </tr></thead>
+                    <tbody>
+                      {userResult.overflow.map((s,i)=>(
+                        <tr key={i} style={{background:i%2===0?'#fff':'#fafbfc'}}>
+                          <td style={{padding:'6px 10px',fontWeight:'600',color:'#be185d'}}>{s.sku}</td>
+                          <td style={{padding:'6px 10px'}}>{s.L||'—'}</td>
+                          <td style={{padding:'6px 10px'}}>{s.W||'—'}</td>
+                          <td style={{padding:'6px 10px'}}>{s.H||'—'}</td>
+                          <td style={{padding:'6px 10px',fontWeight:'600'}}>{s.stock.toLocaleString()}</td>
+                          <td style={{padding:'6px 10px',fontSize:'10px',color:'#6b7280'}}>{s.overflowReason}</td>
+                        </tr>))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>)}
+
+          {/* ── SYSTEM DEFINED RESULTS (shown when in system mode) ────── */}
+          {storageMode==='system' && (<>
+          {/* End of user results — system results start */}
+            {analysis.binSummary && Object.keys(analysis.binSummary).length > 0 && (
+              <div style={{...S.card,marginBottom:'12px'}}>
+                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'8px'}}>
+                  📦 Bin Variety Summary
+                  <span style={{fontSize:'11px',fontWeight:'400',color:'#6b7280',marginLeft:'8px'}}>
+                    {Object.keys(analysis.binSummary).length} bin type{Object.keys(analysis.binSummary).length>1?'s':''} in use
+                  </span>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:'8px',marginBottom:'10px'}}>
+                  {Object.entries(analysis.binSummary)
+                    .sort((a,b)=>['XS','S','M','L','XL','LONG'].indexOf(a[0])-['XS','S','M','L','XL','LONG'].indexOf(b[0]))
+                    .map(([band,info])=>{
+                      const pct = Math.round(info.skus/analysis.metrics.totSKUs*100);
+                      const COLORS={XS:['#f1f5f9','#64748b'],S:['#eff6ff','#1d4ed8'],
+                        M:['#f5f3ff','#7c3aed'],L:['#f0fdf4','#166534'],
+                        XL:['#fef9c3','#854d0e'],LONG:['#fdf4ff','#9333ea']};
+                      const [bg,col]=COLORS[band]||['#f8fafc','#374151'];
+                      return(
+                        <div key={band} style={{background:bg,border:`1px solid ${col}33`,
+                          borderRadius:'8px',padding:'8px 10px'}}>
+                          <div style={{fontWeight:'800',fontSize:'14px',color:col}}>{band}</div>
+                          <div style={{fontSize:'10px',color:col,opacity:0.8,marginBottom:'3px'}}>{info.name}</div>
+                          <div style={{fontSize:'12px',fontWeight:'600',color:'#0f172a'}}>{info.skus.toLocaleString()} SKUs</div>
+                          <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'5px'}}>{info.locs.toLocaleString()} locs · {pct}% of SKUs</div>
+                          {/* Bin utilization bar */}
+                          <div style={{marginTop:'4px'}}>
+                            <div style={{display:'flex',justifyContent:'space-between',
+                              fontSize:'10px',marginBottom:'2px'}}>
+                              <span style={{color:col,fontWeight:'700'}}>Bin utilisation</span>
+                              <span style={{color:info.utilPct>=80?'#166534':info.utilPct>=50?'#854d0e':'#be185d',
+                                fontWeight:'800'}}>{info.utilPct}%</span>
+                            </div>
+                            <div style={{background:'#e2e8f0',borderRadius:'99px',height:'5px'}}>
+                              <div style={{height:'5px',borderRadius:'99px',
+                                background:info.utilPct>=80?'#16a34a':info.utilPct>=50?'#d97706':'#be185d',
+                                width:`${Math.min(info.utilPct,100)}%`,transition:'width 0.3s'}}/>
+                            </div>
+                            <div style={{fontSize:'9px',color:'#9ca3af',marginTop:'2px'}}>
+                              {(info.stock||0).toLocaleString()} units in {(info.capacity||0).toLocaleString()} capacity
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+                {/* Consolidation report */}
+                {analysis.binConsolidation && analysis.binConsolidation.length > 0 && (
+                  <div style={{background:'#f0fdf4',border:'1px solid #86efac',
+                    borderRadius:'8px',padding:'8px 12px',fontSize:'12px',color:'#166534'}}>
+                    <strong>✓ Auto-consolidated:</strong>
+                    {analysis.binConsolidation.map(r=>(
+                      <span key={r.from} style={{marginLeft:'8px'}}>
+                        {r.totalMoved} SKU{r.totalMoved>1?'s':''} from <strong>{r.from}</strong> →{' '}
+                        {r.actions.map(a=>`${a.to} (${a.n})`).join(', ')}
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
@@ -2284,10 +2943,28 @@ export default function WarehouseDesignerTool() {
                             )}
                           </div>
                           <div style={{display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
-                            <div style={{display:'flex',gap:'16px',fontSize:'12px'}}>
+                            <div style={{display:'flex',gap:'12px',fontSize:'12px',flexWrap:'wrap',alignItems:'center'}}>
                               <span><strong style={{color:'#7c3aed'}}>{cfg.baysNeeded}</strong> bays</span>
                               <span><strong style={{color:'#0369a1'}}>{((cfg.bayW/1000)*(cfg.bayD/1000)).toFixed(2)}m²</strong>/bay</span>
                               <span><strong style={{color:'#059669'}}>{cfg.area}m²</strong> total</span>
+                              {/* Utilization from binSummary */}
+                              {analysis?.binSummary?.[cfg.bin] && (() => {
+                                const bi = analysis.binSummary[cfg.bin];
+                                const util = bi.utilPct || 0;
+                                const uColor = util>=80?'#166534':util>=50?'#d97706':'#be185d';
+                                return (
+                                  <span style={{display:'inline-flex',alignItems:'center',
+                                    gap:'5px',background:'#f8fafc',border:'1px solid #e2e8f0',
+                                    borderRadius:'6px',padding:'2px 8px'}}>
+                                    <div style={{width:'50px',background:'#e2e8f0',borderRadius:'99px',height:'5px'}}>
+                                      <div style={{height:'5px',borderRadius:'99px',background:uColor,
+                                        width:`${Math.min(util,100)}%`}}/>
+                                    </div>
+                                    <strong style={{color:uColor,fontSize:'12px'}}>{util}%</strong>
+                                    <span style={{color:'#9ca3af',fontSize:'10px'}}>utilised</span>
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <button
                               onClick={()=>downloadRackLocations(cfg, analysis)}
@@ -2471,6 +3148,8 @@ export default function WarehouseDesignerTool() {
             </div>
           </>)}
           {/* End configConfirmed block */}
+          </>)}
+          {/* End system mode */}
           </>)}
         </div>
       </div>
