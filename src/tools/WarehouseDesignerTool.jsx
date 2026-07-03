@@ -4,7 +4,7 @@
 // Step 3: Order / Pick data (for velocity)
 // Step 4: Inventory data (current stock)
 // Outputs: SKU slotting, rack recommendations, warehouse sizing, SVG floor plan
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import PptxGenJS from 'pptxgenjs';
 import { S } from '../components/styles.jsx';
@@ -1648,296 +1648,372 @@ function downloadRackLocations(cfg, analysis) {
   XLSX.writeFile(wb, fname);
 }
 
-// ─── 3D ISOMETRIC WAREHOUSE VIEW ─────────────────────────────────────────────
-function WarehouseIso3DSVG({ analysis, design, params, rackConfig }) {
-  const { wW, wL, zoneAreas={}, receivingArea=80, dispatchArea=80,
-    mheArea=0, officeArea=50, totalDocks=4, inboundDocks=2, outboundDocks=2 } = design;
-  const { dockSide, aisleW:aisleWP, clearH:clearHP, dockPitch } = params;
-  const clearH = parseFloat(clearHP)||9;
-  const aisleM = parseFloat(aisleWP)||3.0;
+// ─── 3D ROTATABLE WAREHOUSE MODEL (Three.js) ────────────────────────────────
+function Warehouse3DModel({ analysis, design, params, rackConfig }) {
+  const { useEffect, useRef } = React;
+  const mountRef = useRef(null);
+  const cleanupRef = useRef(null);
 
-  const SVG_W=960, SVG_H=600;
-  const cos30=Math.cos(Math.PI/6), sin30=Math.sin(Math.PI/6);
+  useEffect(() => {
+    if (!mountRef.current || !design || typeof THREE === 'undefined') return;
+    const {
+      wW, wL, zoneAreas={}, receivingArea=80, dispatchArea=80,
+      mheArea=0, officeArea=50, totalDocks=4, inboundDocks=2, outboundDocks=2,
+    } = design;
+    const { dockSide, aisleW:aisleWP, clearH:clearHP, dockPitch } = params;
+    const clearH = parseFloat(clearHP)||9;
+    const aisleM = parseFloat(aisleWP)||3.0;
+    const pitch  = parseFloat(dockPitch)||4.5;
 
-  // Dynamic iso scale to fit warehouse in canvas
-  const ISO_byW=(SVG_W-80)/((wW+wL)*cos30);
-  const ISO_byH=(SVG_H-100)/((wW+wL)*sin30 + clearH*1.3);
-  const ISO=Math.min(ISO_byW,ISO_byH)*0.85;
+    const container = mountRef.current;
+    const W=container.clientWidth, H=Math.max(480,container.clientHeight||480);
 
-  // World: x=east(0→wW), y=north/depth(0=south-docks→wL=back), z=up(0=floor→clearH)
-  // Camera: south-west, looking NE-up
-  const OX=40+wL*ISO*cos30;
-  const OY=SVG_H-45;
-  const iso=(wx,wy,wz)=>({
-    x: OX+(wx-wy)*ISO*cos30,
-    y: OY-(wx+wy)*ISO*sin30-wz*ISO
-  });
+    // ── SCENE ──────────────────────────────────────────────────────────────
+    const scene    = new THREE.Scene();
+    scene.background = new THREE.Color(0xdbeafe);
+    scene.fog = new THREE.FogExp2(0xdbeafe, 0.006);
 
-  // Path builders
-  const pt=p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`;
-  const isoBox=(wx,wy,wz,dx,dy,dz)=>{
-    const [p000,p100,p010,p110,p001,p101,p011,p111]=[
-      iso(wx,wy,wz),iso(wx+dx,wy,wz),iso(wx,wy+dy,wz),iso(wx+dx,wy+dy,wz),
-      iso(wx,wy,wz+dz),iso(wx+dx,wy,wz+dz),iso(wx,wy+dy,wz+dz),iso(wx+dx,wy+dy,wz+dz)
-    ];
-    return {
-      top:  `M${pt(p001)}L${pt(p101)}L${pt(p111)}L${pt(p011)}Z`,
-      front:`M${pt(p000)}L${pt(p100)}L${pt(p101)}L${pt(p001)}Z`,
-      side: `M${pt(p100)}L${pt(p110)}L${pt(p111)}L${pt(p101)}Z`,
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setPixelRatio(window.devicePixelRatio||1);
+    renderer.setSize(W, H);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    const camera = new THREE.PerspectiveCamera(50, W/H, 0.1, 2000);
+    const center = new THREE.Vector3(wW/2, clearH*0.3, wL/2);
+    const diag   = Math.sqrt(wW*wW + wL*wL);
+
+    // Orbit state
+    const orbit = { theta:Math.PI*0.55, phi:1.05, radius:diag*1.1, down:false, lx:0, ly:0 };
+
+    const updateCam = () => {
+      const ph=Math.max(0.18,Math.min(1.45,orbit.phi));
+      camera.position.set(
+        center.x + orbit.radius*Math.sin(ph)*Math.sin(orbit.theta),
+        center.y + orbit.radius*Math.cos(ph),
+        center.z + orbit.radius*Math.sin(ph)*Math.cos(orbit.theta)
+      );
+      camera.lookAt(center);
     };
-  };
-  const isoFloor=(wx,wy,dx,dy)=>{
-    const [p00,p10,p11,p01]=[iso(wx,wy,0),iso(wx+dx,wy,0),iso(wx+dx,wy+dy,0),iso(wx,wy+dy,0)];
-    return `M${pt(p00)}L${pt(p10)}L${pt(p11)}L${pt(p01)}Z`;
-  };
-  const isoWall_NS=(wx,wy,dx,dz)=>{  // south/north wall (constant y)
-    const [p0,p1,p2,p3]=[iso(wx,wy,0),iso(wx+dx,wy,0),iso(wx+dx,wy,dz),iso(wx,wy,dz)];
-    return `M${pt(p0)}L${pt(p1)}L${pt(p2)}L${pt(p3)}Z`;
-  };
-  const isoWall_EW=(wx,wy,dy,dz)=>{  // east/west wall (constant x)
-    const [p0,p1,p2,p3]=[iso(wx,wy,0),iso(wx,wy+dy,0),iso(wx,wy+dy,dz),iso(wx,wy,dz)];
-    return `M${pt(p0)}L${pt(p1)}L${pt(p2)}L${pt(p3)}Z`;
-  };
+    updateCam();
 
-  // ── ZONE LAYOUT (world coords: y=0=south/docks, y=wL=north) ──────────────
-  const stagingH = Math.max(4,(receivingArea||80)/wW);
-  const supportH = Math.max(2,((officeArea||50)+(mheArea||0))/wW);
-  const availH   = Math.max(4, wL-stagingH-supportH);
-  const totZA    = Object.values(zoneAreas).reduce((s,a)=>s+a,0)||1;
-  const ZONE_ORDER=['golden','mid','reserve','bulk','long'];
-  let yCur=stagingH;
-  const zPos={};
-  ZONE_ORDER.forEach(z=>{
-    const h=((zoneAreas[z]||0)/totZA)*availH;
-    zPos[z]={y0:yCur, h:Math.max(0,h)};
-    yCur+=h;
-  });
+    // ── LIGHTING ───────────────────────────────────────────────────────────
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const sun = new THREE.DirectionalLight(0xfffaed, 1.0);
+    sun.position.set(wW*1.5, clearH*4, -wL*0.3);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048,2048);
+    sun.shadow.camera.left=-diag; sun.shadow.camera.right=diag;
+    sun.shadow.camera.top=diag;   sun.shadow.camera.bottom=-diag;
+    scene.add(sun);
+    const fill = new THREE.DirectionalLight(0xadd8e6, 0.35);
+    fill.position.set(-wW, clearH*2, wL*1.5);
+    scene.add(fill);
 
-  // ── RACK HEIGHT PER ZONE ─────────────────────────────────────────────────
-  const RACK_DEPTH={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
-  const RACK_CLR  ={shelving:'#64748b',liveStorage:'#2563eb',selective:'#374151',
-    driveIn:'#1e293b',doubleDeep:'#475569',cantilever:'#7c3aed'};
+    // ── HELPERS ────────────────────────────────────────────────────────────
+    const addMesh = (geo, mat, x, y, z, castShadow=true) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      if (castShadow) { m.castShadow=true; m.receiveShadow=true; }
+      scene.add(m); return m;
+    };
+    const box = (w,h,d,col,opacity=1,wireframe=false) => new THREE.Mesh(
+      new THREE.BoxGeometry(w,h,d),
+      new THREE.MeshPhongMaterial({color:col, opacity, transparent:opacity<1,
+        wireframe, side:THREE.DoubleSide})
+    );
+    const addBox = (x,y,z,w,h,d,col,op=1,shadow=true) => {
+      const m = box(w,h,d,col,op);
+      m.position.set(x+w/2, y+h/2, z+d/2);
+      if(shadow){m.castShadow=true;m.receiveShadow=true;}
+      scene.add(m); return m;
+    };
+    const edges = (geo, col=0x000000, op=0.25) => new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({color:col,opacity:op,transparent:true})
+    );
 
-  const getZoneRackH=(zone)=>{
-    if (!rackConfig) return 3.0;
-    const cfgs=(rackConfig||[]).filter(cfg=>{
-      const z=(analysis?.slotted||[]).find(s=>s.rack===cfg.rack)?.zone;
-      return z===zone;
-    });
-    if (!cfgs.length) return 3.0;
-    const cfg=cfgs[0];
-    if (['shelving','liveStorage'].includes(cfg.rack))
-      return (parseFloat(cfg.tierHeight)||cfg.shelfH||2200)*(parseInt(cfg.tiers)||1)/1000;
-    return (cfg.levels||4)*1.5+0.3;
-  };
-  const getDomRack=(zone)=>{
-    const m={};
-    (analysis?.slotted||[]).filter(s=>s.zone===zone).forEach(r=>{m[r.rack]=(m[r.rack]||0)+1;});
-    return Object.entries(m).sort((a,b)=>b[1]-a[1])[0]?.[0]||'shelving';
-  };
+    // ── FLOOR ──────────────────────────────────────────────────────────────
+    const floorGeo = new THREE.PlaneGeometry(wW, wL);
+    const floorM   = addMesh(floorGeo, new THREE.MeshPhongMaterial({color:0xcfd8e3,side:THREE.DoubleSide}),
+      wW/2, 0, wL/2, false);
+    floorM.rotation.x=-Math.PI/2; floorM.receiveShadow=true;
 
-  // ── BUILD DRAW ELEMENTS (back→front) ──────────────────────────────────────
-  const elements=[];
+    const grid = new THREE.GridHelper(Math.max(wW,wL)*2, 30, 0xaaaaaa, 0xcccccc);
+    grid.position.set(wW/2, 0.01, wL/2); scene.add(grid);
 
-  // 1. NORTH WALL (y=wL, farthest back)
-  elements.push({key:'north-wall', z_sort:wL+100,
-    render:<path d={isoWall_NS(0,wL,wW,clearH*0.9)} fill="#e2e8f0" stroke="#94a3b8" strokeWidth="0.8"/>});
+    // ── ZONE FLOORS ────────────────────────────────────────────────────────
+    const ZCOL={golden:0xa7f3d0, mid:0xfef08a, reserve:0xfed7aa, bulk:0xe2e8f0, long:0xede9fe};
+    const stagingH = Math.max(4,(receivingArea||80)/wW);
+    const supportH = Math.max(2,((officeArea||50)+(mheArea||0))/wW);
+    const totZA    = Object.values(zoneAreas).reduce((s,a)=>s+a,0)||1;
+    const availH   = Math.max(4,wL-stagingH-supportH);
+    const ZORD=['golden','mid','reserve','bulk','long'];
+    let zCur=stagingH; const ZP={};
+    ZORD.forEach(z=>{ const h=((zoneAreas[z]||0)/totZA)*availH; ZP[z]={z0:zCur,h:Math.max(0,h)}; zCur+=h; });
 
-  // 2. EAST WALL (x=wW, back-right)
-  elements.push({key:'east-wall', z_sort:wW+50,
-    render:<path d={isoWall_EW(wW,0,wL,clearH*0.9)} fill="#cbd5e1" stroke="#94a3b8" strokeWidth="0.8"/>});
+    const addFloorZone = (x,z,w,d,col) => {
+      const m=new THREE.Mesh(new THREE.PlaneGeometry(w,d), new THREE.MeshPhongMaterial({color:col,side:THREE.DoubleSide}));
+      m.rotation.x=-Math.PI/2; m.position.set(x+w/2,0.015,z+d/2); m.receiveShadow=true; scene.add(m);
+    };
+    ZORD.forEach(z=>{const{z0,h}=ZP[z];if(h>0.3) addFloorZone(0,z0,wW,h,ZCOL[z]||0xf1f5f9);});
+    addFloorZone(0,    0,    wW/2, stagingH, 0x93c5fd); // Receiving
+    addFloorZone(wW/2, 0,    wW/2, stagingH, 0xfde68a); // Dispatch
+    addFloorZone(0, wL-supportH, wW/2, supportH, 0xdbeafe); // Office
+    if(mheArea>0) addFloorZone(wW/2, wL-supportH, wW/2, supportH, 0xede9fe); // MHE
 
-  // 3. FLOOR ZONES (large y → small y)
-  // Support area (north)
-  ['office','mhe'].forEach((s,i)=>{
-    const x=i===0?0:wW/2, w=wW/2, y0=wL-supportH;
-    elements.push({key:`sup-${s}`, z_sort:-(y0+supportH/2),
-      render:<>
-        <path d={isoFloor(x,y0,w,supportH)} fill={i===0?'#dbeafe':'#fdf4ff'} stroke="#94a3b8" strokeWidth="0.5"/>
-        <text {...(() => { const lp=iso(x+w/2,y0+supportH/2,0.1); return {x:lp.x,y:lp.y}; })()} textAnchor="middle" fontSize="7" fill={i===0?'#1d4ed8':'#7c3aed'} fontWeight="700">
-          {i===0?'OFFICE':'MHE'}
-        </text>
-      </>
-    });
-  });
-
-  // Storage zones
-  ZONE_ORDER.forEach(z=>{
-    const {y0,h}=zPos[z]||{y0:0,h:0}; if(h<0.5) return;
-    const zd=ZONE_DEFS[z]||{};
-    elements.push({key:`zone-${z}`, z_sort:-(y0+h/2),
-      render:<>
-        <path d={isoFloor(0,y0,wW,h)} fill={zd.color||'#f1f5f9'} stroke={zd.border||'#94a3b8'} strokeWidth="0.5" opacity="0.92"/>
-        {h>3&&(()=>{ const lp=iso(wW/2,y0+h/2,0.1); return(
-          <text x={lp.x} y={lp.y} textAnchor="middle" fontSize="8" fill={zd.textColor||'#374151'} fontWeight="700">{zd.label||z}</text>
-        );})()} 
-      </>
+    // Zone boundary lines
+    ZORD.forEach(z=>{
+      const{z0,h}=ZP[z];if(h<0.5) return;
+      const pts=[new THREE.Vector3(0,0.05,z0),new THREE.Vector3(wW,0.05,z0)];
+      const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineBasicMaterial({color:0x94a3b8,opacity:0.5,transparent:true}));
+      scene.add(ln);
     });
 
-    // RACK ROWS within zone
-    const dom=getDomRack(z); const rd=RACK_DEPTH[dom]||0.6;
-    const rh=getZoneRackH(z); const slot=rd+aisleM;
-    const nRows=Math.max(1,Math.floor(h/slot));
-    for(let r=0;r<nRows;r++){
-      const ry=y0+r*slot+aisleM*0.5;
-      if(ry+rd>y0+h-0.3) break;
-      const bx=isoBox(0.2,ry,0,wW-0.4,rd,rh);
-      const baseClr=RACK_CLR[dom]||'#64748b';
-      elements.push({key:`rack-${z}-${r}`, z_sort:-(ry+rd/2),
-        render:<>
-          <path d={bx.top}   fill={baseClr} opacity="0.55"/>
-          <path d={bx.front} fill={baseClr} opacity="0.75" stroke="rgba(255,255,255,0.2)" strokeWidth="0.5"/>
-          <path d={bx.side}  fill={baseClr} opacity="0.45"/>
-          {/* Shelf lines on front face for shelving */}
-          {(dom==='shelving'||dom==='liveStorage')&&Array.from({length:Math.min(6,Math.floor(rh/0.35))},(_,sl)=>{
-            const slZ=sl*(rh/Math.min(6,Math.floor(rh/0.35)));
-            const p0=iso(0.2,ry,slZ), p1=iso(wW-0.4,ry,slZ);
-            return <line key={sl} x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="rgba(255,255,255,0.4)" strokeWidth="0.6"/>;
-          })}
-          {/* Beam lines for pallet racks */}
-          {(dom==='selective'||dom==='doubleDeep')&&Array.from({length:Math.min(5,Math.floor(rh/1.5))},(_,lv)=>{
-            const lZ=lv*1.5+0.3;
-            const p0=iso(0.2,ry,lZ),p1=iso(wW-0.4,ry,lZ);
-            return <line key={lv} x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="#f59e0b" strokeWidth="0.8"/>;
-          })}
-        </>
+    // ── WALLS (semi-transparent) ────────────────────────────────────────────
+    const wallMat = new THREE.MeshPhongMaterial({color:0xf1f5f9,opacity:0.22,transparent:true,side:THREE.DoubleSide});
+    const wallEdgeMat = new THREE.LineBasicMaterial({color:0x64748b,opacity:0.5,transparent:true});
+    [[wW/2,clearH/2,0,       wW,clearH,0.25],  // south  (z=0)
+     [wW/2,clearH/2,wL,      wW,clearH,0.25],  // north
+     [0,   clearH/2,wL/2,    0.25,clearH,wL],  // west
+     [wW,  clearH/2,wL/2,    0.25,clearH,wL],  // east
+    ].forEach(([cx,cy,cz,ww,hh,dd])=>{
+      const geo=new THREE.BoxGeometry(ww,hh,dd);
+      const m=new THREE.Mesh(geo,wallMat); m.position.set(cx,cy,cz); scene.add(m);
+      const e=edges(geo,0x64748b,0.4); e.position.copy(m.position); scene.add(e);
+    });
+
+    // Roof wireframe
+    [[wW/2,clearH,0],  [wW/2,clearH,wL],
+     [0,clearH,wL/2],  [wW,clearH,wL/2]].forEach(([cx,cy,cz])=>{
+      const pts=[new THREE.Vector3(cx-wW/2,cy,cz-wL/2),new THREE.Vector3(cx+wW/2,cy,cz-wL/2),
+                 new THREE.Vector3(cx+wW/2,cy,cz+wL/2),new THREE.Vector3(cx-wW/2,cy,cz+wL/2),
+                 new THREE.Vector3(cx-wW/2,cy,cz-wL/2)];
+      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineBasicMaterial({color:0x94a3b8,opacity:0.4,transparent:true})));
+    });
+
+    // ── DOCK DOORS ─────────────────────────────────────────────────────────
+    const dockW=3.5, dockH=Math.min(4.5,clearH*0.55);
+    const doorMat=new THREE.MeshPhongMaterial({color:0x1d4ed8});
+    for(let d=0;d<totalDocks;d++){
+      const dx=(d+0.5)*(wW/totalDocks)-dockW/2;
+      [[dx,0,-0.15,0.2,dockH,0.3],[dx+dockW-0.2,0,-0.15,0.2,dockH,0.3],  // posts
+       [dx,dockH,-0.15,dockW,0.2,0.3]].forEach(([x,y,z,w,h,dd])=>{      // lintel
+        const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,dd),doorMat);
+        m.position.set(x+w/2,y+h/2,z); scene.add(m);
       });
+      // Door number
     }
-  });
 
-  // 4. STAGING (south end, y=0 to stagingH)
-  const isOne=dockSide==='one', isBoth=dockSide==='both';
-  const stagingZones=[
-    {x:0,y:0,w:wW/2,h:stagingH,label:'RECEIVING',color:'#bfdbfe',stroke:'#2563eb'},
-    {x:wW/2,y:0,w:wW/2,h:stagingH,label:'DISPATCH',color:'#fde68a',stroke:'#d97706'},
-  ];
-  stagingZones.forEach((s,i)=>{
-    elements.push({key:`stag-${i}`, z_sort:-(s.y+s.h/2),
-      render:<>
-        <path d={isoFloor(s.x,s.y,s.w,s.h)} fill={s.color} stroke={s.stroke} strokeWidth="1" opacity="0.9"/>
-        {(()=>{ const lp=iso(s.x+s.w/2,s.y+s.h/2,0.1); return(
-          <text x={lp.x} y={lp.y} textAnchor="middle" fontSize="8" fill={s.stroke} fontWeight="800">{s.label}</text>
-        );})()} 
-        {/* Staging pallets */}
-        {Array.from({length:Math.min(8,Math.floor(s.w/1.3))},(_,p)=>{
-          const px=s.x+0.4+p*1.3;
-          if(px+1.0>s.x+s.w-0.2) return null;
-          const pb=isoBox(px,s.y+0.3,0,1.0,1.0,0.15);
-          const pb2=isoBox(px,s.y+0.3,0.15,1.0,1.0,0.8);
-          return(<g key={p}>
-            <path d={pb.top}   fill="#92400e"/><path d={pb.front} fill="#92400e"/><path d={pb.side} fill="#78350f"/>
-            <path d={pb2.top}  fill={i===0?'#d97706':'#f59e0b'} opacity="0.85"/>
-            <path d={pb2.front} fill={i===0?'#fbbf24':'#fcd34d'} opacity="0.85"/>
-            <path d={pb2.side}  fill={i===0?'#d97706':'#f59e0b'} opacity="0.7"/>
-          </g>);
-        })}
-      </>
+    // ── RACK ROWS ──────────────────────────────────────────────────────────
+    const RCOL={shelving:0x94a3b8,liveStorage:0x3b82f6,selective:0x475569,
+      driveIn:0x1e293b,doubleDeep:0x334155,cantilever:0x7c3aed};
+    const RD={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
+
+    const getDom=(zone)=>{const m={};
+      (analysis?.slotted||[]).filter(s=>s.zone===zone).forEach(r=>{m[r.rack]=(m[r.rack]||0)+1;});
+      return Object.entries(m).sort((a,b)=>b[1]-a[1])[0]?.[0]||'shelving';};
+    const getRackH=(zone)=>{
+      if(!rackConfig) return 3.0;
+      const cfgs=(rackConfig||[]).filter(c=>(analysis?.slotted||[]).find(s=>s.rack===c.rack)?.zone===zone);
+      if(!cfgs.length) return 3.0;
+      const c=cfgs[0];
+      return ['shelving','liveStorage'].includes(c.rack)
+        ? (parseFloat(c.tierHeight)||c.shelfH||2200)*(parseInt(c.tiers)||1)/1000
+        : (c.levels||4)*1.5+0.3;
+    };
+
+    ZORD.forEach(zone=>{
+      const{z0,h}=ZP[zone]||{z0:0,h:0}; if(h<1) return;
+      const dom=getDom(zone); const rd=RD[dom]||0.6; const rh=getRackH(zone);
+      const col=RCOL[dom]||0x94a3b8; const slot=rd+aisleM;
+      const nRows=Math.max(1,Math.floor(h/slot));
+
+      for(let r=0;r<nRows;r++){
+        const rowZ=z0+r*slot+aisleM*0.4; if(rowZ+rd>z0+h-0.3) break;
+        // Rack body
+        const rGeo=new THREE.BoxGeometry(wW-0.4,rh,rd);
+        const rMat=new THREE.MeshPhongMaterial({color:col,opacity:0.72,transparent:true,shininess:30});
+        const rM=new THREE.Mesh(rGeo,rMat);
+        rM.position.set(wW/2,rh/2,rowZ+rd/2);
+        rM.castShadow=true; rM.receiveShadow=true; scene.add(rM);
+        // Wireframe
+        const eG=new THREE.EdgesGeometry(rGeo);
+        const eL=new THREE.LineSegments(eG,new THREE.LineBasicMaterial({color:0x000000,opacity:0.2,transparent:true}));
+        eL.position.copy(rM.position); scene.add(eL);
+
+        // Uprights posts (every bay width)
+        const postSpacing=['selective','driveIn','doubleDeep'].includes(dom)?2.7:1.8;
+        const nPost=Math.floor((wW-0.4)/postSpacing)+1;
+        const postMat=new THREE.MeshPhongMaterial({color:0x1e293b});
+        for(let p=0;p<nPost;p++){
+          const px=0.2+p*postSpacing; if(px>wW-0.2) break;
+          [[px,rowZ+0.05],[px,rowZ+rd-0.05]].forEach(([ppx,ppz])=>{
+            const pm=new THREE.Mesh(new THREE.BoxGeometry(0.1,rh,0.1),postMat);
+            pm.position.set(ppx,rh/2,ppz); pm.castShadow=true; scene.add(pm);
+          });
+        }
+        // Shelves or beams
+        if(['shelving','liveStorage'].includes(dom)){
+          const nSh=Math.min(8,Math.floor(rh/0.35));
+          const shMat=new THREE.MeshPhongMaterial({color:0xd1d5db});
+          for(let s=0;s<nSh;s++){
+            const sy=s*(rh/nSh)+0.05;
+            const sh=new THREE.Mesh(new THREE.BoxGeometry(wW-0.5,0.04,rd-0.06),shMat);
+            sh.position.set(wW/2,sy,rowZ+rd/2); scene.add(sh);
+          }
+        } else if(['selective','doubleDeep'].includes(dom)){
+          const nBm=Math.min(6,Math.floor(rh/1.5));
+          const bmMat=new THREE.MeshPhongMaterial({color:0xf59e0b,shininess:60});
+          for(let b=0;b<nBm;b++){
+            const by=b*1.5+0.3;
+            const bm=new THREE.Mesh(new THREE.BoxGeometry(wW-0.5,0.08,0.12),bmMat);
+            bm.position.set(wW/2,by,rowZ+rd/2); scene.add(bm);
+          }
+        } else if(dom==='cantilever'){
+          const nAr=Math.min(6,Math.floor(rh/0.6));
+          const arMat=new THREE.MeshPhongMaterial({color:0xa78bfa});
+          for(let a=0;a<nAr;a++){
+            const ay=a*0.6+0.3;
+            [0.5,wW-0.5].forEach(armX=>{
+              const arm=new THREE.Mesh(new THREE.BoxGeometry(rd*0.8,0.08,0.12),arMat);
+              arm.position.set(armX,ay,rowZ+rd/2); scene.add(arm);
+            });
+          }
+        }
+      }
     });
-  });
 
-  // 5. WEST WALL (x=0, near-left — only bottom strip for visual)
-  elements.push({key:'west-wall-strip', z_sort:9000,
-    render:<path d={isoWall_EW(0,0,wL,Math.min(1.0,clearH*0.12))} fill="#f8fafc" stroke="#94a3b8" strokeWidth="0.8" opacity="0.7"/>});
+    // ── STAGING PALLETS ─────────────────────────────────────────────────────
+    const palW=1.0, palH=0.15, stockH=0.75;
+    const palMat  =new THREE.MeshPhongMaterial({color:0x78350f,shininess:20});
+    const stockColors=[0xd97706,0xf59e0b];
+    const pRows=Math.min(3,Math.floor(stagingH/1.4));
+    const pCols=Math.min(10,Math.floor(wW/2/1.4));
+    [0,1].forEach(side=>{
+      const startX=side*(wW/2);
+      for(let r=0;r<pRows;r++) for(let c=0;c<pCols;c++){
+        const px=startX+0.3+c*1.35, pz=0.3+r*1.35;
+        if(px+palW>startX+wW/2-0.2||pz>stagingH-0.4) continue;
+        // Pallet base
+        const pm=new THREE.Mesh(new THREE.BoxGeometry(palW,palH,palW),palMat);
+        pm.position.set(px+palW/2,palH/2,pz+palW/2); pm.castShadow=true; scene.add(pm);
+        // Stock
+        const sm=new THREE.Mesh(new THREE.BoxGeometry(palW-0.05,stockH,palW-0.05),
+          new THREE.MeshPhongMaterial({color:stockColors[side],shininess:40}));
+        sm.position.set(px+palW/2,palH+stockH/2,pz+palW/2); sm.castShadow=true; scene.add(sm);
+      }
+    });
 
-  // 6. SOUTH WALL FRAME (y=0, nearest — dock posts)
-  const pitch=parseFloat(dockPitch)||4.5;
-  const nDocks=totalDocks||4;
-  elements.push({key:'south-wall-partial', z_sort:9500,
-    render:<>
-      {/* Floor edge */}
-      <path d={`M${pt(iso(0,0,0))}L${pt(iso(wW,0,0))}`} stroke="#1e293b" strokeWidth="2"/>
-      {/* Column posts at dock spacing */}
-      {Array.from({length:nDocks+1},(_,i)=>{
-        const dx=i*(wW/(nDocks));
-        if(dx>wW) return null;
-        const pst=isoBox(dx-0.1,0,0,0.2,0.3,Math.min(3.5,clearH*0.4));
-        return(<g key={i}>
-          <path d={pst.front} fill="#374151"/>
-          <path d={pst.side}  fill="#1e293b"/>
-        </g>);
-      })}
-      {/* Dock labels */}
-      {Array.from({length:nDocks},(_,i)=>{
-        const dx=(i+0.5)*(wW/nDocks);
-        const lp=iso(dx,0,0);
-        return <text key={i} x={lp.x} y={lp.y+12} textAnchor="middle" fontSize="8" fill="#1d4ed8" fontWeight="700">D{i+1}</text>;
-      })}
-    </>
-  });
+    // ── OFFICE / MHE ───────────────────────────────────────────────────────
+    if(officeArea>0){
+      const om=addBox(0.5,0,wL-supportH+0.5,wW/2-1,Math.min(3,clearH*0.35),supportH-1,0x93c5fd,0.8);
+    }
+    if(mheArea>0){
+      const nMHE=Math.min(design.nMHE||2,4);
+      for(let m=0;m<nMHE;m++){
+        const mx=wW/2+0.5+m*3.5; if(mx+2.5>wW-0.5) break;
+        addBox(mx,0,wL-supportH+0.5,2.5,1.8,1.5,0x818cf8,0.9);
+        addBox(mx+0.2,1.8,wL-supportH+0.6,0.3,0.5,0.3,0x312e81);
+      }
+    }
 
-  // Sort all elements back→front (most negative z_sort first)
-  elements.sort((a,b)=>a.z_sort-b.z_sort);
+    // ── COLUMN LABELS via canvas textures ─────────────────────────────────
+    const makeLabel=(text,col='#1e293b')=>{
+      const cv=document.createElement('canvas'); cv.width=256; cv.height=64;
+      const ctx=cv.getContext('2d'); ctx.fillStyle='rgba(255,255,255,0.85)';
+      ctx.roundRect(2,2,252,60,8); ctx.fill();
+      ctx.fillStyle=col; ctx.font='bold 22px sans-serif'; ctx.textAlign='center';
+      ctx.fillText(text,128,38);
+      const tex=new THREE.CanvasTexture(cv);
+      const m=new THREE.Mesh(new THREE.PlaneGeometry(4,1),new THREE.MeshBasicMaterial({map:tex,transparent:true,side:THREE.DoubleSide}));
+      return m;
+    };
+    const ZONE_LABEL_COL={golden:'#166534',mid:'#854d0e',reserve:'#9a3412',bulk:'#374151',long:'#6b21a8'};
+    ZORD.forEach(z=>{
+      const{z0,h}=ZP[z]; if(h<2) return;
+      const lbl=makeLabel(ZONE_DEFS[z]?.label||z, ZONE_LABEL_COL[z]||'#374151');
+      lbl.position.set(wW/2, 0.5, z0+h/2); lbl.rotation.x=-Math.PI/2; scene.add(lbl);
+    });
+    const recLbl=makeLabel('RECEIVING','#1d4ed8');
+    recLbl.position.set(wW/4,0.5,stagingH/2); recLbl.rotation.x=-Math.PI/2; scene.add(recLbl);
+    const disLbl=makeLabel('DISPATCH','#d97706');
+    disLbl.position.set(wW*3/4,0.5,stagingH/2); disLbl.rotation.x=-Math.PI/2; scene.add(disLbl);
 
-  // ── DIMENSION ANNOTATIONS ─────────────────────────────────────────────────
-  const sw=iso(0,0,0), se=iso(wW,0,0), nw=iso(0,wL,0), ne=iso(wW,wL,0);
-  const top_sw=iso(0,0,clearH), top_nw=iso(0,wL,clearH);
+    // ── ANIMATE ────────────────────────────────────────────────────────────
+    let rafId; const animate=()=>{ rafId=requestAnimationFrame(animate); renderer.render(scene,camera); };
+    animate();
 
+    // ── CONTROLS ───────────────────────────────────────────────────────────
+    const el=renderer.domElement;
+    const down=e=>{orbit.down=true;orbit.lx=e.clientX;orbit.ly=e.clientY;};
+    const up  =()=>{orbit.down=false;};
+    const move=e=>{
+      if(!orbit.down) return;
+      orbit.theta-=(e.clientX-orbit.lx)*0.007;
+      orbit.phi  -=(e.clientY-orbit.ly)*0.007;
+      orbit.lx=e.clientX; orbit.ly=e.clientY; updateCam();
+    };
+    const wheel=e=>{ orbit.radius=Math.max(8,Math.min(400,orbit.radius+e.deltaY*0.08)); updateCam(); e.preventDefault(); };
+    let lt0=0,lt1=0;
+    const tstart=e=>{lt0=e.touches[0].clientX;lt1=e.touches[0].clientY;};
+    const tmove =e=>{
+      orbit.theta-=(e.touches[0].clientX-lt0)*0.007;
+      orbit.phi  -=(e.touches[0].clientY-lt1)*0.007;
+      lt0=e.touches[0].clientX;lt1=e.touches[0].clientY; updateCam(); e.preventDefault();
+    };
+    el.addEventListener('mousedown',down); el.addEventListener('mouseup',up);
+    el.addEventListener('mouseleave',up);  el.addEventListener('mousemove',move);
+    el.addEventListener('wheel',wheel,{passive:false});
+    el.addEventListener('touchstart',tstart,{passive:true}); el.addEventListener('touchmove',tmove,{passive:false});
+    const onResize=()=>{ const w=container.clientWidth,h=480; renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix(); };
+    window.addEventListener('resize',onResize);
+
+    cleanupRef.current=()=>{
+      cancelAnimationFrame(rafId);
+      ['mousedown','mouseup','mouseleave','mousemove'].forEach(ev=>el.removeEventListener(ev,ev==='mousedown'?down:ev==='mousemove'?move:up));
+      el.removeEventListener('wheel',wheel);
+      el.removeEventListener('touchstart',tstart); el.removeEventListener('touchmove',tmove);
+      window.removeEventListener('resize',onResize);
+      renderer.dispose();
+      if(container.contains(el)) container.removeChild(el);
+    };
+    return cleanupRef.current;
+  }, [design, analysis, params, rackConfig]);
+
+  if (!design) return null;
   return (
-    <svg width={SVG_W} height={SVG_H} viewBox={`0 0 ${SVG_W} ${SVG_H}`}
-      style={{display:'block',background:'#f0f9ff',borderRadius:'10px',width:'100%',height:'auto'}}>
-
-      {/* Sky gradient */}
-      <defs>
-        <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#e0f2fe"/>
-          <stop offset="100%" stopColor="#f0f9ff"/>
-        </linearGradient>
-        <linearGradient id="floorGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#f8fafc"/>
-          <stop offset="100%" stopColor="#e2e8f0"/>
-        </linearGradient>
-      </defs>
-      <rect width={SVG_W} height={SVG_H} fill="url(#skyGrad)"/>
-
-      {/* Roof wireframe (transparent) */}
-      <path d={`M${pt(top_sw)}L${pt(iso(wW,0,clearH))}L${pt(iso(wW,wL,clearH))}L${pt(top_nw)}Z`}
-        fill="none" stroke="#94a3b8" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.5"/>
-      <line x1={top_sw.x} y1={top_sw.y} x2={sw.x} y2={sw.y} stroke="#94a3b8" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.5"/>
-      <line x1={top_nw.x} y1={top_nw.y} x2={nw.x} y2={nw.y} stroke="#94a3b8" strokeWidth="0.8" strokeDasharray="4,3" opacity="0.5"/>
-
-      {/* All scene elements */}
-      {elements.map(e=>(<g key={e.key}>{e.render}</g>))}
-
-      {/* Dimension lines */}
-      {/* Width (south edge) */}
-      <line x1={sw.x} y1={sw.y+14} x2={se.x} y2={se.y+14} stroke="#be185d" strokeWidth="1"/>
-      <line x1={sw.x} y1={sw.y+10} x2={sw.x} y2={sw.y+18} stroke="#be185d" strokeWidth="1"/>
-      <line x1={se.x} y1={se.y+10} x2={se.x} y2={se.y+18} stroke="#be185d" strokeWidth="1"/>
-      <text x={(sw.x+se.x)/2} y={sw.y+26} textAnchor="middle" fontSize="9" fill="#be185d" fontWeight="700">{wW}m wide ({(wW*3.28).toFixed(0)} ft)</text>
-
-      {/* Length (west edge) */}
-      <line x1={sw.x-12} y1={sw.y} x2={nw.x-12} y2={nw.y} stroke="#be185d" strokeWidth="1"/>
-      <line x1={sw.x-16} y1={sw.y} x2={sw.x-8} y2={sw.y} stroke="#be185d" strokeWidth="1"/>
-      <line x1={nw.x-16} y1={nw.y} x2={nw.x-8} y2={nw.y} stroke="#be185d" strokeWidth="1"/>
-      <text x={sw.x-14} y={(sw.y+nw.y)/2} textAnchor="middle" fontSize="9" fill="#be185d" fontWeight="700"
-        transform={`rotate(-90,${sw.x-14},${(sw.y+nw.y)/2})`}>{wL}m deep ({(wL*3.28).toFixed(0)} ft)</text>
-
-      {/* Clear height */}
-      {(()=>{ const h0=iso(wW,0,0),h1=iso(wW,0,clearH);
-        return(<>
-          <line x1={h0.x+14} y1={h0.y} x2={h1.x+14} y2={h1.y} stroke="#be185d" strokeWidth="1"/>
-          <line x1={h0.x+10} y1={h0.y} x2={h0.x+18} y2={h0.y} stroke="#be185d" strokeWidth="1"/>
-          <line x1={h1.x+10} y1={h1.y} x2={h1.x+18} y2={h1.y} stroke="#be185d" strokeWidth="1"/>
-          <text x={h1.x+20} y={(h0.y+h1.y)/2} fontSize="9" fill="#be185d" fontWeight="700" dominantBaseline="middle">{clearH}m</text>
-        </>);
-      })()}
-
+    <div style={{position:'relative'}}>
+      <div ref={mountRef} style={{width:'100%',height:'480px',borderRadius:'10px',
+        overflow:'hidden',cursor:'grab',background:'#dbeafe'}}/>
+      {/* Controls hint */}
+      <div style={{position:'absolute',top:'10px',right:'10px',
+        background:'rgba(255,255,255,0.88)',backdropFilter:'blur(4px)',
+        borderRadius:'8px',padding:'7px 12px',fontSize:'11px',color:'#374151',
+        lineHeight:'1.8',boxShadow:'0 2px 8px rgba(0,0,0,0.12)'}}>
+        🖱 <strong>Drag</strong> to rotate<br/>
+        ⚲ <strong>Scroll</strong> to zoom<br/>
+        📱 <strong>Touch drag</strong> on mobile
+      </div>
       {/* Legend */}
-      {[
-        ['#64748b','Shelving'],['#374151','Pallet Rack'],['#1e293b','Drive-in'],
-        ['#7c3aed','Cantilever'],['#bfdbfe','Receiving'],['#fde68a','Dispatch'],
-      ].map(([col,lbl],i)=>(
-        <g key={i}>
-          <rect x={8} y={SVG_H-16-i*14} width={10} height={8} fill={col} rx="1"/>
-          <text x={22} y={SVG_H-9-i*14} fontSize="8" fill="#374151">{lbl}</text>
-        </g>
-      ))}
-
-      {/* Title */}
-      <text x={SVG_W/2} y={16} textAnchor="middle" fontSize="11" fontWeight="800" fill="#0f172a">
-        Warehouse 3D Layout — {wW}×{wL}m · {clearH}m clear height · {totalDocks} dock doors
-      </text>
-    </svg>
+      <div style={{position:'absolute',bottom:'10px',left:'10px',
+        background:'rgba(255,255,255,0.88)',backdropFilter:'blur(4px)',
+        borderRadius:'8px',padding:'7px 12px',fontSize:'10px',
+        display:'flex',flexWrap:'wrap',gap:'8px',maxWidth:'420px',
+        boxShadow:'0 2px 8px rgba(0,0,0,0.12)'}}>
+        {[['#94a3b8','Shelving'],['#475569','Pallet Rack'],['#1e293b','Drive-in'],
+          ['#7c3aed','Cantilever'],['#93c5fd','Receiving'],['#fde68a','Dispatch'],['#818cf8','MHE']
+        ].map(([col,lbl])=>(
+          <span key={lbl} style={{display:'inline-flex',alignItems:'center',gap:'4px'}}>
+            <span style={{width:'10px',height:'10px',borderRadius:'2px',
+              background:col,display:'inline-block',flexShrink:0}}/>
+            <span style={{color:'#374151'}}>{lbl}</span>
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -3697,7 +3773,7 @@ export default function WarehouseDesignerTool() {
               </div>
 
               {viewMode3D==='3d'
-                ? <WarehouseIso3DSVG analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>
+                ? <Warehouse3DModel   analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>
                 : <FloorPlanSVG      analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>}
 
               {/* Legend (2D only) */}
