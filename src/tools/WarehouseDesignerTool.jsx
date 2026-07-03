@@ -1799,7 +1799,6 @@ function downloadRackLocations(cfg, analysis) {
 function Warehouse3DModel({ analysis, design, params, rackConfig }) {
   const mountRef    = useRef(null);
   const cleanupRef  = useRef(null);
-  const plan2DRef   = useRef(null);
 
   useEffect(() => {
     if (!mountRef.current || !design) return;
@@ -3075,6 +3074,7 @@ export default function WarehouseDesignerTool() {
   const [design,    setDesign]    = useState(null);
   const [configConfirmed,setConfigConfirmed]=useState(false);
   const [viewMode3D, setViewMode3D] = useState('3d'); // '2d' | '3d'
+  const plan2DRef = useRef(null); // ref for 2D SVG download
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState('');
 
