@@ -1799,6 +1799,7 @@ function downloadRackLocations(cfg, analysis) {
 function Warehouse3DModel({ analysis, design, params, rackConfig }) {
   const mountRef    = useRef(null);
   const cleanupRef  = useRef(null);
+  const plan2DRef   = useRef(null);
 
   useEffect(() => {
     if (!mountRef.current || !design) return;
@@ -2355,7 +2356,258 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
   );
 }
 
-// ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
+// ─── DXF FLOOR PLAN EXPORT ────────────────────────────────────────────────────
+// Generates AutoCAD DXF (Drawing Exchange Format).
+// Open in AutoCAD → File → Open → .dxf → then Save As → .dwg
+// Supported by all CAD tools: AutoCAD, FreeCAD, LibreCAD, Rhino, SolidWorks.
+function exportDXF(analysis, design, params, rackConfig) {
+  const { wW, wL, zoneAreas={}, receivingArea=80, dispatchArea=80,
+    officeArea=50, mheArea=0, totalDocks=4, totalGrossArea=0 } = design;
+  const { aisleW:aisleWP } = params;
+  const aisleM = parseFloat(aisleWP)||3.0;
+  const MFT    = 3.2808;
+
+  // DXF is a list of (group-code, value) pairs — one per line
+  const L = [];
+  const d = (...pairs) => pairs.forEach(p => L.push(String(p)));
+  const n = v => v.toFixed(4);
+
+  // ── HEADER ─────────────────────────────────────────────────────────────
+  d('0','SECTION','2','HEADER');
+  d('9','$ACADVER','1','AC1015');      // AutoCAD 2000 compatible
+  d('9','$INSUNITS','70','6');         // 6 = metres
+  d('9','$LUNITS','70','2');           // decimal
+  d('9','$LUPREC','70','3');           // 3 decimal places
+  d('9','$MEASUREMENT','70','1');      // 1 = metric
+  d('9','$EXTMIN','10',n(0),'20',n(0),'30','0.0');
+  d('9','$EXTMAX','10',n(wW+6),'20',n(wL+6),'30','0.0');
+  d('0','ENDSEC');
+
+  // ── LAYER TABLE ─────────────────────────────────────────────────────────
+  const LAYERS = [
+    ['BOUNDARY',      7  ],   // white/black — warehouse outline
+    ['ZONES',         3  ],   // green
+    ['ZONE_RECV',     5  ],   // blue
+    ['ZONE_DISP',     2  ],   // yellow
+    ['ZONE_SUPPORT',  4  ],   // cyan
+    ['RACKS_SHELVING',251],   // light gray
+    ['RACKS_SELECTIVE',1 ],   // red — upright frames
+    ['RACKS_DRIVEIN', 8  ],   // dark gray
+    ['RACKS_CANTILEVER',6],   // magenta
+    ['PALLETS',       30 ],   // orange
+    ['CROSS_AISLE',   52 ],   // yellow-green
+    ['DOCKS',         5  ],   // blue
+    ['DIMENSIONS',    7  ],   // white
+    ['TEXT',          7  ],   // white
+  ];
+  d('0','SECTION','2','TABLES','0','TABLE','2','LAYER','70',String(LAYERS.length));
+  LAYERS.forEach(([name,col])=>{
+    d('0','LAYER','2',name,'70','0','62',String(col),'6','CONTINUOUS');
+  });
+  d('0','ENDTABLE','0','ENDSEC');
+
+  // ── ENTITIES ────────────────────────────────────────────────────────────
+  d('0','SECTION','2','ENTITIES');
+
+  // Helpers
+  const rect2D = (layer, x1,y1,x2,y2,col=null) => {
+    d('0','LWPOLYLINE','8',layer,'90','4','70','1');
+    if(col) d('62',String(col));
+    [[x1,y1],[x2,y1],[x2,y2],[x1,y2]].forEach(([x,y])=>d('10',n(x),'20',n(y)));
+  };
+  const line2D = (layer,x1,y1,x2,y2,col=null) => {
+    d('0','LINE','8',layer);
+    if(col) d('62',String(col));
+    d('10',n(x1),'20',n(y1),'30','0.0','11',n(x2),'21',n(y2),'31','0.0');
+  };
+  const txt = (layer,x,y,h,str,hj=0) => {
+    d('0','TEXT','8',layer,'10',n(x),'20',n(y),'30','0.0','40',n(h),'1',String(str));
+    if(hj){ d('72',String(hj),'11',n(x),'21',n(y),'31','0.0'); }
+  };
+  const dimH = (x1,x2,y,label) => {
+    const mx=(x1+x2)/2;
+    line2D('DIMENSIONS',x1,y,x2,y); // dimension line
+    line2D('DIMENSIONS',x1,y-0.4,x1,y+0.4); // tick
+    line2D('DIMENSIONS',x2,y-0.4,x2,y+0.4); // tick
+    txt('DIMENSIONS',mx,y+0.5,0.5,label,1);
+  };
+  const dimV = (x,y1,y2,label) => {
+    line2D('DIMENSIONS',x,y1,x,y2);
+    line2D('DIMENSIONS',x-0.4,y1,x+0.4,y1);
+    line2D('DIMENSIONS',x-0.4,y2,x+0.4,y2);
+    txt('DIMENSIONS',x+0.7,(y1+y2)/2,0.4,label);
+  };
+
+  // ── WAREHOUSE OUTLINE ──────────────────────────────────────────────────
+  rect2D('BOUNDARY',0,0,wW,wL,7);
+
+  // ── ZONE LAYOUT ────────────────────────────────────────────────────────
+  const stagingH = Math.max(4,(receivingArea||80)/wW);
+  const supportH = Math.max(2,((officeArea||50)+(mheArea||0))/wW);
+  const totZA    = Object.values(zoneAreas).reduce((s,a)=>s+a,0)||1;
+  const availH   = Math.max(4,wL-stagingH-supportH);
+  const ZORD=['golden','mid','reserve','bulk','long'];
+  const ZCOL={golden:83,mid:52,reserve:30,bulk:9,long:6};
+  const ZLBL={golden:'Golden Zone (VF/F)',mid:'Mid-Level (M)',
+    reserve:'Reserve (S)',bulk:'Bulk (VS)',long:'Long Goods'};
+  let yCur=stagingH; const ZH={};
+  ZORD.forEach(z=>{
+    const h=((zoneAreas[z]||0)/totZA)*availH;
+    ZH[z]={y0:yCur,h:Math.max(0,h)}; yCur+=h;
+  });
+
+  ZORD.forEach(z=>{
+    const{y0,h}=ZH[z]; if(h<0.1) return;
+    rect2D('ZONES',0,y0,wW,y0+h,ZCOL[z]);
+    txt('TEXT',wW/2,y0+h/2+0.3,Math.min(1.2,h*0.25),ZLBL[z]||z,1);
+    txt('TEXT',wW/2,y0+h/2-0.5,Math.min(0.7,h*0.12),
+      `${(h*wW).toFixed(0)}m²  (${Math.round(h*wW*10.7639).toLocaleString()} sq ft)`,1);
+  });
+
+  // Staging
+  rect2D('ZONE_RECV',0,0,wW/2,stagingH,5);
+  rect2D('ZONE_DISP',wW/2,0,wW,stagingH,2);
+  txt('TEXT',wW/4,stagingH/2+0.3,0.7,'RECEIVING / GRN',1);
+  txt('TEXT',wW*3/4,stagingH/2+0.3,0.7,'DISPATCH',1);
+  txt('TEXT',wW/4,stagingH/2-0.5,0.5,
+    `${receivingArea}m²  (${Math.round(receivingArea*10.7639).toLocaleString()} sq ft)`,1);
+  txt('TEXT',wW*3/4,stagingH/2-0.5,0.5,
+    `${dispatchArea}m²  (${Math.round(dispatchArea*10.7639).toLocaleString()} sq ft)`,1);
+
+  // Support (north)
+  rect2D('ZONE_SUPPORT',0,wL-supportH,wW/2,wL,4);
+  rect2D('ZONE_SUPPORT',wW/2,wL-supportH,wW,wL,4);
+  txt('TEXT',wW/4,wL-supportH/2,0.6,'OFFICE / WELFARE',1);
+  txt('TEXT',wW*3/4,wL-supportH/2,0.6,'MHE CHARGING',1);
+
+  // ── RACK ROWS ──────────────────────────────────────────────────────────
+  const RACK_DZ={shelving:'golden',liveStorage:'golden',selective:'reserve',
+    doubleDeep:'reserve',driveIn:'bulk',cantilever:'long'};
+  const RD2={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
+  const RACK_LAYER={shelving:'RACKS_SHELVING',liveStorage:'RACKS_SHELVING',
+    selective:'RACKS_SELECTIVE',doubleDeep:'RACKS_SELECTIVE',
+    driveIn:'RACKS_DRIVEIN',cantilever:'RACKS_CANTILEVER'};
+
+  const z2R={};
+  (rackConfig||[]).forEach(cfg=>{
+    const zone=(analysis?.slotted||[]).find(s=>s.rack===cfg.rack)?.zone
+      || RACK_DZ[cfg.rack]||'golden';
+    if(!z2R[zone]) z2R[zone]=[];
+    if(!z2R[zone].find(r=>r.rack===cfg.rack)) z2R[zone].push({rack:cfg.rack,cfg});
+  });
+
+  ZORD.forEach(zone=>{
+    const{y0,h}=ZH[zone]; if(h<0.3) return;
+    const zRacks=z2R[zone]||[{rack:'shelving',cfg:null}];
+    const totalSlot=zRacks.reduce((s,{rack:dom})=>s+(RD2[dom]||0.6)+aisleM,0)||1;
+    let subY=y0;
+
+    zRacks.forEach(({rack:dom})=>{
+      const rd=RD2[dom]||0.6, slot=rd+aisleM;
+      const subH=Math.max(slot,(slot/totalSlot)*h);
+      const nRows=Math.max(1,Math.floor(subH/slot));
+      const crossAfter=Math.floor(nRows/2);
+      const layer=RACK_LAYER[dom]||'RACKS_SHELVING';
+
+      for(let i=0;i<nRows;i++){
+        const extra=(nRows>2&&i>=crossAfter)?aisleM:0;
+        const ry=subY+i*slot+extra+aisleM/2;
+        if(ry+rd>subY+subH-0.05) break;
+
+        // Cross aisle stripe
+        if(nRows>2&&i===crossAfter){
+          rect2D('CROSS_AISLE',0,ry-aisleM,wW,ry,52);
+          txt('TEXT',wW/2,ry-aisleM/2,0.4,'CROSS AISLE',1);
+        }
+
+        if(dom==='selective'||dom==='doubleDeep'){
+          rect2D(layer,0,ry,wW,ry+rd);
+          const bayW=2.7, nB=Math.floor(wW/bayW);
+          for(let b=0;b<=nB;b++) line2D(layer,b*bayW,ry,b*bayW,ry+rd,1); // upright columns
+          // Pallet positions — 2 per bay
+          for(let b=0;b<nB;b++){
+            const bx=b*bayW;
+            rect2D('PALLETS',bx+0.15,ry+0.05,bx+1.30,ry+rd-0.05,30);
+            rect2D('PALLETS',bx+1.40,ry+0.05,bx+bayW-0.15,ry+rd-0.05,30);
+          }
+          txt('TEXT',wW/2,ry+rd/2,0.3,dom==='doubleDeep'?'DOUBLE-DEEP RACK':'SELECTIVE PALLET RACK',1);
+
+        } else if(dom==='driveIn'){
+          rect2D(layer,0,ry,wW,ry+rd);
+          const laneW=2.7, nL=Math.floor(wW/laneW);
+          for(let ln=0;ln<=nL;ln++) line2D(layer,ln*laneW,ry,ln*laneW,ry+rd,8); // lane dividers
+          const palDeep=Math.floor(rd/1.2);
+          for(let ln=0;ln<nL;ln++){
+            for(let p=0;p<palDeep;p++){
+              const pz=ry+(p/palDeep)*(rd-0.1);
+              rect2D('PALLETS',ln*laneW+0.2,pz+0.05,(ln+1)*laneW-0.2,pz+1.05,30);
+            }
+          }
+          txt('TEXT',wW/2,ry+rd/2,0.3,'DRIVE-IN RACK',1);
+          line2D(layer,wW/2-2,ry-0.5,wW/2+2,ry-0.5,8);
+          txt('TEXT',wW/2,ry-0.7,0.3,'ENTRY ↔',1);
+
+        } else if(dom==='cantilever'){
+          rect2D(layer,0,ry,wW,ry+rd);
+          line2D(layer,0,ry+rd/2,wW,ry+rd/2,6); // spine
+          const ssp=1.5, nSp=Math.floor(wW/ssp);
+          for(let sp=0;sp<=nSp;sp++){
+            const sx=sp*ssp;
+            line2D(layer,sx,ry,sx,ry+rd,6); // spine post
+            line2D(layer,sx,ry+rd/2,sx,ry+0.15,6); // front arm
+            line2D(layer,sx,ry+rd/2,sx,ry+rd-0.15,6); // rear arm
+          }
+          txt('TEXT',wW/2,ry+rd/2,0.3,'CANTILEVER RACK',1);
+
+        } else {
+          // Shelving / live storage
+          rect2D(layer,0.4,ry,wW-0.4,ry+rd);
+          const bw=dom==='liveStorage'?1.5:0.9, nB2=Math.floor((wW-0.8)/bw);
+          for(let b=1;b<nB2;b++) line2D(layer,0.4+b*bw,ry,0.4+b*bw,ry+rd);
+        }
+      }
+      subY+=subH;
+    });
+  });
+
+  // ── DOCK DOORS ─────────────────────────────────────────────────────────
+  for(let d2=0;d2<totalDocks;d2++){
+    const dx=(d2+0.5)*(wW/totalDocks)-1.75;
+    line2D('DOCKS',dx,0,dx,-0.5);
+    line2D('DOCKS',dx+3.5,0,dx+3.5,-0.5);
+    line2D('DOCKS',dx,-0.5,dx+3.5,-0.5);
+    txt('DOCKS',dx+1.75,-0.8,0.4,`D${d2+1}`,1);
+  }
+
+  // ── DIMENSION LINES ─────────────────────────────────────────────────────
+  dimH(0,wW,-3.5,`${wW}m  (${(wW*MFT).toFixed(0)} ft)`);
+  dimV(-4.5,0,wL,`${wL}m  (${(wL*MFT).toFixed(0)} ft)`);
+  // Staging heights on right
+  dimV(wW+3,0,stagingH,`Staging: ${stagingH.toFixed(1)}m`);
+  let dimYc=stagingH;
+  ZORD.forEach(z=>{ const{h}=ZH[z]; if(h<0.3) return; dimV(wW+3,dimYc,dimYc+h,`${h.toFixed(1)}m`); dimYc+=h; });
+  dimV(wW+3,wL-supportH,wL,`Support: ${supportH.toFixed(1)}m`);
+
+  // ── TITLE BLOCK ─────────────────────────────────────────────────────────
+  line2D('TEXT',0,wL+2,wW,wL+2);
+  txt('TEXT',wW/2,wL+3.0,1.0,'WAREHOUSE LAYOUT — FLOOR PLAN',1);
+  txt('TEXT',wW/2,wL+2.2,0.55,
+    `${wW}m × ${wL}m  |  ${totalGrossArea}m² gross  (${Math.round(totalGrossArea*10.7639).toLocaleString()} sq ft)`,1);
+  txt('TEXT',0,wL+1.5,0.4,`Scale: 1:1  |  Units: Metres  |  Generated: ${new Date().toLocaleDateString()}`);
+  txt('TEXT',wW,wL+1.5,0.4,'DensiCube Warehouse Designer',1);
+
+  d('0','ENDSEC','0','EOF');
+
+  const blob = new Blob([L.join('\n')], {type:'application/dxf'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `Warehouse_Plan_${wW}x${wL}m.dxf`;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); },300);
+}
+
+
 function exportExcel(analysis, design, params, rackConfig) {
   const wb   = XLSX.utils.book_new();
   const today= new Date().toLocaleDateString();
@@ -2927,6 +3179,54 @@ export default function WarehouseDesignerTool() {
     }
     setStorageMode('user');
     setUserResult(null);
+  };
+
+  // Download 2D floor plan as SVG or high-res PNG
+  const downloadPlan2D = (fmt='svg') => {
+    const svgEl = plan2DRef.current?.querySelector('svg');
+    if (!svgEl) return;
+    // Inject explicit font/style so exported file is self-contained
+    const svgStr = new XMLSerializer().serializeToString(svgEl);
+
+    if (fmt === 'svg') {
+      const blob = new Blob([svgStr], {type:'image/svg+xml;charset=utf-8'});
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url;
+      a.download = `Warehouse_Plan_${design?.wW||''}x${design?.wL||''}m.svg`;
+      document.body.appendChild(a); a.click();
+      setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 300);
+    } else {
+      // PNG at 2× resolution
+      const vb   = svgEl.viewBox?.baseVal;
+      const svgW = vb?.width  || 960;
+      const svgH = vb?.height || 720;
+      const scale = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width  = svgW * scale;
+      canvas.height = svgH * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(scale, scale);
+      const blob = new Blob([svgStr], {type:'image/svg+xml;charset=utf-8'});
+      const url  = URL.createObjectURL(blob);
+      const img  = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(pngBlob => {
+          const pngUrl = URL.createObjectURL(pngBlob);
+          const a = document.createElement('a');
+          a.href = pngUrl;
+          a.download = `Warehouse_Plan_${design?.wW||''}x${design?.wL||''}m_2x.png`;
+          document.body.appendChild(a); a.click();
+          setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(pngUrl); }, 300);
+        }, 'image/png');
+      };
+      img.onerror = () => URL.revokeObjectURL(url);
+      img.src = url;
+    }
   };
 
   // Run user-defined storage calculation
@@ -4111,20 +4411,49 @@ export default function WarehouseDesignerTool() {
               </div>
 
               {viewMode3D==='3d'
-                ? <Warehouse3DModel   analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>
-                : <FloorPlanSVG      analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>}
+                ? <Warehouse3DModel analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>
+                : (<div ref={plan2DRef}>
+                    <FloorPlanSVG analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>
+                  </div>)}
 
-              {/* Legend (2D only) */}
+              {/* Legend + Download (2D only) */}
               {viewMode3D==='2d'&&(
-                <div style={{display:'flex',gap:'12px',flexWrap:'wrap',marginTop:'12px'}}>
-                  {Object.entries(ZONE_DEFS).map(([k,z])=>(
-                    <div key={k} style={{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px'}}>
-                      <div style={{width:'14px',height:'14px',background:z.color,border:`1px solid ${z.border}`,borderRadius:'3px'}}/>
-                      <span style={{color:z.textColor,fontWeight:'600'}}>{z.label}</span>
-                    </div>))}
-                  <div style={{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px'}}>
-                    <div style={{width:'14px',height:'14px',background:'#e0f2fe',border:'1px solid #0284c7',borderRadius:'3px'}}/>
-                    <span style={{color:'#0369a1',fontWeight:'600'}}>Receiving</span>
+                <div style={{marginTop:'12px'}}>
+                  {/* Download buttons */}
+                  <div style={{display:'flex',gap:'8px',marginBottom:'10px',flexWrap:'wrap'}}>
+                    <button onClick={()=>downloadPlan2D('svg')}
+                      style={{padding:'7px 16px',borderRadius:'8px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                        background:'#f0fdf4',border:'1px solid #86efac',color:'#166534'}}>
+                      ⬇ Download SVG
+                    </button>
+                    <button onClick={()=>downloadPlan2D('png')}
+                      style={{padding:'7px 16px',borderRadius:'8px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                        background:'#eff6ff',border:'1px solid #93c5fd',color:'#1d4ed8'}}>
+                      ⬇ Download PNG (2×)
+                    </button>
+                    <button onClick={()=>exportDXF(analysis,design,params,rackConfig)}
+                      style={{padding:'7px 16px',borderRadius:'8px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                        background:'#fef9c3',border:'1px solid #fde047',color:'#854d0e'}}>
+                      ⬇ Download DXF (AutoCAD)
+                    </button>
+                    <span style={{fontSize:'11px',color:'#9ca3af',alignSelf:'center'}}>
+                      DXF opens in AutoCAD, FreeCAD, LibreCAD · Save as DWG in AutoCAD
+                    </span>
+                  </div>
+                  {/* Legend */}
+                  <div style={{display:'flex',gap:'12px',flexWrap:'wrap'}}>
+                    {Object.entries(ZONE_DEFS).map(([k,z])=>(
+                      <div key={k} style={{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px'}}>
+                        <div style={{width:'14px',height:'14px',background:z.color,border:`1px solid ${z.border}`,borderRadius:'3px'}}/>
+                        <span style={{color:z.textColor,fontWeight:'600'}}>{z.label}</span>
+                      </div>))}
+                    <div style={{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px'}}>
+                      <div style={{width:'14px',height:'14px',background:'#e0f2fe',border:'1px solid #0284c7',borderRadius:'3px'}}/>
+                      <span style={{color:'#0369a1',fontWeight:'600'}}>Receiving</span>
+                    </div>
                   </div>
                 </div>
               )}
