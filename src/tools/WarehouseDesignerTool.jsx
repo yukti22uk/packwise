@@ -1650,9 +1650,8 @@ function downloadRackLocations(cfg, analysis) {
 
 // ─── 3D ROTATABLE WAREHOUSE MODEL (Three.js) ────────────────────────────────
 function Warehouse3DModel({ analysis, design, params, rackConfig }) {
-  const { useEffect, useRef } = React;
-  const mountRef = useRef(null);
-  const cleanupRef = useRef(null);
+  const mountRef    = useRef(null);
+  const cleanupRef  = useRef(null);
 
   useEffect(() => {
     if (!mountRef.current || !design || typeof THREE === 'undefined') return;
