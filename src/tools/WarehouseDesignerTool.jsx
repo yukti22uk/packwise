@@ -2193,14 +2193,17 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
           // ── SHELVING / LIVE STORAGE ───────────────────────────────────
           else {
             const rGeo=new THREE.BoxGeometry(wW-0.4,rh,rd);
-            const rM=new THREE.Mesh(rGeo,new THREE.MeshPhongMaterial(
-              {color:RCOL[dom]||0x94a3b8,opacity:0.65,transparent:true,shininess:20}));
+            const rMat2=new THREE.MeshPhongMaterial(
+              {color:RCOL[dom]||0x94a3b8,opacity:0.65,transparent:true,shininess:20});
+            const rM=new THREE.Mesh(rGeo,rMat2);
             rM.position.set(wW/2,rh/2,rowZ+rd/2);
             rM.castShadow=true; rM.receiveShadow=true; scene.add(rM);
-            scene.add(Object.assign(new THREE.LineSegments(
+            // Edge wireframe — must use position.copy(), not Object.assign
+            const eL=new THREE.LineSegments(
               new THREE.EdgesGeometry(rGeo),
-              new THREE.LineBasicMaterial({color:0,opacity:0.18,transparent:true})),
-              {position:rM.position.clone()}));
+              new THREE.LineBasicMaterial({color:0x000000,opacity:0.18,transparent:true}));
+            eL.position.copy(rM.position);
+            scene.add(eL);
             // Uprights
             const ps=1.8,np=Math.floor((wW-0.4)/ps)+1,pMat=getMat(0x334155);
             for(let p=0;p<np;p++){
