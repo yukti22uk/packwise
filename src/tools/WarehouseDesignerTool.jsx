@@ -5,6 +5,7 @@
 // Step 4: Inventory data (current stock)
 // Outputs: SKU slotting, rack recommendations, warehouse sizing, SVG floor plan
 import { useState, useEffect, useRef } from 'react';
+import * as THREE from 'three';
 import * as XLSX from 'xlsx';
 import PptxGenJS from 'pptxgenjs';
 import { S } from '../components/styles.jsx';
@@ -1654,7 +1655,7 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
   const cleanupRef  = useRef(null);
 
   useEffect(() => {
-    if (!mountRef.current || !design || typeof THREE === 'undefined') return;
+    if (!mountRef.current || !design) return;
     const {
       wW, wL, zoneAreas={}, receivingArea=80, dispatchArea=80,
       mheArea=0, officeArea=50, totalDocks=4, inboundDocks=2, outboundDocks=2,
@@ -1986,7 +1987,7 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
   return (
     <div style={{position:'relative'}}>
       <div ref={mountRef} style={{width:'100%',height:'480px',borderRadius:'10px',
-        overflow:'hidden',cursor:'grab',background:'#dbeafe'}}/>
+        overflow:'hidden',cursor:'grab',background:'#0f172a'}}/>
       {/* Controls hint */}
       <div style={{position:'absolute',top:'10px',right:'10px',
         background:'rgba(255,255,255,0.88)',backdropFilter:'blur(4px)',
