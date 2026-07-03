@@ -1340,24 +1340,134 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
         </g>
       ))}
 
-      {/* ── RACK ROWS (top view) ─── */}
+      {/* ── RACK ROWS (top view — type-specific symbols) ─── */}
       {allRackRows.map((r,i)=>{
-        const isDI  = r.dom==='driveIn';
-        const isCan = r.dom==='cantilever';
-        const px=X(r.x), py=Y(r.y), pw=W(r.w), ph=H(r.h);
+        const px=X(r.x), py=Y(r.y), pw=W(r.w), ph=Math.max(3,H(r.h));
+        const dom=r.dom;
+
+        // ── SELECTIVE PALLET RACK ─────────────────────────────────────────
+        if(dom==='selective'||dom==='doubleDeep'){
+          const bayPx = W(2.7); // bay width in pixels
+          const nBays = Math.max(1,Math.floor(r.w/2.7));
+          const palW  = Math.max(3, (bayPx-4)/2-1); // 2 pallets per bay
+          return(
+            <g key={`rr-${i}`}>
+              {/* Bay backgrounds alternating */}
+              {Array.from({length:nBays},(_,b)=>(
+                <rect key={b} x={px+b*bayPx} y={py} width={bayPx} height={ph}
+                  fill={b%2===0?'#e2e8f0':'#cbd5e1'} stroke="none"/>
+              ))}
+              {/* Upright frames (bold vertical lines) */}
+              {Array.from({length:nBays+1},(_,b)=>(
+                <rect key={b} x={px+b*bayPx-1} y={py} width={3} height={ph}
+                  fill="#374151"/>
+              ))}
+              {/* Pallet positions (2 per bay, amber outlines) */}
+              {Array.from({length:nBays},(_,b)=>(
+                <g key={b}>
+                  <rect x={px+b*bayPx+3}      y={py+2} width={palW} height={ph-4} fill="#fde68a" stroke="#d97706" strokeWidth="0.8" rx="1"/>
+                  <rect x={px+b*bayPx+3+palW+2} y={py+2} width={palW} height={ph-4} fill="#fde68a" stroke="#d97706" strokeWidth="0.8" rx="1"/>
+                  {/* Pallet cross marks */}
+                  {[[px+b*bayPx+3+palW/2, px+b*bayPx+3+palW+2+palW/2]].map((xs,xi)=>
+                    xs.map((bx,bi)=>(
+                      <g key={bi}>
+                        <line x1={bx} y1={py+2+0.3*(ph-4)} x2={bx} y2={py+2+0.7*(ph-4)} stroke="#d97706" strokeWidth="0.5"/>
+                        <line x1={bx-palW*0.3} y1={py+ph/2} x2={bx+palW*0.3} y2={py+ph/2} stroke="#d97706" strokeWidth="0.5"/>
+                      </g>
+                    ))
+                  )}
+                </g>
+              ))}
+              {/* Label */}
+              {pw>40&&ph>10&&<text x={px+pw/2} y={py-3} textAnchor="middle" fontSize="7" fontWeight="700" fill="#374151">
+                {dom==='doubleDeep'?'DBL DEEP':'SEL PALLET RACK'}
+              </text>}
+            </g>
+          );
+        }
+
+        // ── DRIVE-IN RACK ─────────────────────────────────────────────────
+        if(dom==='driveIn'){
+          const laneW   = W(2.7);  // lane width in px
+          const nLanes  = Math.max(1,Math.floor(r.w/2.7));
+          const palDepth= Math.max(2, Math.floor(r.h/1.2)); // pallets deep per lane
+          const palHpx  = ph/Math.max(palDepth,1)-0.5;
+          return(
+            <g key={`rr-${i}`}>
+              {/* Dark background — solid rack mass */}
+              <rect x={px} y={py} width={pw} height={ph} fill="#334155" rx="1"/>
+              {/* Lane dividers + pallet stacks */}
+              {Array.from({length:nLanes},(_,ln)=>(
+                <g key={ln}>
+                  {/* Lane opening (lighter strip) */}
+                  <rect x={px+ln*laneW+2} y={py} width={laneW-4} height={ph} fill="#475569"/>
+                  {/* Pallet rectangles going deep */}
+                  {Array.from({length:Math.min(palDepth,6)},(_,pd)=>(
+                    <rect key={pd}
+                      x={px+ln*laneW+3} y={py+pd*(palHpx+0.5)}
+                      width={laneW-6} height={palHpx}
+                      fill={pd%2===0?'#f59e0b':'#d97706'} stroke="#92400e" strokeWidth="0.4" rx="0.5"/>
+                  ))}
+                  {/* Lane divider posts */}
+                  <rect x={px+ln*laneW} y={py} width={2} height={ph} fill="#0f172a"/>
+                </g>
+              ))}
+              <rect x={px+nLanes*laneW} y={py} width={2} height={ph} fill="#0f172a"/>
+              {/* Entry arrow */}
+              {pw>30&&<text x={px+pw/2} y={py-3} textAnchor="middle" fontSize="7" fontWeight="700" fill="#1e293b">
+                ← DRIVE-IN ({nLanes} lanes)
+              </text>}
+            </g>
+          );
+        }
+
+        // ── CANTILEVER RACK ───────────────────────────────────────────────
+        if(dom==='cantilever'){
+          const spineSpacing = W(1.5); // spine posts every 1.5m
+          const nSpines = Math.max(1, Math.floor(r.w/1.5));
+          const armLen  = ph*0.42; // arms reach ~42% of depth each side
+          const spineY  = py+ph/2; // spine runs along centre of row
+          return(
+            <g key={`rr-${i}`}>
+              {/* Background */}
+              <rect x={px} y={py} width={pw} height={ph} fill="#ede9fe" stroke="#7c3aed" strokeWidth="0.8" rx="1"/>
+              {/* Long items on arms (orange) */}
+              <rect x={px+3} y={py+2}       width={pw-6} height={armLen-2} fill="#fed7aa" stroke="#f97316" strokeWidth="0.5" rx="1"/>
+              <rect x={px+3} y={spineY+2}   width={pw-6} height={armLen-2} fill="#fed7aa" stroke="#f97316" strokeWidth="0.5" rx="1"/>
+              {/* Spine line */}
+              <line x1={px} y1={spineY} x2={px+pw} y2={spineY} stroke="#7c3aed" strokeWidth="2.5"/>
+              {/* Spine posts + arms */}
+              {Array.from({length:nSpines+1},(_,s)=>{
+                const sx=px+s*spineSpacing;
+                return(
+                  <g key={s}>
+                    {/* Spine column */}
+                    <rect x={sx-2} y={py} width={4} height={ph} fill="#6d28d9"/>
+                    {/* Top arm */}
+                    <line x1={sx} y1={spineY} x2={sx} y2={py+2} stroke="#7c3aed" strokeWidth="1.5"/>
+                    {/* Bottom arm */}
+                    <line x1={sx} y1={spineY} x2={sx} y2={py+ph-2} stroke="#7c3aed" strokeWidth="1.5"/>
+                  </g>
+                );
+              })}
+              {/* Label */}
+              {pw>50&&<text x={px+pw/2} y={py+ph/2+1} textAnchor="middle" fontSize="7" fontWeight="700" fill="#6d28d9" dominantBaseline="middle">CANTILEVER</text>}
+            </g>
+          );
+        }
+
+        // ── SHELVING / LIVE STORAGE (default) ────────────────────────────
+        const bayW = W(r.dom==='liveStorage'?1.5:0.9);
+        const nBays= Math.max(1,Math.floor(r.w/(r.dom==='liveStorage'?1.5:0.9)));
         return(
           <g key={`rr-${i}`}>
-            <rect x={px} y={py} width={pw} height={Math.max(2,ph)}
-              fill={r.color} stroke={r.stroke} strokeWidth="0.8" rx="1"/>
-            {/* Internal division lines (bay dividers) */}
-            {isDI
-              ? [1,2,3].map(p=><line key={p} x1={px+pw*p/4} y1={py} x2={px+pw*p/4} y2={py+ph} stroke={r.stroke} strokeWidth="0.5" strokeDasharray="2,2"/>)
-              : Array.from({length:Math.floor(r.w/(r.dom==='selective'?2.7:0.9))},(_,p)=>(
-                  <line key={p} x1={px+p*(r.dom==='selective'?W(2.7):W(0.9))} y1={py}
-                    x2={px+p*(r.dom==='selective'?W(2.7):W(0.9))} y2={py+Math.max(2,ph)}
-                    stroke={r.stroke} strokeWidth="0.4" strokeOpacity="0.6"/>
-                ))
-            }
+            <rect x={px} y={py} width={pw} height={Math.max(2,ph)} fill={r.color} stroke={r.stroke} strokeWidth="0.8" rx="1"/>
+            {/* Bay dividers */}
+            {Array.from({length:nBays-1},(_,b)=>(
+              <line key={b} x1={px+(b+1)*bayW} y1={py} x2={px+(b+1)*bayW} y2={py+ph} stroke={r.stroke} strokeWidth="0.4" strokeOpacity="0.5"/>
+            ))}
+            {/* Shelf depth line (shows it's a shelf not a solid wall) */}
+            <line x1={px} y1={py+ph/2} x2={px+pw} y2={py+ph/2} stroke={r.stroke} strokeWidth="0.3" strokeDasharray="2,3" strokeOpacity="0.4"/>
           </g>
         );
       })}
@@ -1807,7 +1917,7 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
       // Door number
     }
 
-    // ── RACK ROWS ──────────────────────────────────────────────────────────
+    // ── RACK ROWS — type-specific 3D geometry ──────────────────────────────
     const RCOL={shelving:0x94a3b8,liveStorage:0x3b82f6,selective:0x475569,
       driveIn:0x1e293b,doubleDeep:0x334155,cantilever:0x7c3aed};
     const RD={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
@@ -1825,62 +1935,186 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
         : (c.levels||4)*1.5+0.3;
     };
 
+    // Material cache
+    const matCache={};
+    const getMat=(col,op=1,shin=30)=>{
+      const k=`${col}-${op}`;
+      if(!matCache[k]) matCache[k]=new THREE.MeshPhongMaterial({color:col,opacity:op,transparent:op<1,shininess:shin,side:THREE.DoubleSide});
+      return matCache[k];
+    };
+
     ZORD.forEach(zone=>{
       const{z0,h}=ZP[zone]||{z0:0,h:0}; if(h<1) return;
       const dom=getDom(zone); const rd=RD[dom]||0.6; const rh=getRackH(zone);
-      const col=RCOL[dom]||0x94a3b8; const slot=rd+aisleM;
+      const slot=rd+aisleM;
       const nRows=Math.max(1,Math.floor(h/slot));
 
-      for(let r=0;r<nRows;r++){
-        const rowZ=z0+r*slot+aisleM*0.4; if(rowZ+rd>z0+h-0.3) break;
-        // Rack body
-        const rGeo=new THREE.BoxGeometry(wW-0.4,rh,rd);
-        const rMat=new THREE.MeshPhongMaterial({color:col,opacity:0.72,transparent:true,shininess:30});
-        const rM=new THREE.Mesh(rGeo,rMat);
-        rM.position.set(wW/2,rh/2,rowZ+rd/2);
-        rM.castShadow=true; rM.receiveShadow=true; scene.add(rM);
-        // Wireframe
-        const eG=new THREE.EdgesGeometry(rGeo);
-        const eL=new THREE.LineSegments(eG,new THREE.LineBasicMaterial({color:0x000000,opacity:0.2,transparent:true}));
-        eL.position.copy(rM.position); scene.add(eL);
+      for(let row=0;row<nRows;row++){
+        const rowZ=z0+row*slot+aisleM*0.4; if(rowZ+rd>z0+h-0.3) break;
 
-        // Uprights posts (every bay width)
-        const postSpacing=['selective','driveIn','doubleDeep'].includes(dom)?2.7:1.8;
-        const nPost=Math.floor((wW-0.4)/postSpacing)+1;
-        const postMat=new THREE.MeshPhongMaterial({color:0x1e293b});
-        for(let p=0;p<nPost;p++){
-          const px=0.2+p*postSpacing; if(px>wW-0.2) break;
-          [[px,rowZ+0.05],[px,rowZ+rd-0.05]].forEach(([ppx,ppz])=>{
-            const pm=new THREE.Mesh(new THREE.BoxGeometry(0.1,rh,0.1),postMat);
-            pm.position.set(ppx,rh/2,ppz); pm.castShadow=true; scene.add(pm);
-          });
+        // ── SELECTIVE PALLET RACK ─────────────────────────────────────
+        if(dom==='selective'||dom==='doubleDeep'){
+          const bayW=2.7, nBays=Math.max(1,Math.floor((wW-0.4)/bayW));
+          const nLvl=Math.min(6,Math.floor(rh/1.5));
+          const depth=dom==='doubleDeep'?2:1;
+          const beamMat=getMat(0xf59e0b,1,80);
+          const upMat  =getMat(0xdc2626,1,40); // red uprights — industry standard
+          const palMat2=getMat(0xfbbf24,0.9,20);
+          const palBase=getMat(0x78350f,1,10);
+
+          // Upright frames every bay
+          for(let b=0;b<=nBays;b++){
+            const fx=b*bayW;
+            // Front & rear upright columns (H-frame)
+            [[fx,rowZ+0.05],[fx,rowZ+rd-0.05]].forEach(([px,pz])=>{
+              const um=new THREE.Mesh(new THREE.BoxGeometry(0.12,rh,0.12),upMat);
+              um.position.set(px,rh/2,pz); um.castShadow=true; scene.add(um);
+            });
+            // Diagonal brace
+            if(b<nBays){
+              const diag=new THREE.Mesh(new THREE.BoxGeometry(0.06,rh*0.9,0.06),getMat(0xdc2626,0.7));
+              diag.position.set(fx+bayW/2,rh/2,rowZ+rd/2);
+              diag.rotation.z=Math.PI*0.15;
+              scene.add(diag);
+            }
+          }
+          // Beam levels + pallets
+          for(let lv=0;lv<nLvl;lv++){
+            const by=lv*1.5+0.3;
+            for(let b=0;b<nBays;b++){
+              const bx=b*bayW;
+              // Front beam
+              const bm=new THREE.Mesh(new THREE.BoxGeometry(bayW,0.1,0.1),beamMat);
+              bm.position.set(bx+bayW/2,by,rowZ+0.08); bm.castShadow=true; scene.add(bm);
+              // Rear beam
+              const bm2=bm.clone(); bm2.position.set(bx+bayW/2,by,rowZ+rd-0.08); scene.add(bm2);
+              // Pallets (1 per depth × 2 per bay width)
+              for(let d=0;d<depth;d++){
+                [0.3,1.6].forEach(palOff=>{
+                  // Pallet board
+                  const pb=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.15,1.0),palBase);
+                  pb.position.set(bx+palOff,by+0.08,rowZ+0.05+d*1.15);
+                  pb.castShadow=true; scene.add(pb);
+                  // Stock on pallet
+                  const ps=new THREE.Mesh(new THREE.BoxGeometry(1.05,1.0,0.95),palMat2);
+                  ps.position.set(bx+palOff,by+0.08+0.15+0.5,rowZ+0.05+d*1.15);
+                  ps.castShadow=true; scene.add(ps);
+                });
+              }
+            }
+          }
         }
-        // Shelves or beams
-        if(['shelving','liveStorage'].includes(dom)){
-          const nSh=Math.min(8,Math.floor(rh/0.35));
-          const shMat=new THREE.MeshPhongMaterial({color:0xd1d5db});
+
+        // ── DRIVE-IN RACK ─────────────────────────────────────────────
+        else if(dom==='driveIn'){
+          const laneW=2.7, nLanes=Math.max(1,Math.floor((wW-0.4)/laneW));
+          const nLvl=Math.min(5,Math.floor(rh/1.5));
+          const palDeep=Math.max(2,Math.floor(rd/1.15));
+          const frameMat=getMat(0xdc2626,1,20);
+          const railMat =getMat(0xf59e0b,1,60);
+          const palMat2 =getMat(0xfbbf24,0.9,20);
+          const palBase =getMat(0x78350f,1,10);
+
+          // Lane divider frames (front-to-back columns)
+          for(let ln=0;ln<=nLanes;ln++){
+            const fx=ln*laneW;
+            // Ground-to-ceiling column
+            const col3=new THREE.Mesh(new THREE.BoxGeometry(0.15,rh,0.15),frameMat);
+            col3.position.set(fx,rh/2,rowZ+rd/2); col3.castShadow=true; scene.add(col3);
+            // Front + rear base columns
+            [[rowZ+0.1],[rowZ+rd-0.1]].forEach(([pz])=>{
+              const c2=new THREE.Mesh(new THREE.BoxGeometry(0.15,rh,0.15),frameMat);
+              c2.position.set(fx,rh/2,pz); c2.castShadow=true; scene.add(c2);
+            });
+          }
+          // Side rails per lane (at each level, both sides of lane)
+          for(let lv=0;lv<nLvl;lv++){
+            const ry=lv*1.5+0.9; // rail height above floor
+            for(let ln=0;ln<nLanes;ln++){
+              const lx=ln*laneW;
+              // Left rail
+              const rail=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,rd),railMat);
+              rail.position.set(lx+0.12,ry,rowZ+rd/2); scene.add(rail);
+              // Right rail
+              const rail2=rail.clone(); rail2.position.set(lx+laneW-0.12,ry,rowZ+rd/2); scene.add(rail2);
+              // Pallets on rails — stacked deep
+              for(let d=0;d<palDeep;d++){
+                const pz=rowZ+0.1+d*(rd/palDeep);
+                const pb=new THREE.Mesh(new THREE.BoxGeometry(laneW-0.4,0.15,1.05),palBase);
+                pb.position.set(lx+laneW/2,ry+0.08,pz+0.5);
+                pb.castShadow=true; scene.add(pb);
+                const ps=new THREE.Mesh(new THREE.BoxGeometry(laneW-0.5,1.0,1.0),palMat2);
+                ps.position.set(lx+laneW/2,ry+0.08+0.15+0.5,pz+0.5);
+                ps.castShadow=true; scene.add(ps);
+              }
+            }
+          }
+        }
+
+        // ── CANTILEVER RACK ───────────────────────────────────────────
+        else if(dom==='cantilever'){
+          const spineSpacing=1.5; // columns every 1.5m
+          const nSpines=Math.max(1,Math.floor((wW-0.4)/spineSpacing));
+          const nArmLevels=Math.min(6,Math.floor(rh/0.7));
+          const armLen=(rd-0.2)/2; // arm length from spine each side
+          const spineMat=getMat(0x4c1d95,1,40);
+          const armMat  =getMat(0x7c3aed,1,60);
+          const itemMat =getMat(0xfb923c,0.85,20);
+
+          for(let sp=0;sp<nSpines;sp++){
+            const sx=0.2+sp*spineSpacing;
+            // Spine column
+            const spine=new THREE.Mesh(new THREE.BoxGeometry(0.2,rh,0.2),spineMat);
+            spine.position.set(sx,rh/2,rowZ+rd/2); spine.castShadow=true; scene.add(spine);
+            // Arms at each level — extend forward AND backward from spine
+            for(let lv=0;lv<nArmLevels;lv++){
+              const ay=lv*(rh/nArmLevels)+0.4;
+              // Front arm
+              const armF=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,armLen),armMat);
+              armF.position.set(sx,ay,rowZ+rd/2-armLen/2-0.1); scene.add(armF);
+              // Rear arm
+              const armR=armF.clone(); armR.position.set(sx,ay,rowZ+rd/2+armLen/2+0.1); scene.add(armR);
+              // Long item resting on arms (pipe / bar)
+              if(sp<nSpines-1){
+                const item=new THREE.Mesh(new THREE.BoxGeometry(spineSpacing,0.2,armLen*0.7),itemMat);
+                item.position.set(sx+spineSpacing/2,ay+0.1,rowZ+rd/2-armLen*0.35);
+                item.castShadow=true; scene.add(item);
+                const item2=item.clone(); item2.position.set(sx+spineSpacing/2,ay+0.1,rowZ+rd/2+armLen*0.35);
+                scene.add(item2);
+              }
+            }
+          }
+          // Base foot plates
+          for(let sp=0;sp<nSpines;sp++){
+            const sx=0.2+sp*spineSpacing;
+            const foot=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.08,rd),getMat(0x4c1d95));
+            foot.position.set(sx,0.04,rowZ+rd/2); scene.add(foot);
+          }
+        }
+
+        // ── SHELVING / LIVE STORAGE ───────────────────────────────────
+        else {
+          const rGeo=new THREE.BoxGeometry(wW-0.4,rh,rd);
+          const rMat=new THREE.MeshPhongMaterial({color:RCOL[dom]||0x94a3b8,opacity:0.65,transparent:true,shininess:20});
+          const rM=new THREE.Mesh(rGeo,rMat); rM.position.set(wW/2,rh/2,rowZ+rd/2);
+          rM.castShadow=true; rM.receiveShadow=true; scene.add(rM);
+          const eG=new THREE.EdgesGeometry(rGeo);
+          const eL=new THREE.LineSegments(eG,new THREE.LineBasicMaterial({color:0x000000,opacity:0.18,transparent:true}));
+          eL.position.copy(rM.position); scene.add(eL);
+          const postSpacing=1.8, nPost=Math.floor((wW-0.4)/postSpacing)+1;
+          const postMat=getMat(0x334155);
+          for(let p=0;p<nPost;p++){
+            const ppx=0.2+p*postSpacing; if(ppx>wW-0.2) break;
+            [[ppx,rowZ+0.05],[ppx,rowZ+rd-0.05]].forEach(([px2,pz2])=>{
+              const pm=new THREE.Mesh(new THREE.BoxGeometry(0.08,rh,0.08),postMat);
+              pm.position.set(px2,rh/2,pz2); scene.add(pm);
+            });
+          }
+          const nSh=Math.min(8,Math.floor(rh/0.35)), shMat=getMat(0xd1d5db);
           for(let s=0;s<nSh;s++){
             const sy=s*(rh/nSh)+0.05;
             const sh=new THREE.Mesh(new THREE.BoxGeometry(wW-0.5,0.04,rd-0.06),shMat);
             sh.position.set(wW/2,sy,rowZ+rd/2); scene.add(sh);
-          }
-        } else if(['selective','doubleDeep'].includes(dom)){
-          const nBm=Math.min(6,Math.floor(rh/1.5));
-          const bmMat=new THREE.MeshPhongMaterial({color:0xf59e0b,shininess:60});
-          for(let b=0;b<nBm;b++){
-            const by=b*1.5+0.3;
-            const bm=new THREE.Mesh(new THREE.BoxGeometry(wW-0.5,0.08,0.12),bmMat);
-            bm.position.set(wW/2,by,rowZ+rd/2); scene.add(bm);
-          }
-        } else if(dom==='cantilever'){
-          const nAr=Math.min(6,Math.floor(rh/0.6));
-          const arMat=new THREE.MeshPhongMaterial({color:0xa78bfa});
-          for(let a=0;a<nAr;a++){
-            const ay=a*0.6+0.3;
-            [0.5,wW-0.5].forEach(armX=>{
-              const arm=new THREE.Mesh(new THREE.BoxGeometry(rd*0.8,0.08,0.12),arMat);
-              arm.position.set(armX,ay,rowZ+rd/2); scene.add(arm);
-            });
           }
         }
       }
