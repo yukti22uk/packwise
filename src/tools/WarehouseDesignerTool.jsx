@@ -1180,47 +1180,67 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
   }
 
   // ── RACK ROW HELPER ─────────────────────────────────────────────────────────
-  // For each zone determine dominant rack type and draw stylized top-view rows
-  const dominantRack = {};
+  // Build zone→[rackTypes] from rackConfig (mirrors 3D logic)
+  const RACK_DEFAULT_ZONE_2D={shelving:'golden',liveStorage:'golden',
+    selective:'reserve',doubleDeep:'reserve',driveIn:'bulk',cantilever:'long'};
+  const zone2RackTypes={}; // zone → [{rack, cfg}]
   (rackConfig||[]).forEach(cfg=>{
-    const z = ZONE_DEFS[cfg.rack]
-      ? cfg.rack
-      : (analysis?.slotted||[]).find(s=>s.rack===cfg.rack)?.zone || null;
-    // Map rack type to zone via slotted data
+    const slottedZone=(analysis?.slotted||[]).find(s=>s.rack===cfg.rack)?.zone
+      || RACK_DEFAULT_ZONE_2D[cfg.rack]||'golden';
+    if(!zone2RackTypes[slottedZone]) zone2RackTypes[slottedZone]=[];
+    if(!zone2RackTypes[slottedZone].find(r=>r.rack===cfg.rack))
+      zone2RackTypes[slottedZone].push({rack:cfg.rack,cfg});
   });
-  // Build zone→rackType map from slotted
-  const zoneRackType={};
+  // Fallback from slotted data for zones not in rackConfig
   (analysis?.slotted||[]).forEach(r=>{
-    if(!zoneRackType[r.zone]) zoneRackType[r.zone]={ shelving:0,selective:0,driveIn:0,cantilever:0,liveStorage:0 };
-    zoneRackType[r.zone][r.rack]=(zoneRackType[r.zone][r.rack]||0)+r.locsReq;
+    if(!zone2RackTypes[r.zone]){
+      zone2RackTypes[r.zone]=[{rack:r.rack,cfg:null}];
+    }
   });
-  const getDomRack=zone=>{
-    const m=zoneRackType[zone]; if(!m) return 'shelving';
-    return Object.entries(m).sort((a,b)=>b[1]-a[1])[0]?.[0]||'shelving';
+
+  const RACK_INFO_2D={
+    shelving:   {depth:0.5, color:'#e2e8f0', stroke:'#94a3b8'},
+    liveStorage:{depth:0.6, color:'#bfdbfe', stroke:'#60a5fa'},
+    selective:  {depth:1.1, color:'#fde68a', stroke:'#d97706'},
+    doubleDeep: {depth:2.4, color:'#c7d2fe', stroke:'#818cf8'},
+    driveIn:    {depth:5.5, color:'#334155', stroke:'#1e293b'},
+    cantilever: {depth:2.0, color:'#fde8d8', stroke:'#f97316'},
   };
 
-  // Draw rack rows within a zone rect
+  // Draw rack rows within a zone — one sub-band per rack type, with cross-aisle
   const rackRowsForZone=(zone)=>{
-    const dom=getDomRack(zone.key);
-    const rows=[];
-    const RACK_INFO={
-      shelving:   {depth:0.5,  color:'#cbd5e1', stroke:'#94a3b8'},
-      liveStorage:{depth:0.6,  color:'#bfdbfe', stroke:'#60a5fa'},
-      selective:  {depth:1.1,  color:'#d1d5db', stroke:'#6b7280'},
-      doubleDeep: {depth:2.4,  color:'#c7d2fe', stroke:'#818cf8'},
-      driveIn:    {depth:5.5,  color:'#e9d5ff', stroke:'#a855f7'},
-      cantilever: {depth:2.0,  color:'#fde8d8', stroke:'#f97316'},
-    };
-    const ri=RACK_INFO[dom]||RACK_INFO.shelving;
-    const aisle=dom==='shelving'||dom==='liveStorage' ? 1.2 : aisleM;
-    const slot=ri.depth+aisle;
-    const nRows=Math.max(1,Math.floor(zone.h/slot));
-    for(let i=0;i<nRows;i++){
-      const ry=zone.y+(slot*i)+aisle/2;
-      if(ry+ri.depth>zone.y+zone.h-0.3) break;
-      rows.push({ x:zone.x+0.4, y:ry, w:zone.w-0.8, h:ri.depth, ...ri, dom });
-    }
-    return rows;
+    const rows=[], crossAisles=[];
+    const zRacks=zone2RackTypes[zone.key]||[{rack:'shelving',cfg:null}];
+    const totalSlotW=zRacks.reduce((s,{rack:dom})=>{
+      const ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
+      const aisle=dom==='shelving'||dom==='liveStorage' ? 1.2 : aisleM;
+      return s+ri.depth+aisle;
+    },0)||1;
+
+    let subY=zone.y;
+    zRacks.forEach(({rack:dom})=>{
+      const ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
+      const aisle=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
+      const slot=ri.depth+aisle;
+      const subH=Math.max(slot,(slot/totalSlotW)*zone.h);
+      const nRows=Math.max(1,Math.floor(subH/slot));
+      const crossAfter=Math.floor(nRows/2);
+
+      let rowCount=0;
+      for(let i=0;i<nRows;i++){
+        // Add cross-aisle gap in middle of zone (if >2 rows)
+        const extra=(nRows>2&&i>=crossAfter)?aisleM:0;
+        const ry=subY+i*slot+extra+aisle/2;
+        if(ry+ri.depth>subY+subH-0.2) break;
+        rows.push({x:zone.x+0.4,y:ry,w:zone.w-0.8,h:ri.depth,...ri,dom});
+        rowCount++;
+        // Record cross-aisle position
+        if(nRows>2&&i===crossAfter-1)
+          crossAisles.push({x:zone.x,y:ry+ri.depth,w:zone.w,h:aisleM});
+      }
+      subY+=subH;
+    });
+    return {rows, crossAisles};
   };
 
   // Pallet symbols in staging area
@@ -1245,9 +1265,13 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
     }
   }
 
-  // Collect all rack rows to draw
-  const allRackRows=[];
-  zoneRects.forEach(zone=>{ allRackRows.push(...rackRowsForZone(zone)); });
+  // Collect all rack rows and cross aisles
+  const allRackRows=[], allCrossAisles=[];
+  zoneRects.forEach(zone=>{
+    const{rows,crossAisles}=rackRowsForZone(zone);
+    allRackRows.push(...rows);
+    allCrossAisles.push(...crossAisles);
+  });
 
   // Staging pallets
   const recRect=stagingRects.find(s=>s.key==='receiving');
@@ -1337,6 +1361,18 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
         <g key={`z-${z.key}`}>
           <rect x={X(z.x)} y={Y(z.y)} width={W(z.w)} height={H(z.h)}
             fill={z.color} stroke={z.border} strokeWidth="1.5" opacity="0.85"/>
+        </g>
+      ))}
+
+      {/* ── CROSS AISLES (yellow stripes perpendicular to rack rows) ─── */}
+      {allCrossAisles.map((a,i)=>(
+        <g key={`ca-${i}`}>
+          <rect x={X(a.x)} y={Y(a.y)} width={W(a.w)} height={Math.max(3,H(a.h))}
+            fill="#fef9c3" stroke="#ca8a04" strokeWidth="0.5" opacity="0.8"/>
+          <text x={X(a.x+a.w/2)} y={Y(a.y+a.h/2)} textAnchor="middle"
+            dominantBaseline="middle" fontSize="7" fill="#92400e" fontWeight="700">
+            CROSS AISLE
+          </text>
         </g>
       ))}
 
@@ -1986,22 +2022,31 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
     // ── RACK ROWS — type-specific 3D geometry ──────────────────────────────
     const RCOL={shelving:0x94a3b8,liveStorage:0x3b82f6,selective:0x475569,
       driveIn:0x1e293b,doubleDeep:0x334155,cantilever:0x7c3aed};
-    const RD_3D={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
+    const RD3={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
 
     const matCache={};
-    const getMat=(col,op=1,shin=30)=>{
-      const k=`${col}-${op}`;
-      if(!matCache[k]) matCache[k]=new THREE.MeshPhongMaterial({
-        color:col,opacity:op,transparent:op<1,shininess:shin,side:THREE.DoubleSide});
+    const getMat=(col,op=1,sh=30)=>{
+      const k=`${col}|${op}`;
+      if(!matCache[k]) matCache[k]=new THREE.MeshPhongMaterial(
+        {color:col,opacity:op,transparent:op<1,shininess:sh,side:THREE.DoubleSide});
       return matCache[k];
     };
+    const mkBox=(w,h,d,mat,x,y,z,cast=true)=>{
+      const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+      m.position.set(x,y,z); if(cast){m.castShadow=true;m.receiveShadow=true;}
+      scene.add(m); return m;
+    };
+
+    // Warehouse storage south/north limits (racks must stay inside)
+    const storeSouth = stagingH + 0.3;
+    const storeNorth = wL - supportH - 0.3;
 
     ZORD.forEach(zone=>{
-      const{z0,h}=ZP[zone]||{z0:0,h:0}; if(h<0.2) return;
+      const{z0,h}=ZP[zone]||{z0:0,h:0}; if(h<0.3) return;
 
-      // All rack types for this zone
+      // Rack types assigned to this zone
       const zRacks=zoneRackTypes[zone]||[];
-      if(zRacks.length===0){
+      if(!zRacks.length){
         const m={};
         (analysis?.slotted||[]).filter(s=>s.zone===zone)
           .forEach(r=>{m[r.rack]=(m[r.rack]||0)+1;});
@@ -2009,27 +2054,45 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
         zRacks.push({rack:dom,cfg:null});
       }
 
-      // KEY FIX: divide the zone into non-overlapping sub-zones (one per rack type)
-      // Allocate sub-zone height proportional to slot size
-      const totalSlots=zRacks.reduce((s,{rack:dom})=>s+(RD_3D[dom]||0.6)+aisleM, 0)||1;
+      // Divide zone into non-overlapping sub-zones per rack type
+      const totalSlotW=zRacks.reduce((s,{rack:dom})=>s+(RD3[dom]||0.6)+aisleM,0)||1;
       let subZ=z0;
 
-      zRacks.forEach(({rack:dom,cfg:zoneCfg})=>{
-        const rd=RD_3D[dom]||0.6;
+      zRacks.forEach(({rack:dom,cfg:zc})=>{
+        const rd=RD3[dom]||0.6;
         const slot=rd+aisleM;
-        // Each rack type's sub-zone: at least 1 row worth, proportional to slot size
-        const subH=Math.max(slot, (slot/totalSlots)*h);
-        const rh=zoneCfg
-          ? (['shelving','liveStorage'].includes(dom)
-            ? (parseFloat(zoneCfg.tierHeight)||zoneCfg.shelfH||2200)
-              *(parseInt(zoneCfg.tiers)||1)/1000
-            : (zoneCfg.levels||4)*1.5+0.3)
-          : (zoneRackH[zone]||3.5);
-        const nRows=Math.max(1,Math.floor(subH/slot));
+        const subH=Math.max(slot,(slot/totalSlotW)*h);
 
-        for(let row=0;row<nRows;row++){
-          const rowZ=subZ+row*slot+aisleM*0.3;
-          if(rowZ+rd>subZ+subH-0.05||rowZ+rd>wL-supportH-0.5) break;
+        // CAP rack height to clearH
+        const cfgRh=zc
+          ?(['shelving','liveStorage'].includes(dom)
+              ?(parseFloat(zc.tierHeight)||zc.shelfH||2200)*(parseInt(zc.tiers)||1)/1000
+              :(zc.levels||4)*1.5+0.3)
+          :(zoneRackH[zone]||3.5);
+        const rh=Math.min(clearH-0.25, cfgRh);
+
+        // Cross-aisle: leave a gap after half the rows (standard warehouse practice)
+        const maxRows=Math.max(1,Math.floor(subH/slot));
+        const crossAisleAfter=Math.floor(maxRows/2); // insert cross-aisle after this row
+
+        let rowIdx=0;
+        for(;;){
+          const rowZ=subZ+rowIdx*slot+(rowIdx>crossAisleAfter?aisleM:0)+aisleM*0.3;
+          // STRICT boundary: never render outside warehouse or sub-zone
+          if(rowZ+rd>Math.min(subZ+subH,storeNorth)-0.05) break;
+          if(rowIdx>=maxRows+1) break;
+
+          // Skip the cross-aisle slot itself (draw floor marker instead)
+          if(rowIdx===crossAisleAfter&&maxRows>2){
+            // Yellow cross-aisle floor stripe
+            const ca=new THREE.Mesh(
+              new THREE.PlaneGeometry(wW,aisleM*0.9),
+              new THREE.MeshPhongMaterial({color:0xfef08a,side:THREE.DoubleSide}));
+            ca.rotation.x=-Math.PI/2;
+            ca.position.set(wW/2,0.03,rowZ-rd+rd/2+aisleM/2);
+            scene.add(ca);
+            rowIdx++; continue;
+          }
 
           // ── SELECTIVE PALLET RACK ────────────────────────────────────
           if(dom==='selective'||dom==='doubleDeep'){
@@ -2037,15 +2100,15 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
             const nLvl=Math.min(6,Math.floor(rh/1.5));
             const depth=dom==='doubleDeep'?2:1;
             const upMat=getMat(0xdc2626,1,40);
-            const beamMat=getMat(0xf59e0b,1,80);
-            const palM=getMat(0xfbbf24,0.9,20);
-            const palBaseM=getMat(0x78350f,1,10);
-            // Upright frames at each bay boundary
+            const bmMat=getMat(0xf59e0b,1,80);
+            const pMat =getMat(0xfbbf24,0.9,20);
+            const pbMat=getMat(0x78350f,1,10);
+
+            // Upright frames at bay boundaries
             for(let b=0;b<=nBays;b++){
-              const fx=b*bayW;
-              [[fx,rowZ+0.05],[fx,rowZ+rd-0.05]].forEach(([ppx,ppz])=>{
-                const u=new THREE.Mesh(new THREE.BoxGeometry(0.12,rh,0.12),upMat);
-                u.position.set(ppx,rh/2,ppz); u.castShadow=true; scene.add(u);
+              const fx=Math.min(b*bayW, wW-0.15); // clamp to warehouse width
+              [[fx,rowZ+0.06],[fx,rowZ+rd-0.06]].forEach(([px,pz])=>{
+                mkBox(0.12,rh,0.12,upMat,px,rh/2,pz);
               });
             }
             // Beams + pallets per level
@@ -2053,20 +2116,14 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
               const by=lv*1.5+0.3;
               for(let b=0;b<nBays;b++){
                 const bx=b*bayW;
-                // Front & rear beams
                 [rowZ+0.08, rowZ+rd-0.08].forEach(bz=>{
-                  const bm=new THREE.Mesh(new THREE.BoxGeometry(bayW,0.1,0.08),beamMat);
-                  bm.position.set(bx+bayW/2,by,bz); scene.add(bm);
+                  mkBox(bayW,0.10,0.09,bmMat,bx+bayW/2,by,bz,false);
                 });
-                // Pallets (2 per bay width × depth)
+                // FIX: pallet offsets within bay (not cumulative x)
                 for(let d=0;d<depth;d++){
-                  [0.3,bx+bayW-1.4].map(ox=>{
-                    const pb=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.15,1.0),palBaseM);
-                    pb.position.set(bx+0.3+ox*(depth===1?1:0),by+0.1,rowZ+0.1+d*1.15);
-                    pb.castShadow=true; scene.add(pb);
-                    const ps=new THREE.Mesh(new THREE.BoxGeometry(1.05,0.95,0.95),palM);
-                    ps.position.set(bx+0.3+ox*(depth===1?1:0),by+0.1+0.55,rowZ+0.1+d*1.15);
-                    ps.castShadow=true; scene.add(ps);
+                  [0.30, bayW-1.40].forEach(palOff=>{
+                    mkBox(1.1,0.14,1.0,pbMat, bx+palOff, by+0.07, rowZ+0.12+d*1.15);
+                    mkBox(1.05,0.92,0.95,pMat, bx+palOff, by+0.07+0.14+0.46, rowZ+0.12+d*1.15);
                   });
                 }
               }
@@ -2080,34 +2137,30 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
             const palDeep=Math.max(2,Math.round(rd/1.2));
             const upMat =getMat(0xdc2626,1,20);
             const railMat=getMat(0xf59e0b,1,60);
-            const palM  =getMat(0xfbbf24,0.9,20);
-            const palBM =getMat(0x78350f,1,10);
-            // Upright columns — front, rear, and mid per lane boundary
+            const pMat  =getMat(0xfbbf24,0.9,20);
+            const pbMat =getMat(0x78350f,1,10);
+
+            // Column frames at each lane boundary (front+mid+rear)
             for(let ln=0;ln<=nLanes;ln++){
-              const fx=ln*laneW;
+              const fx=Math.min(ln*laneW, wW-0.15);
               [rowZ+0.1, rowZ+rd/2, rowZ+rd-0.1].forEach(pz=>{
-                const u=new THREE.Mesh(new THREE.BoxGeometry(0.15,rh,0.15),upMat);
-                u.position.set(fx,rh/2,pz); u.castShadow=true; scene.add(u);
+                mkBox(0.15,rh,0.15,upMat,fx,rh/2,pz);
               });
             }
-            // Side rails + pallets per level
+            // Side rails + deep pallets per level
             for(let lv=0;lv<nLvl;lv++){
               const ry=lv*1.5+0.9;
+              const palH_each=rd/palDeep;
               for(let ln=0;ln<nLanes;ln++){
                 const lx=ln*laneW;
-                // Left and right guide rails
-                const rail=new THREE.Mesh(new THREE.BoxGeometry(0.07,0.07,rd-0.2),railMat);
-                rail.position.set(lx+0.15,ry,rowZ+rd/2); scene.add(rail);
-                rail.clone().position.set(lx+laneW-0.15,ry,rowZ+rd/2); scene.add(rail.clone());
+                // Guide rails both sides
+                mkBox(0.07,0.07,rd-0.2,railMat, lx+0.14,ry, rowZ+rd/2, false);
+                mkBox(0.07,0.07,rd-0.2,railMat, lx+laneW-0.14,ry, rowZ+rd/2, false);
                 // Pallets stored deep in lane
                 for(let d=0;d<palDeep;d++){
-                  const pz=rowZ+0.15+d*(rd/palDeep);
-                  const pb=new THREE.Mesh(new THREE.BoxGeometry(laneW-0.35,0.14,rd/palDeep-0.1),palBM);
-                  pb.position.set(lx+laneW/2,ry+0.07,pz+(rd/palDeep)/2);
-                  pb.castShadow=true; scene.add(pb);
-                  const ps=new THREE.Mesh(new THREE.BoxGeometry(laneW-0.45,0.9,rd/palDeep-0.15),palM);
-                  ps.position.set(lx+laneW/2,ry+0.07+0.14+0.45,pz+(rd/palDeep)/2);
-                  ps.castShadow=true; scene.add(ps);
+                  const pz=rowZ+0.12+d*palH_each+palH_each/2;
+                  mkBox(laneW-0.35,0.13,palH_each-0.08,pbMat, lx+laneW/2,ry+0.065,pz);
+                  mkBox(laneW-0.45,0.9, palH_each-0.12,pMat,  lx+laneW/2,ry+0.065+0.13+0.45,pz);
                 }
               }
             }
@@ -2118,62 +2171,53 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
             const spineSpacing=1.5, nSpines=Math.max(1,Math.floor((wW-0.4)/spineSpacing));
             const nArms=Math.min(6,Math.floor(rh/0.7));
             const armLen=(rd-0.2)/2;
-            const spineMat=getMat(0x4c1d95,1,40);
-            const armMat =getMat(0x7c3aed,1,60);
-            const itemMat=getMat(0xfb923c,0.85,20);
+            const spMat =getMat(0x4c1d95,1,40);
+            const armMat=getMat(0x7c3aed,1,60);
+            const itMat =getMat(0xfb923c,0.85,20);
             for(let sp=0;sp<nSpines;sp++){
-              const sx=0.2+sp*spineSpacing;
-              const spine=new THREE.Mesh(new THREE.BoxGeometry(0.2,rh,0.2),spineMat);
-              spine.position.set(sx,rh/2,rowZ+rd/2); spine.castShadow=true; scene.add(spine);
+              const sx=Math.min(0.2+sp*spineSpacing, wW-0.2);
+              mkBox(0.2,rh,0.2,spMat,sx,rh/2,rowZ+rd/2);
+              mkBox(0.6,0.08,rd,getMat(0x4c1d95),sx,0.04,rowZ+rd/2);
               for(let a=0;a<nArms;a++){
                 const ay=a*(rh/nArms)+0.4;
-                const armF=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,armLen),armMat);
-                armF.position.set(sx,ay,rowZ+rd/2-armLen/2-0.1); scene.add(armF);
-                const armR=armF.clone(); armR.position.set(sx,ay,rowZ+rd/2+armLen/2+0.1); scene.add(armR);
+                mkBox(0.08,0.08,armLen,armMat,sx,ay,rowZ+rd/2-armLen/2-0.1,false);
+                mkBox(0.08,0.08,armLen,armMat,sx,ay,rowZ+rd/2+armLen/2+0.1,false);
                 if(sp<nSpines-1){
-                  const item=new THREE.Mesh(new THREE.BoxGeometry(spineSpacing,0.18,armLen*0.7),itemMat);
-                  item.position.set(sx+spineSpacing/2,ay+0.09,rowZ+rd/2-armLen*0.35);
-                  item.castShadow=true; scene.add(item);
-                  const i2=item.clone(); i2.position.set(sx+spineSpacing/2,ay+0.09,rowZ+rd/2+armLen*0.35);
-                  scene.add(i2);
+                  mkBox(spineSpacing,0.18,armLen*0.7,itMat,sx+spineSpacing/2,ay+0.09,rowZ+rd/2-armLen*0.35);
+                  mkBox(spineSpacing,0.18,armLen*0.7,itMat,sx+spineSpacing/2,ay+0.09,rowZ+rd/2+armLen*0.35);
                 }
               }
-              const foot=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.08,rd),getMat(0x4c1d95));
-              foot.position.set(sx,0.04,rowZ+rd/2); scene.add(foot);
             }
           }
 
           // ── SHELVING / LIVE STORAGE ───────────────────────────────────
           else {
             const rGeo=new THREE.BoxGeometry(wW-0.4,rh,rd);
-            const rMat=new THREE.MeshPhongMaterial({color:RCOL[dom]||0x94a3b8,opacity:0.65,transparent:true,shininess:20});
-            const rM=new THREE.Mesh(rGeo,rMat); rM.position.set(wW/2,rh/2,rowZ+rd/2);
+            const rM=new THREE.Mesh(rGeo,new THREE.MeshPhongMaterial(
+              {color:RCOL[dom]||0x94a3b8,opacity:0.65,transparent:true,shininess:20}));
+            rM.position.set(wW/2,rh/2,rowZ+rd/2);
             rM.castShadow=true; rM.receiveShadow=true; scene.add(rM);
-            const eL=new THREE.LineSegments(
+            scene.add(Object.assign(new THREE.LineSegments(
               new THREE.EdgesGeometry(rGeo),
-              new THREE.LineBasicMaterial({color:0x000000,opacity:0.18,transparent:true}));
-            eL.position.copy(rM.position); scene.add(eL);
+              new THREE.LineBasicMaterial({color:0,opacity:0.18,transparent:true})),
+              {position:rM.position.clone()}));
             // Uprights
-            const pSpacing=1.8, nPost=Math.floor((wW-0.4)/pSpacing)+1;
-            const pMat=getMat(0x334155);
-            for(let p=0;p<nPost;p++){
-              const ppx=0.2+p*pSpacing; if(ppx>wW-0.2) break;
-              [[ppx,rowZ+0.05],[ppx,rowZ+rd-0.05]].forEach(([px2,pz2])=>{
-                const pm=new THREE.Mesh(new THREE.BoxGeometry(0.08,rh,0.08),pMat);
-                pm.position.set(px2,rh/2,pz2); scene.add(pm);
-              });
+            const ps=1.8,np=Math.floor((wW-0.4)/ps)+1,pMat=getMat(0x334155);
+            for(let p=0;p<np;p++){
+              const px=0.2+p*ps; if(px>wW-0.2) break;
+              [[px,rowZ+0.05],[px,rowZ+rd-0.05]].forEach(([x,z])=>
+                mkBox(0.08,rh,0.08,pMat,x,rh/2,z,false));
             }
             // Shelves
-            const nSh=Math.min(8,Math.floor(rh/0.35));
-            const shMat=getMat(0xd1d5db);
-            for(let s=0;s<nSh;s++){
-              const sh=new THREE.Mesh(new THREE.BoxGeometry(wW-0.5,0.04,rd-0.06),shMat);
-              sh.position.set(wW/2,s*(rh/nSh)+0.05,rowZ+rd/2); scene.add(sh);
-            }
+            const ns=Math.min(8,Math.floor(rh/0.35)),shM=getMat(0xd1d5db);
+            for(let s=0;s<ns;s++)
+              mkBox(wW-0.5,0.04,rd-0.06,shM,wW/2,s*(rh/ns)+0.05,rowZ+rd/2,false);
           }
+
+          rowIdx++;
         } // end row loop
 
-        subZ+=subH; // advance sub-zone cursor — no overlap
+        subZ+=subH; // advance sub-zone cursor — prevents overlap
       }); // end zoneRacks.forEach
     }); // end ZORD.forEach
 
