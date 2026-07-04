@@ -3335,20 +3335,12 @@ export default function WarehouseDesignerTool() {
   // Copy system config to user-defined inputs
   const copyFromSystem = () => {
     if (!rackConfig || !analysis) return;
-    const usedBins = [...new Set(rackConfig.map(cfg=>cfg.bin))].filter(b=>BIN_CATALOG[b]?.phys);
-    if (usedBins.length > 0) {
-      setUserBins(usedBins.map((b,i)=>({
-        id:i+1, name:BIN_CATALOG[b]?.name||b,
-        L:String(BIN_CATALOG[b].phys[0]),
-        W:String(BIN_CATALOG[b].phys[1]),
-        H:String(BIN_CATALOG[b].phys[2]),
-        fill:'0.55',
-      })));
-    }
-    const uniqueRacks = rackConfig.filter((c,i,a)=>a.findIndex(x=>x.rack===c.rack)===i);
+    // Bins come from system analysis — only copy rack sizes
+    const uniqueRacks = rackConfig.filter((cfg,i,a)=>a.findIndex(x=>x.rack===cfg.rack)===i);
     if (uniqueRacks.length > 0) {
-      setUserRacks(uniqueRacks.map((cfg,i)=>({rackType:cfg.rack,
-        id:i+1, name:cfg.rackName,
+      setUserRacks(uniqueRacks.map((cfg,i)=>({
+        id:i+1, name:cfg.rackName||cfg.rack,
+        rackType:cfg.rack,
         bayW:String(cfg.bayW),
         bayD:String(cfg.bayD),
         bayH:String(cfg.tierHeight||cfg.shelfH||2200),
@@ -3488,11 +3480,8 @@ export default function WarehouseDesignerTool() {
   };
 
   // Helpers for user-defined bin/rack editing
-  const updateUserBin  = (id,field,val) => setUserBins(prev=>prev.map(b=>b.id===id?{...b,[field]:val}:b));
   const updateUserRack = (id,field,val) => setUserRacks(prev=>prev.map(r=>r.id===id?{...r,[field]:val}:r));
-  const addUserBin     = () => { const id=Date.now(); setUserBins(prev=>[...prev,{id,name:`Custom Bin ${prev.length+1}`,L:'',W:'',H:'',fill:'0.55'}]); };
   const addUserRack    = () => { const id=Date.now(); setUserRacks(prev=>[...prev,{id,name:`Custom Rack ${prev.length+1}`,rackType:'shelving',bayW:'',bayD:'',bayH:'',levels:''}]); };
-  const removeUserBin  = id => setUserBins(prev=>prev.filter(b=>b.id!==id));
   const removeUserRack = id => setUserRacks(prev=>prev.filter(r=>r.id!==id));
 
   const inp = {...S.input, marginBottom:'4px'};
