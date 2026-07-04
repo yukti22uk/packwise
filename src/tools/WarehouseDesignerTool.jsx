@@ -3092,14 +3092,25 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
       const rTH=parseFloat(rk.bayH)||2200;
       const isGround=(rk.rackType||'shelving')==='ground';
       if(isGround){
-        // Ground: items sit on floor but can be stacked vertically (user sets stack layers)
+        // Ground storage: items (pipes, beams, odd shapes) extend beyond bay in length direction.
+        // Use the TWO SMALLEST dimensions as the ground footprint — the largest dim is the "length"
+        // that protrudes. This lets LONG bins (3000×300×200) fit in a 1400×1000 bay as 200+300 cross-section.
         const stackLayers=Math.max(1,parseInt(rk.levels)||1);
-        const aw=Math.floor(rW/bL),ad=Math.floor(rD/bW);
-        const aw2=Math.floor(rW/bW),ad2=Math.floor(rD/bL);
-        const best=aw*ad>=aw2*ad2?{aw,ad,orient:'LW'}:{aw:aw2,ad:ad2,orient:'WL'};
-        if(!best.aw||!best.ad) return;
-        const lpb=best.aw*best.ad*stackLayers;
-        if(lpb>bestLPB){bestLPB=lpb;bestCfg={rk,aw:best.aw,ad:best.ad,stack:stackLayers,lvl:1,shelfH:(bH+CLEAR)*stackLayers,lpb,orient:best.orient};}
+        const sortedDims=[bL,bW,bH].slice().sort((a,b)=>a-b); // [smallest, mid, largest]
+        const [d1,d2,d3]=sortedDims;
+        // Try both footprint orientations using the 2 smallest dims
+        const oA={aw:Math.floor(rW/d1),ad:Math.floor(rD/d2)};
+        const oB={aw:Math.floor(rW/d2),ad:Math.floor(rD/d1)};
+        const bestGO=oA.aw*oA.ad>=oB.aw*oB.ad?oA:oB;
+        if(!bestGO.aw||!bestGO.ad) return; // truly can't fit even cross-section
+        const lpb=bestGO.aw*bestGO.ad*stackLayers;
+        if(lpb>bestLPB){
+          bestLPB=lpb;
+          bestCfg={rk,aw:bestGO.aw,ad:bestGO.ad,stack:stackLayers,lvl:1,
+            shelfH:d3,   // the long dimension (length of item) — informational
+            lpb,orient:'ground',
+            note:`Cross-section ${d1}×${d2}mm, length ${d3}mm protrudes`};
+        }
         return;
       }
       const lvl=Math.max(1,parseInt(rk.levels)||1);
@@ -3108,14 +3119,22 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
         const dim=[bL,bW,bH];
         const aw=Math.floor(rW/dim[x]),ad=Math.floor(rD/dim[y]);
         if(!aw||!ad) return;
-        const stack=Math.max(1,Math.floor((shelfH-CLEAR)/dim[z]));
+        const stack=Math.floor((shelfH-CLEAR)/dim[z]);
+        if(stack<1) return; // bin taller than shelf — genuinely doesn't fit this orientation
         const lpb=aw*ad*stack*lvl;
         if(lpb>bestLPB){bestLPB=lpb;bestCfg={rk,aw,ad,stack,lvl,shelfH,lpb,orient:x===0?'LW':'WL'};}
       });
     });
     if(!bestCfg||!bestLPB){
+      // Explain why it doesn't fit
+      const maxRackW=Math.max(...validRacks.map(r=>parseFloat(r.bayW)||0));
+      const maxRackD=Math.max(...validRacks.map(r=>parseFloat(r.bayD)||0));
+      const minBinDim=Math.min(bL,bW,bH);
+      const reason= minBinDim > Math.max(maxRackW,maxRackD)
+        ? `Smallest dimension (${minBinDim}mm) exceeds all rack bays`
+        : `No rack shelf is tall enough — bin height ${bH}mm exceeds shelf clearance`;
       overflowBins.push({binKey,binName:binInfo.name||binKey,totalLocs,
-        dims:`${bL}×${bW}×${bH}mm`,reason:'Does not fit in any user rack'});
+        dims:`${bL}×${bW}×${bH}mm`,reason});
       return;
     }
     const {rk,aw,ad,stack,lvl,shelfH,orient}=bestCfg;
@@ -4228,12 +4247,18 @@ export default function WarehouseDesignerTool() {
                           {[
                             ['Bay Width',`${cfg.bayW}mm`],
                             ['Bay Depth',`${cfg.bayD}mm`],
-                            ['Height/Tier',`${cfg.tierHeight||cfg.shelfH}mm`],
-                            ['Tiers',cfg.tiers],
-                            ['Bins/Width',cfg.acrossW],
-                            ['Bins/Depth',cfg.acrossD],
-                            ['Levels/Tier',cfg.levels],
-                            ['Locs/Bay',cfg.locsPerBayTotal],
+                            cfg.rack==='ground'
+                              ? ['Item Length',`${cfg.shelfH||'—'}mm (protrudes)`]
+                              : ['Shelf Height',`${cfg.tierHeight}mm${cfg.levels>1?` (${cfg.shelfH}mm ÷ ${cfg.levels})`:''}`],
+                            cfg.rack==='ground'
+                              ? ['Stack Layers',cfg.stackH||1]
+                              : ['No. of Shelves',cfg.levels],
+                            ['Items/Width',cfg.acrossW],
+                            ['Items/Depth',cfg.acrossD],
+                            cfg.rack==='ground'
+                              ? ['Total Height',`${cfg.shelfH||'—'}mm (item length)`]
+                              : ['Bins stacked/slot',cfg.stackH||1],
+                            ['Locations/Bay',cfg.locsPerBayTotal],
                           ].map(([l,v])=>(
                             <div key={l}>
                               <span style={{color:'#6b7280'}}>{l}: </span>
@@ -4245,8 +4270,8 @@ export default function WarehouseDesignerTool() {
                           color:cfg.feasible?'#166534':'#be185d',fontWeight:'700'}}>
                           {cfg.feasible
                             ? (cfg.rack==='ground'
-                                ? `✓ ${cfg.acrossW} wide × ${cfg.acrossD} deep × ${cfg.stackH||1} stack layers = ${cfg.locsPerBayTotal}/bay → ${cfg.baysNeeded} bays → ${cfg.area}m²`
-                                : `✓ ${cfg.acrossW} wide × ${cfg.acrossD} deep × ${cfg.levels} levels${cfg.tiers>1?` × ${cfg.tiers} tiers`:''} = ${cfg.locsPerBayTotal}/bay → ${cfg.baysNeeded} bays needed → ${cfg.area}m²`)
+                                ? `✓ ${cfg.acrossW} across × ${cfg.acrossD} deep × ${cfg.stackH||1} stack layers = ${cfg.locsPerBayTotal}/bay → ${cfg.baysNeeded} bays → ${cfg.area}m²  (cross-section ${cfg.binDims?.[0]>cfg.binDims?.[1]?cfg.binDims?.[1]+'×'+cfg.binDims?.[2]:cfg.binDims?.[0]+'×'+cfg.binDims?.[2]}mm, length protrudes)`
+                                : `✓ ${cfg.acrossW} across × ${cfg.acrossD} deep × ${cfg.levels} shelves × ${cfg.stackH||1} stacked/slot = ${cfg.locsPerBayTotal}/bay → ${cfg.baysNeeded} bays → ${cfg.area}m²`)
                             : '✗ Bin does not fit in rack — adjust dimensions'}
                         </div>
                         {cfg.feasible&&(
