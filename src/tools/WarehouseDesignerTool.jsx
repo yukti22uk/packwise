@@ -3268,9 +3268,9 @@ export default function WarehouseDesignerTool() {
           const ORI=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
           const RZM={shelving:'golden',liveStorage:'golden',selective:'reserve',
             doubleDeep:'reserve',driveIn:'bulk',cantilever:'long'};
-          const vB=userBins.filter(b=>parseFloat(b.L)>0&&parseFloat(b.W)>0&&parseFloat(b.H)>0);
+          // Bins come from system analysis — no userBins state
           const vR=userRacks.filter(rk=>parseFloat(rk.bayW)>0&&parseFloat(rk.bayD)>0);
-          const r2=vB.length>0?calcUserDefinedStorage(a.slotted,userBins,userRacks,params):null;
+          const r2=null; // SKU storage calc uses calcUserRackConfigFromSystemBins in useEffect
           setUserResult(r2||{stored:[],overflow:[],totLocs:0,totArea:0,
             totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
           const uC=[];
@@ -3431,11 +3431,8 @@ export default function WarehouseDesignerTool() {
         if(!analysis) setAnalysis(curA);
 
         // Step 2: SKU storage calc (safe — may return null if no valid bins)
-        const vBins=userBins.filter(b=>parseFloat(b.L)>0&&parseFloat(b.W)>0&&parseFloat(b.H)>0);
-        const vRacks=userRacks.filter(rk=>parseFloat(rk.bayW)>0&&parseFloat(rk.bayD)>0);
-        const r=vBins.length>0
-          ? calcUserDefinedStorage(curA.slotted,userBins,userRacks,params)
-          : null;
+        // Bins from system analysis — no userBins
+        const r=null;
         // Always set a non-null userResult so the panel renders
         setUserResult(r||{stored:[],overflow:[],totLocs:0,totArea:0,
           totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
@@ -3839,7 +3836,6 @@ export default function WarehouseDesignerTool() {
                   setStorageMode(val);
                   // Auto-populate user fields from system config when switching to User Defined
                   if(val==='user' && rackConfig && rackConfig.length>0){
-                    const hasEmptyBins=userBins.every(b=>!parseFloat(b.L));
                     const hasEmptyRacks=userRacks.every(r=>!parseFloat(r.bayW));
                     if(hasEmptyBins) copyFromSystem();
                     else if(hasEmptyRacks) copyFromSystem();
@@ -4131,8 +4127,8 @@ export default function WarehouseDesignerTool() {
                       ['Overflow SKUs', '0', (userResult?.overflow?.length||0).toLocaleString(), userResult.overflow.length],
                       ['Bin Types Used',
                         Object.keys(analysis.binSummary||{}).length,
-                        userBins.filter(b=>parseFloat(b.L)>0).length,
-                        userBins.filter(b=>parseFloat(b.L)>0).length - Object.keys(analysis.binSummary||{}).length],
+                        Object.keys(analysis.binSummary||{}).length,
+                        0],
                     ].map(([label,sys,usr,diff],i)=>{
                       const numDiff = typeof diff==='number' ? diff : parseFloat(diff)||0;
                       const isGood = label.includes('Utilisation') ? numDiff>=0 : numDiff<=0;
