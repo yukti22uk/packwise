@@ -1919,7 +1919,7 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
     const RACK_DEFAULT_ZONE={
       shelving:'golden', liveStorage:'golden',
       selective:'reserve', doubleDeep:'reserve',
-      driveIn:'bulk', cantilever:'long'
+      driveIn:'bulk', cantilever:'long', ground:'bulk'
     };
     const zoneRackTypes={}; // zone → [{rack, cfg}]
     const zoneRackH={};     // zone → max rack height
@@ -2040,7 +2040,7 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
     // ── RACK ROWS — type-specific 3D geometry ──────────────────────────────
     const RCOL={shelving:0x94a3b8,liveStorage:0x3b82f6,selective:0x475569,
       driveIn:0x1e293b,doubleDeep:0x334155,cantilever:0x7c3aed};
-    const RD3={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
+    const RD3={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5,ground:1.2};
 
     const matCache={};
     const getMat=(col,op=1,sh=30)=>{
@@ -3825,8 +3825,7 @@ export default function WarehouseDesignerTool() {
                   // Auto-populate user fields from system config when switching to User Defined
                   if(val==='user' && rackConfig && rackConfig.length>0){
                     const hasEmptyRacks=userRacks.every(r=>!parseFloat(r.bayW));
-                    if(hasEmptyBins) copyFromSystem();
-                    else if(hasEmptyRacks) copyFromSystem();
+                    if(hasEmptyRacks) copyFromSystem();
                   }
                 }}
                   style={{padding:'10px 12px',borderRadius:'9px',textAlign:'left',cursor:'pointer',
@@ -4261,6 +4260,15 @@ export default function WarehouseDesignerTool() {
                                 : `✓ ${cfg.acrossW} wide × ${cfg.acrossD} deep × ${cfg.levels} levels${cfg.tiers>1?` × ${cfg.tiers} tiers`:''} = ${cfg.locsPerBayTotal}/bay → ${cfg.baysNeeded} bays needed → ${cfg.area}m²`)
                             : '✗ Bin does not fit in rack — adjust dimensions'}
                         </div>
+                        {cfg.feasible&&(
+                          <button onClick={()=>downloadRackLocations(cfg,analysis)}
+                            style={{marginTop:'8px',padding:'5px 14px',background:'#f0fdf4',
+                              border:'1px solid #86efac',borderRadius:'7px',
+                              fontSize:'11px',fontWeight:'700',color:'#166534',cursor:'pointer',
+                              fontFamily:'inherit'}}>
+                            ⬇ SKU Location List
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -4313,10 +4321,33 @@ export default function WarehouseDesignerTool() {
                           params={params} rackConfig={userRackConfig||[]}/>
                       </div>;
                     })()}
+                {/* Download buttons — shown when in 2D plan view */}
+                {viewMode3D==='2d'&&(
+                  <div style={{display:'flex',gap:'8px',marginTop:'10px',flexWrap:'wrap'}}>
+                    <button onClick={()=>downloadPlan2D('svg')}
+                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                        background:'#f0fdf4',border:'1px solid #86efac',color:'#166534'}}>
+                      ⬇ Download SVG
+                    </button>
+                    <button onClick={()=>downloadPlan2D('png')}
+                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                        background:'#eff6ff',border:'1px solid #93c5fd',color:'#1d4ed8'}}>
+                      ⬇ Download PNG (2×)
+                    </button>
+                    <button onClick={()=>exportDXF(analysis,userDesign,params,userRackConfig||[])}
+                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                        background:'#fef9c3',border:'1px solid #fde047',color:'#854d0e'}}>
+                      ⬇ Download DXF (AutoCAD)
+                    </button>
+                  </div>
+                )}
                 <div style={{marginTop:'8px',fontSize:'11px',color:'#6b7280'}}>
-                  Layout based on your custom bin and rack sizes.
-                  Warehouse footprint: <strong>{userDesign.wW}m × {userDesign.wL}m</strong>
-                  {' · '}<strong>{userDesign.totalGrossArea?.toLocaleString()}m²</strong> gross area
+                  Layout based on your custom rack sizes.
+                  Footprint: <strong>{userDesign.wW}m × {userDesign.wL}m</strong>
+                  {' · '}<strong>{(userDesign.totalGrossArea||0).toLocaleString()}m²</strong> gross area
                 </div>
               </div>
             )}
