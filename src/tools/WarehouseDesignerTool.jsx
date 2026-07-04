@@ -3265,54 +3265,23 @@ export default function WarehouseDesignerTool() {
 
         // If in user defined mode, ALSO run user calc immediately
         if (storageMode === 'user') {
-          const ORI=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
-          const RZM={shelving:'golden',liveStorage:'golden',selective:'reserve',
-            doubleDeep:'reserve',driveIn:'bulk',cantilever:'long'};
-          // Bins come from system analysis — no userBins state
-          const vR=userRacks.filter(rk=>parseFloat(rk.bayW)>0&&parseFloat(rk.bayD)>0);
-          const r2=null; // SKU storage calc uses calcUserRackConfigFromSystemBins in useEffect
-          setUserResult(r2||{stored:[],overflow:[],totLocs:0,totArea:0,
-            totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
-          const uC=[];
-          if(vB.length>0&&vR.length>0){
-            vB.forEach((b,bi)=>{
-              const bL=parseFloat(b.L),bW=parseFloat(b.W),bH=parseFloat(b.H);
-              vR.forEach((rk,ri)=>{
-                const rW=parseFloat(rk.bayW),rD=parseFloat(rk.bayD);
-                const rH=parseFloat(rk.bayH)||2200,tiers=parseInt(rk.levels)||1,clr=50,dim=[bL,bW,bH];
-                let bestLPB=0,bestAW=0,bestAD=0,bestLvl=0,bestO='LW';
-                ORI.forEach(([x,y,z])=>{
-                  const aw=Math.floor(rW/dim[x]),ad=Math.floor(rD/dim[y]);
-                  const lv=dim[z]>0?Math.floor(rH/(dim[z]+clr)):0;
-                  const lpb=aw*ad*lv*tiers;
-                  if(lpb>bestLPB){bestLPB=lpb;bestO=x===0?'LW':'WL';bestAW=aw;bestAD=ad;bestLvl=lv;}
-                });
-                const locs=Math.ceil((r2?.totLocs||a.metrics.totLocs||0)/Math.max(1,vB.length));
-                const bays=bestLPB>0?Math.ceil(locs/bestLPB):0;
-                const ah=(parseFloat(params.aisleW)||3.0)/2;
-                const area=+(bays*(rW/1000)*((rD/1000)+ah)).toFixed(1);
-                const rt=rk.rackType||'shelving';
-                uC.push({id:`u-${bi}-${ri}`,rack:rt,bin:`USER_${bi}`,
-                  rackName:rk.name||`Custom Rack ${ri+1}`,binName:b.name||`Custom Bin ${bi+1}`,
-                  binDims:[bL,bW,bH],bayW:rW,bayD:rD,shelfH:rH,tierHeight:rH,clearance:clr,
-                  orientation:bestO,tiers,acrossW:bestAW,acrossD:bestAD,levels:bestLvl,
-                  locsPerBay:bestLPB>0?Math.floor(bestLPB/tiers):0,locsPerBayTotal:bestLPB,
-                  locs,baysNeeded:bays,area,feasible:bestLPB>0,zone:RZM[rt]||'golden',
-                  o1:{acrossW:Math.floor(rW/bL),acrossD:Math.floor(rD/bW),feasible:Math.floor(rW/bL)>0,
-                      levels:bH>0?Math.floor(rH/(bH+clr)):0,locsPerBay:Math.floor(rW/bL)*Math.floor(rD/bW)*(bH>0?Math.floor(rH/(bH+clr)):0)},
-                  o2:{acrossW:Math.floor(rW/bW),acrossD:Math.floor(rD/bL),feasible:Math.floor(rW/bW)>0,
-                      levels:bH>0?Math.floor(rH/(bH+clr)):0,locsPerBay:Math.floor(rW/bW)*Math.floor(rD/bL)*(bH>0?Math.floor(rH/(bH+clr)):0)},
-                });
-              });
-            });
+          const res=calcUserRackConfigFromSystemBins(a,userRacks,params);
+          if(res){
+            setUserRackConfig(res.uCfgs.length>0?res.uCfgs:null);
+            setUserOverflowBins(res.overflowBins||[]);
+            setUserResult({stored:[],overflow:res.overflowBins||[],
+              totLocs:res.uCfgs.reduce((s,x)=>s+x.locs,0),
+              totArea:res.uCfgs.reduce((s,x)=>s+(x.area||0),0),
+              totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
+            const ca2={};
+            res.uCfgs.forEach(x=>{ca2[x.rack]=(ca2[x.rack]||0)+(x.area||0);});
+            if(!Object.keys(ca2).length) ca2.shelving=50;
+            setUserDesign(calcWarehouseSize(a,params,ca2));
           } else {
-            rc.forEach(cfg=>uC.push({...cfg}));
+            // No valid user racks yet — clear user results
+            setUserResult({stored:[],overflow:[],totLocs:0,totArea:0,
+              totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
           }
-          setUserRackConfig(uC.length>0?uC:null);
-          const ca2={};
-          uC.forEach(c=>{ca2[c.rack]=(ca2[c.rack]||0)+(c.area||0);});
-          if(!Object.keys(ca2).length) Object.assign(ca2,rackAreasFromConfig(rc));
-          setUserDesign(calcWarehouseSize(a,params,ca2));
         }
       } catch(e) { setError(e.message); }
       setLoading(false);
