@@ -35,6 +35,7 @@ const RACK_DEFS = {
   doubleDeep: { name:'Double-Deep Rack',      bayW:2.7, bayD:2.4,  desc:'2-deep, reach truck' },
   cantilever: { name:'Cantilever Rack',       bayW:1.5, bayD:2.5,  desc:'Long/awkward items' },
   liveStorage:{ name:'Carton Live Storage',   bayW:1.0, bayD:3.0,  desc:'FIFO, high-turn small items' },
+  ground:     { name:'Ground Location',       bayW:1.2, bayD:1.2,  desc:'Odd-shaped/bulky items on floor' },
 };
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -1182,7 +1183,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
   // ── RACK ROW HELPER ─────────────────────────────────────────────────────────
   // Build zone→[rackTypes] from rackConfig (mirrors 3D logic)
   const RACK_DEFAULT_ZONE_2D={shelving:'golden',liveStorage:'golden',
-    selective:'reserve',doubleDeep:'reserve',driveIn:'bulk',cantilever:'long'};
+    selective:'reserve',doubleDeep:'reserve',driveIn:'bulk',cantilever:'long',ground:'bulk'};
   const zone2RackTypes={}; // zone → [{rack, cfg}]
   (rackConfig||[]).forEach(cfg=>{
     const slottedZone=(analysis?.slotted||[]).find(s=>s.rack===cfg.rack)?.zone
@@ -1205,6 +1206,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
     doubleDeep: {depth:2.4, color:'#c7d2fe', stroke:'#818cf8'},
     driveIn:    {depth:5.5, color:'#334155', stroke:'#1e293b'},
     cantilever: {depth:2.0, color:'#fde8d8', stroke:'#f97316'},
+    ground:     {depth:1.2, color:'#78350f', stroke:'#92400e'},
   };
 
   // Draw rack rows within a zone — one sub-band per rack type, with cross-aisle
@@ -2166,6 +2168,35 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
             }
           }
 
+          // ── GROUND LOCATION ──────────────────────────────────────────────
+          else if(dom==='ground'){
+            const stackLayers=zoneCfg?.stackH||zoneCfg?.levels||1;
+            const itemH=(zoneCfg?.binDims?.[2]||300)/1000; // bin height in metres
+            const gW=2.0, nCols=Math.max(1,Math.floor((wW-0.4)/gW));
+            const gndMat=new THREE.MeshPhongMaterial({color:0x92400e,opacity:0.3,transparent:true});
+            // Ground footprint base
+            const gGeo=new THREE.BoxGeometry(wW-0.4,0.05,rd);
+            const gM=new THREE.Mesh(gGeo,gndMat);
+            gM.position.set(wW/2,0.025,rowZ+rd/2); scene.add(gM);
+            // Each ground pad column — stack layers shown as boxes
+            const itemMat=getMat(0x78350f,0.9,10);
+            const frameMat=new THREE.LineBasicMaterial({color:0xfbbf24});
+            for(let col=0;col<nCols;col++){
+              const cx=0.2+col*gW;
+              for(let lyr=0;lyr<stackLayers;lyr++){
+                const by=lyr*(itemH+0.03)+0.04;
+                const pad=new THREE.Mesh(new THREE.BoxGeometry(gW-0.15,itemH,rd-0.15),itemMat);
+                pad.position.set(cx+gW/2,by+itemH/2,rowZ+rd/2);
+                pad.castShadow=true; scene.add(pad);
+                // Yellow boundary frame per layer
+                const frame=new THREE.LineSegments(
+                  new THREE.EdgesGeometry(new THREE.BoxGeometry(gW-0.1,itemH+0.02,rd-0.1)),
+                  frameMat);
+                frame.position.copy(pad.position); scene.add(frame);
+              }
+            }
+          }
+
           // ── CANTILEVER RACK ───────────────────────────────────────────
           else if(dom==='cantilever'){
             const spineSpacing=1.5, nSpines=Math.max(1,Math.floor((wW-0.4)/spineSpacing));
@@ -2485,7 +2516,7 @@ function exportDXF(analysis, design, params, rackConfig) {
   const RD2={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
   const RACK_LAYER={shelving:'RACKS_SHELVING',liveStorage:'RACKS_SHELVING',
     selective:'RACKS_SELECTIVE',doubleDeep:'RACKS_SELECTIVE',
-    driveIn:'RACKS_DRIVEIN',cantilever:'RACKS_CANTILEVER'};
+    driveIn:'RACKS_DRIVEIN',cantilever:'RACKS_CANTILEVER',ground:'RACKS_SHELVING'};
 
   const z2R={};
   (rackConfig||[]).forEach(cfg=>{
@@ -2558,6 +2589,15 @@ function exportDXF(analysis, design, params, rackConfig) {
           }
           txt('TEXT',wW/2,ry+rd/2,0.3,'CANTILEVER RACK',1);
 
+        } else if(dom==='ground'){
+          // Ground locations — floor-level pads with yellow boundary
+          rect2D(layer,0,ry,wW,ry+rd,30);
+          const padW=2.0, nPads=Math.floor(wW/padW);
+          for(let p=0;p<nPads;p++){
+            const px=p*padW;
+            rect2D(layer,px+0.05,ry+0.05,px+padW-0.05,ry+rd-0.05,2);
+          }
+          txt('TEXT',wW/2,ry+rd/2,0.3,'GROUND STORAGE',1);
         } else {
           // Shelving / live storage
           rect2D(layer,0.4,ry,wW-0.4,ry+rd);
@@ -3034,6 +3074,18 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
     validRacks.forEach(rk=>{
       const rW=parseFloat(rk.bayW),rD=parseFloat(rk.bayD);
       const rTH=parseFloat(rk.bayH)||2200;
+      const isGround=(rk.rackType||'shelving')==='ground';
+      if(isGround){
+        // Ground: items sit on floor but can be stacked vertically (user sets stack layers)
+        const stackLayers=Math.max(1,parseInt(rk.levels)||1);
+        const aw=Math.floor(rW/bL),ad=Math.floor(rD/bW);
+        const aw2=Math.floor(rW/bW),ad2=Math.floor(rD/bL);
+        const best=aw*ad>=aw2*ad2?{aw,ad,orient:'LW'}:{aw:aw2,ad:ad2,orient:'WL'};
+        if(!best.aw||!best.ad) return;
+        const lpb=best.aw*best.ad*stackLayers;
+        if(lpb>bestLPB){bestLPB=lpb;bestCfg={rk,aw:best.aw,ad:best.ad,stack:stackLayers,lvl:1,shelfH:(bH+CLEAR)*stackLayers,lpb,orient:best.orient};}
+        return;
+      }
       const lvl=Math.max(1,parseInt(rk.levels)||1);
       const shelfH=Math.floor(rTH/lvl);
       ORIENTS.forEach(([x,y,z])=>{
@@ -3064,7 +3116,7 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
       acrossW:aw,acrossD:ad,stackH:stack,
       locsPerBay:bestLPB,locsPerBayTotal:bestLPB,
       locs:totalLocs,baysNeeded:bays,area,feasible:true,
-      zone:ZONE_MAP[binKey]||'golden',
+      zone:rt==='ground'?'bulk':(ZONE_MAP[binKey]||'golden'),
       o1:{acrossW:Math.floor(rW2/bL),acrossD:Math.floor(rD2/bW),feasible:Math.floor(rW2/bL)>0,
           levels:bH>0?Math.max(1,Math.floor((shelfH-CLEAR)/bH)):0,
           locsPerBay:Math.floor(rW2/bL)*Math.floor(rD2/bW)*Math.max(1,Math.floor((shelfH-CLEAR)/bH))*lvl},
@@ -3891,6 +3943,7 @@ export default function WarehouseDesignerTool() {
                             <option value="doubleDeep">Double-Deep</option>
                             <option value="driveIn">Drive-In</option>
                             <option value="cantilever">Cantilever</option>
+                            <option value="ground">Ground Location</option>
                           </select>
                         </td>
                         {['bayW','bayD','bayH','levels'].map(f=>(
@@ -4219,7 +4272,9 @@ export default function WarehouseDesignerTool() {
                           borderRadius:'8px',padding:'8px 12px',fontSize:'12px',
                           color:cfg.feasible?'#166534':'#be185d',fontWeight:'700'}}>
                           {cfg.feasible
-                            ? `✓ ${cfg.acrossW} wide × ${cfg.acrossD} deep × ${cfg.levels} levels${cfg.tiers>1?` × ${cfg.tiers} tiers`:''} = ${cfg.locsPerBayTotal}/bay → ${cfg.baysNeeded} bays needed → ${cfg.area}m²`
+                            ? (cfg.rack==='ground'
+                                ? `✓ ${cfg.acrossW} wide × ${cfg.acrossD} deep × ${cfg.stackH||1} stack layers = ${cfg.locsPerBayTotal}/bay → ${cfg.baysNeeded} bays → ${cfg.area}m²`
+                                : `✓ ${cfg.acrossW} wide × ${cfg.acrossD} deep × ${cfg.levels} levels${cfg.tiers>1?` × ${cfg.tiers} tiers`:''} = ${cfg.locsPerBayTotal}/bay → ${cfg.baysNeeded} bays needed → ${cfg.area}m²`)
                             : '✗ Bin does not fit in rack — adjust dimensions'}
                         </div>
                       </div>
@@ -4250,12 +4305,30 @@ export default function WarehouseDesignerTool() {
                   </div>
                 </div>
                 {viewMode3D==='3d'
-                  ? <Warehouse3DModel analysis={analysis} design={userDesign}
-                      params={params} rackConfig={userRackConfig||[]}/>
-                  : (<div ref={plan2DRef}>
-                      <FloorPlanSVG analysis={analysis} design={userDesign}
-                        params={params} rackConfig={userRackConfig||[]}/>
-                    </div>)}
+                  ? (() => {
+                      const overflowKeys=new Set((userOverflowBins||[]).map(o=>o.binKey));
+                      const uZoneMap={};
+                      (userRackConfig||[]).forEach(cfg=>{uZoneMap[cfg.bin]=cfg.zone;uZoneMap[cfg.bin+'_rack']=cfg.rack;});
+                      const filteredSlotted=(analysis?.slotted||[])
+                        .filter(s=>!overflowKeys.has(s.bin))
+                        .map(s=>({...s,zone:uZoneMap[s.bin]||s.zone,rack:uZoneMap[s.bin+'_rack']||s.rack}));
+                      const userAnalysis={...analysis,slotted:filteredSlotted};
+                      return <Warehouse3DModel analysis={userAnalysis} design={userDesign}
+                        params={params} rackConfig={userRackConfig||[]}/>;
+                    })()
+                  : (() => {
+                      const overflowKeys=new Set((userOverflowBins||[]).map(o=>o.binKey));
+                      const uZoneMap={};
+                      (userRackConfig||[]).forEach(cfg=>{uZoneMap[cfg.bin]=cfg.zone;uZoneMap[cfg.bin+'_rack']=cfg.rack;});
+                      const filteredSlotted=(analysis?.slotted||[])
+                        .filter(s=>!overflowKeys.has(s.bin))
+                        .map(s=>({...s,zone:uZoneMap[s.bin]||s.zone,rack:uZoneMap[s.bin+'_rack']||s.rack}));
+                      const userAnalysis={...analysis,slotted:filteredSlotted};
+                      return <div ref={plan2DRef}>
+                        <FloorPlanSVG analysis={userAnalysis} design={userDesign}
+                          params={params} rackConfig={userRackConfig||[]}/>
+                      </div>;
+                    })()}
                 <div style={{marginTop:'8px',fontSize:'11px',color:'#6b7280'}}>
                   Layout based on your custom bin and rack sizes.
                   Warehouse footprint: <strong>{userDesign.wW}m × {userDesign.wL}m</strong>
@@ -4264,28 +4337,81 @@ export default function WarehouseDesignerTool() {
               </div>
             )}
 
-            {/* Overflow bins with SKU list */}
+            {/* Overflow bins with full SKU details */}
             {userOverflowBins.length>0&&(
               <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
                 <div style={{padding:'10px 14px',borderBottom:'1px solid #fecaca',
-                  background:'#fff1f2',fontWeight:'700',fontSize:'12px',color:'#991b1b'}}>
-                  ⚠ {userOverflowBins.length} Bin Type{userOverflowBins.length>1?'s':''} Don't Fit in Your Racks
+                  background:'#fff1f2',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span style={{fontWeight:'700',fontSize:'12px',color:'#991b1b'}}>
+                    ⚠ {userOverflowBins.length} Bin Type{userOverflowBins.length>1?'s':''} Don't Fit — Excluded from Layout
+                  </span>
+                  <span style={{fontSize:'11px',color:'#be185d'}}>
+                    {userOverflowBins.reduce((s,o)=>{
+                      return s+(analysis?.slotted||[]).filter(x=>x.bin===o.binKey).length;
+                    },0)} SKUs affected
+                  </span>
                 </div>
                 {userOverflowBins.map((ob,i)=>{
-                  const overflowSkus=(analysis?.slotted||[]).filter(s=>s.bin===ob.binKey&&s.stock>0);
+                  const overflowSkus=(analysis?.slotted||[])
+                    .filter(s=>s.bin===ob.binKey)
+                    .sort((a,b)=>b.stock-a.stock);
                   return(
-                    <div key={i} style={{padding:'10px 14px',borderBottom:'1px solid #fee2e2',
+                    <div key={i} style={{borderBottom:'1px solid #fee2e2',
                       background:i%2===0?'#fff':'#fff8f8'}}>
-                      <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}>
-                        <span style={{fontWeight:'700',color:'#be185d'}}>{ob.binKey} — {ob.binName}</span>
-                        <span style={{fontSize:'11px',color:'#6b7280'}}>{ob.dims} · {ob.totalLocs} locations</span>
+                      {/* Bin type header */}
+                      <div style={{padding:'8px 14px',display:'flex',
+                        justifyContent:'space-between',alignItems:'center',
+                        borderBottom:'1px solid #fecaca',background:'#fff1f2'}}>
+                        <div>
+                          <span style={{fontWeight:'700',fontSize:'12px',color:'#be185d'}}>
+                            {ob.binKey} — {ob.binName}
+                          </span>
+                          <span style={{fontSize:'10px',color:'#9ca3af',marginLeft:'8px'}}>{ob.dims}</span>
+                        </div>
+                        <div style={{textAlign:'right',fontSize:'11px'}}>
+                          <span style={{color:'#be185d',fontWeight:'600'}}>{ob.totalLocs} locations</span>
+                          <span style={{color:'#9ca3af',marginLeft:'6px'}}>· {overflowSkus.length} SKUs</span>
+                        </div>
                       </div>
-                      <div style={{fontSize:'11px',color:'#be185d',marginBottom:'6px'}}>✗ {ob.reason}</div>
+                      <div style={{fontSize:'10px',color:'#be185d',padding:'4px 14px',
+                        background:'#fff8f8',borderBottom:'1px solid #fecaca'}}>
+                        ✗ {ob.reason} — increase Bay W/D or add a larger rack
+                      </div>
+                      {/* SKU table */}
                       {overflowSkus.length>0&&(
-                        <div style={{fontSize:'10px',color:'#6b7280'}}>
-                          <strong style={{color:'#374151'}}>{overflowSkus.length} affected SKUs:</strong>{' '}
-                          {overflowSkus.slice(0,8).map(s=>s.sku).join(', ')}
-                          {overflowSkus.length>8&&` ... +${overflowSkus.length-8} more`}
+                        <div style={{padding:'4px 0'}}>
+                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:'10px'}}>
+                            <thead><tr style={{background:'#fef2f2'}}>
+                              {['SKU','Description','Velocity','Stock','Locations'].map(h=>(
+                                <th key={h} style={{padding:'4px 10px',textAlign:'left',
+                                  color:'#9ca3af',fontWeight:'700',borderBottom:'1px solid #fee2e2'}}>{h}</th>
+                              ))}
+                            </tr></thead>
+                            <tbody>
+                              {overflowSkus.slice(0,10).map((s,si)=>(
+                                <tr key={si} style={{background:si%2===0?'#fff':'#fff8f8'}}>
+                                  <td style={{padding:'4px 10px',fontWeight:'700',color:'#0f172a'}}>{s.sku}</td>
+                                  <td style={{padding:'4px 10px',color:'#374151',maxWidth:'150px',
+                                    overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.desc||'—'}</td>
+                                  <td style={{padding:'4px 10px'}}>
+                                    <span style={{
+                                      background:{VF:'#fef9c3',F:'#f0fdf4',M:'#eff6ff',S:'#fdf4ff',VS:'#f1f5f9',NM:'#f8fafc'}[s.velocity]||'#f8fafc',
+                                      color:{VF:'#854d0e',F:'#166534',M:'#1d4ed8',S:'#7c3aed',VS:'#64748b',NM:'#9ca3af'}[s.velocity]||'#374151',
+                                      padding:'1px 6px',borderRadius:'4px',fontWeight:'700',fontSize:'9px'
+                                    }}>{s.velocity||'?'}</span>
+                                  </td>
+                                  <td style={{padding:'4px 10px',color:'#374151'}}>{(s.stock||0).toLocaleString()}</td>
+                                  <td style={{padding:'4px 10px',fontWeight:'700',color:'#be185d'}}>{s.locsReq||s.locs||1}</td>
+                                </tr>
+                              ))}
+                              {overflowSkus.length>10&&(
+                                <tr><td colSpan={5} style={{padding:'4px 10px',
+                                  color:'#9ca3af',fontStyle:'italic'}}>
+                                  ... and {overflowSkus.length-10} more SKUs
+                                </td></tr>
+                              )}
+                            </tbody>
+                          </table>
                         </div>
                       )}
                     </div>
