@@ -3012,6 +3012,70 @@ function calcUserDefinedStorage(slotted, userBins, userRacks, params) {
     overallUtil:totCap>0?Math.round(totStock/totCap*100):0};
 }
 
+
+// ─── USER-DEFINED RACK CONFIG FROM SYSTEM BINS ───────────────────────────────
+// Bins are fixed from system analysis. User defines rack sizes only.
+// Supports vertical stacking: floor((shelfH - clearance) / binH) bins tall per slot.
+function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
+  if (!analysis?.binSummary || !Object.keys(analysis.binSummary).length) return null;
+  const CLEAR    = 30;
+  const ORIENTS  = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+  const ZONE_MAP = {XS:'golden',S:'golden',M:'mid',L:'reserve',XL:'bulk',LONG:'long'};
+  const aisleHalf = (parseFloat(params.aisleW)||3.0)/2;
+  const validRacks = userRacks.filter(rk=>parseFloat(rk.bayW)>0&&parseFloat(rk.bayD)>0);
+  if (!validRacks.length) return null;
+  const uCfgs=[], overflowBins=[];
+
+  Object.entries(analysis.binSummary).forEach(([binKey,binInfo])=>{
+    const bc=BIN_CATALOG[binKey]; if(!bc?.phys) return;
+    const [bL,bW,bH]=bc.phys;
+    const totalLocs=binInfo.locs||0; if(!totalLocs) return;
+    let bestLPB=0,bestCfg=null;
+    validRacks.forEach(rk=>{
+      const rW=parseFloat(rk.bayW),rD=parseFloat(rk.bayD);
+      const rTH=parseFloat(rk.bayH)||2200;
+      const lvl=Math.max(1,parseInt(rk.levels)||1);
+      const shelfH=Math.floor(rTH/lvl);
+      ORIENTS.forEach(([x,y,z])=>{
+        const dim=[bL,bW,bH];
+        const aw=Math.floor(rW/dim[x]),ad=Math.floor(rD/dim[y]);
+        if(!aw||!ad) return;
+        const stack=Math.max(1,Math.floor((shelfH-CLEAR)/dim[z]));
+        const lpb=aw*ad*stack*lvl;
+        if(lpb>bestLPB){bestLPB=lpb;bestCfg={rk,aw,ad,stack,lvl,shelfH,lpb,orient:x===0?'LW':'WL'};}
+      });
+    });
+    if(!bestCfg||!bestLPB){
+      overflowBins.push({binKey,binName:binInfo.name||binKey,totalLocs,
+        dims:`${bL}×${bW}×${bH}mm`,reason:'Does not fit in any user rack'});
+      return;
+    }
+    const {rk,aw,ad,stack,lvl,shelfH,orient}=bestCfg;
+    const rW2=parseFloat(rk.bayW),rD2=parseFloat(rk.bayD),rTH2=parseFloat(rk.bayH)||2200;
+    const bays=Math.ceil(totalLocs/bestLPB);
+    const area=+(bays*(rW2/1000)*((rD2/1000)+aisleHalf)).toFixed(1);
+    const rt=rk.rackType||'shelving';
+    uCfgs.push({
+      id:`u-${binKey}`,rack:rt,bin:binKey,
+      rackName:rk.name||'Custom Rack',binName:binInfo.name||binKey,
+      binDims:[bL,bW,bH],bayW:rW2,bayD:rD2,
+      shelfH:rTH2,tierHeight:shelfH,clearance:CLEAR,
+      orientation:orient,tiers:1,levels:lvl,
+      acrossW:aw,acrossD:ad,stackH:stack,
+      locsPerBay:bestLPB,locsPerBayTotal:bestLPB,
+      locs:totalLocs,baysNeeded:bays,area,feasible:true,
+      zone:ZONE_MAP[binKey]||'golden',
+      o1:{acrossW:Math.floor(rW2/bL),acrossD:Math.floor(rD2/bW),feasible:Math.floor(rW2/bL)>0,
+          levels:bH>0?Math.max(1,Math.floor((shelfH-CLEAR)/bH)):0,
+          locsPerBay:Math.floor(rW2/bL)*Math.floor(rD2/bW)*Math.max(1,Math.floor((shelfH-CLEAR)/bH))*lvl},
+      o2:{acrossW:Math.floor(rW2/bW),acrossD:Math.floor(rD2/bL),feasible:Math.floor(rW2/bW)>0,
+          levels:bH>0?Math.max(1,Math.floor((shelfH-CLEAR)/bH)):0,
+          locsPerBay:Math.floor(rW2/bW)*Math.floor(rD2/bL)*Math.max(1,Math.floor((shelfH-CLEAR)/bH))*lvl},
+    });
+  });
+  return {uCfgs,overflowBins};
+}
+
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function WarehouseDesignerTool() {
   // Params
@@ -3056,11 +3120,7 @@ export default function WarehouseDesignerTool() {
   const [preferredBins, setPreferredBins] = useState(['S','M','L','XL']); // default: 4 types, no XS
   // Storage design mode
   const [storageMode, setStorageMode] = useState('system'); // 'system' | 'user'
-  // User-defined bins (up to 5)
-  const [userBins, setUserBins] = useState([
-    {id:1,name:'Custom Bin 1',L:'',W:'',H:'',fill:'0.55'},
-  ]);
-  // User-defined racks (up to 5)
+  // User-defined racks only — bins are fixed from system analysis (read-only)
   const [userRacks, setUserRacks] = useState([
     {id:1,name:'Custom Rack 1',rackType:'shelving',bayW:'',bayD:'',bayH:'',levels:''},
   ]);
@@ -3068,6 +3128,7 @@ export default function WarehouseDesignerTool() {
   const [userResult, setUserResult] = useState(null);
   const [userDesign, setUserDesign] = useState(null);
   const [userRackConfig, setUserRackConfig] = useState(null);
+  const [userOverflowBins, setUserOverflowBins] = useState([]);
   const [userLoading, setUserLoading] = useState(false);
 
   // Results
@@ -3106,6 +3167,30 @@ export default function WarehouseDesignerTool() {
   const addTruckDefault = () => setTruckMix(m=>[...m,
     {type:'medium',stagingDepth:'8',inboundVehicles:'2',outboundVehicles:'2',palletsPerTruck:'8'}]);
   const updateInbBox = (i,field,val) => setInbBoxSizes(s=>s.map((b,idx)=>idx===i?{...b,[field]:val}:b));
+
+
+  // Auto-recalculate user rack config whenever rack dims or analysis changes
+  useEffect(()=>{
+    if(storageMode!=='user') return;
+    if(!analysis?.binSummary||!Object.keys(analysis.binSummary).length) return;
+    const hasRacks=userRacks.some(r=>parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
+    if(!hasRacks){
+      setUserRackConfig(null);setUserOverflowBins([]);
+      setUserDesign(null);setUserResult(null); return;
+    }
+    const res=calcUserRackConfigFromSystemBins(analysis,userRacks,params);
+    if(!res) return;
+    setUserRackConfig(res.uCfgs.length>0?res.uCfgs:null);
+    setUserOverflowBins(res.overflowBins||[]);
+    setUserResult({stored:[],overflow:res.overflowBins||[],
+      totLocs:res.uCfgs.reduce((s,x)=>s+x.locs,0),
+      totArea:res.uCfgs.reduce((s,x)=>s+(x.area||0),0),
+      totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
+    const ca={};
+    res.uCfgs.forEach(x=>{ca[x.rack]=(ca[x.rack]||0)+(x.area||0);});
+    if(!Object.keys(ca).length) ca.shelving=50;
+    try{setUserDesign(calcWarehouseSize(analysis,params,ca));}catch(e){}
+  },[userRacks,analysis,storageMode]); // eslint-disable-line
 
   const runAll = () => {
     setError(''); setLoading(true);
@@ -3730,50 +3815,49 @@ export default function WarehouseDesignerTool() {
           {/* ── USER DEFINED BIN & RACK INPUTS ──────────────────────── */}
           {storageMode==='user' && (<>
 
-            {/* Custom bin sizes */}
+            {/* System bins — read-only from analysis */}
             <div style={S.card}>
-              <div style={S.cardTitle}>📦 Your Bin / Pallet Sizes</div>
+              <div style={S.cardTitle}>📦 Bin Types — from System Analysis</div>
               <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'10px'}}>
-                Enter the bin or pallet sizes available in your warehouse. Tool will assign SKUs
-                to the smallest fitting bin and flag SKUs that don't fit in any.
+                Bin sizes are determined by the system analysis. Enter your rack sizes below
+                and the tool instantly calculates how many bins fit (including vertical stacking)
+                and flags bin types that don't fit.
               </div>
-              <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'hidden',marginBottom:'8px'}}>
-                <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
-                  <thead><tr style={{background:'#f8fafc'}}>
-                    {['Bin Name','L (mm)','W (mm)','H (mm)','Fill %',''].map(h=>(
-                      <th key={h} style={{padding:'6px 8px',textAlign:'left',fontWeight:'700',
-                        fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0'}}>{h}</th>))}
-                  </tr></thead>
-                  <tbody>
-                    {userBins.map((b,i)=>(
-                      <tr key={b.id} style={{background:i%2===0?'#fff':'#fafbfc'}}>
-                        <td style={{padding:'4px 6px'}}>
-                          <input value={b.name} onChange={e=>updateUserBin(b.id,'name',e.target.value)}
-                            style={{...inp,marginBottom:0,fontSize:'11px',padding:'3px 5px',width:'100%'}}/>
-                        </td>
-                        {['L','W','H'].map(f=>(
-                          <td key={f} style={{padding:'4px 6px'}}>
-                            <input type="number" min="1" value={b[f]}
-                              onChange={e=>updateUserBin(b.id,f,e.target.value)}
-                              style={{...inp,marginBottom:0,width:'60px',fontSize:'11px',padding:'3px 5px'}}/>
-                          </td>))}
-                        <td style={{padding:'4px 6px'}}>
-                          <input type="number" min="0.1" max="1" step="0.05" value={b.fill}
-                            onChange={e=>updateUserBin(b.id,'fill',e.target.value)}
-                            style={{...inp,marginBottom:0,width:'52px',fontSize:'11px',padding:'3px 5px'}}/>
-                        </td>
-                        <td style={{padding:'4px 6px',textAlign:'center'}}>
-                          {userBins.length>1&&<button onClick={()=>removeUserBin(b.id)}
-                            style={{background:'none',border:'none',color:'#be185d',cursor:'pointer',fontSize:'15px'}}>×</button>}
-                        </td>
-                      </tr>))}
-                  </tbody>
-                </table>
-              </div>
-              {userBins.length<5&&<button onClick={addUserBin}
-                style={{fontSize:'11px',fontWeight:'600',color:'#059669',background:'#f0fdf4',
-                  border:'1px dashed #86efac',borderRadius:'6px',padding:'5px 12px',
-                  cursor:'pointer',width:'100%'}}>+ Add Bin Type</button>}
+              {analysis?.binSummary && Object.keys(analysis.binSummary).length>0 ? (
+                <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
+                  {Object.entries(analysis.binSummary)
+                    .sort((a,b)=>['XS','S','M','L','XL','LONG'].indexOf(a[0])-['XS','S','M','L','XL','LONG'].indexOf(b[0]))
+                    .map(([band,info])=>{
+                      const bc=BIN_CATALOG[band];
+                      const overflow=userOverflowBins.find(o=>o.binKey===band);
+                      const COLORS={XS:['#f1f5f9','#64748b'],S:['#eff6ff','#1d4ed8'],
+                        M:['#f5f3ff','#7c3aed'],L:['#f0fdf4','#166534'],
+                        XL:['#fef9c3','#854d0e'],LONG:['#fdf4ff','#9333ea']};
+                      const [bg,col]=overflow?['#fff1f2','#be185d']:(COLORS[band]||['#f8fafc','#374151']);
+                      return(
+                        <div key={band} style={{background:bg,border:`1px solid ${col}33`,
+                          borderRadius:'8px',padding:'8px 12px',minWidth:'110px'}}>
+                          <div style={{fontWeight:'800',fontSize:'13px',color:col}}>
+                            {overflow?'⚠ ':''}{band}
+                          </div>
+                          <div style={{fontSize:'10px',color:col,opacity:0.8,marginBottom:'2px'}}>{info.name}</div>
+                          {bc?.phys&&<div style={{fontSize:'9px',color:'#6b7280'}}>{bc.phys[0]}×{bc.phys[1]}×{bc.phys[2]}mm</div>}
+                          <div style={{fontSize:'11px',fontWeight:'700',color:'#0f172a',marginTop:'2px'}}>
+                            {(info.locs||0).toLocaleString()} locs
+                          </div>
+                          {overflow&&<div style={{fontSize:'9px',color:'#be185d',marginTop:'2px',fontWeight:'600'}}>
+                            ✗ Doesn't fit in any rack
+                          </div>}
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : (
+                <div style={{fontSize:'12px',color:'#9ca3af',padding:'10px',
+                  background:'#f8fafc',borderRadius:'6px',textAlign:'center'}}>
+                  Run "Generate Warehouse Design" first to load bin types from system analysis
+                </div>
+              )}
             </div>
 
             {/* Custom rack sizes */}
@@ -3786,7 +3870,7 @@ export default function WarehouseDesignerTool() {
               <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'hidden',marginBottom:'8px'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
                   <thead><tr style={{background:'#f8fafc'}}>
-                    {['Rack Name','Rack Type','Bay W (mm)','Bay D (mm)','Bay H (mm)','Levels',''].map(h=>(
+                    {['Rack Name','Rack Type','Bay W (mm)','Bay D (mm)','Bay H (mm)','Shelf Levels',''].map(h=>(
                       <th key={h} style={{padding:'6px 8px',textAlign:'left',fontWeight:'700',
                         fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0'}}>{h}</th>))}
                   </tr></thead>
@@ -3823,24 +3907,27 @@ export default function WarehouseDesignerTool() {
                   </tbody>
                 </table>
               </div>
+              {/* Live stacking preview */}
+              {analysis?.binSummary && userRacks.some(r=>parseFloat(r.bayW)>0) && (
+                <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'8px',
+                  padding:'8px 12px',marginBottom:'8px',fontSize:'11px',color:'#166534'}}>
+                  <strong>⚡ Auto-calculating instantly as you type</strong> — rack config and 3D layout update live.<br/>
+                  <span style={{color:'#6b7280'}}>Vertical stacking: if shelf height ÷ bin height &gt; 1, multiple bins stack per slot.</span>
+                </div>
+              )}
               {userRacks.length<5&&<button onClick={addUserRack}
                 style={{fontSize:'11px',fontWeight:'600',color:'#7c3aed',background:'#f5f3ff',
                   border:'1px dashed #c4b5fd',borderRadius:'6px',padding:'5px 12px',
                   cursor:'pointer',width:'100%'}}>+ Add Rack Type</button>}
             </div>
 
-            {/* Run user calc button */}
-            <button onClick={runUserCalc} disabled={!masterText.trim()||userLoading}
-              style={{width:'100%',padding:'11px',marginBottom:'6px',
-                background:masterText.trim()&&!userLoading?'linear-gradient(135deg,#059669,#047857)':'#e2e8f0',
-                color:masterText.trim()&&!userLoading?'#fff':'#9ca3af',
-                border:'none',borderRadius:'9px',fontWeight:'700',fontSize:'14px',
-                cursor:masterText.trim()&&!userLoading?'pointer':'not-allowed',fontFamily:'inherit'}}>
-              {userLoading?'⏳ Calculating...':'▶ Calculate User Defined Storage'}
-            </button>
-            {!masterText.trim()&&<div style={{fontSize:'11px',color:'#9ca3af',textAlign:'center'}}>
-              Paste SKU data in Step 2 first
-            </div>}
+            {/* Results update automatically via useEffect */}
+            {!analysis && (
+              <div style={{fontSize:'11px',color:'#9ca3af',textAlign:'center',
+                padding:'8px',background:'#f8fafc',borderRadius:'6px'}}>
+                Run "Generate Warehouse Design" first, then enter rack sizes above
+              </div>
+            )}
           </>)}
 
           {/* Step 2: Master SKU — with preferred bin selector */}
@@ -4177,8 +4264,38 @@ export default function WarehouseDesignerTool() {
               </div>
             )}
 
-            {/* Overflow SKUs */}
-            {userResult.overflow.length>0&&(
+            {/* Overflow bins with SKU list */}
+            {userOverflowBins.length>0&&(
+              <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
+                <div style={{padding:'10px 14px',borderBottom:'1px solid #fecaca',
+                  background:'#fff1f2',fontWeight:'700',fontSize:'12px',color:'#991b1b'}}>
+                  ⚠ {userOverflowBins.length} Bin Type{userOverflowBins.length>1?'s':''} Don't Fit in Your Racks
+                </div>
+                {userOverflowBins.map((ob,i)=>{
+                  const overflowSkus=(analysis?.slotted||[]).filter(s=>s.bin===ob.binKey&&s.stock>0);
+                  return(
+                    <div key={i} style={{padding:'10px 14px',borderBottom:'1px solid #fee2e2',
+                      background:i%2===0?'#fff':'#fff8f8'}}>
+                      <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}>
+                        <span style={{fontWeight:'700',color:'#be185d'}}>{ob.binKey} — {ob.binName}</span>
+                        <span style={{fontSize:'11px',color:'#6b7280'}}>{ob.dims} · {ob.totalLocs} locations</span>
+                      </div>
+                      <div style={{fontSize:'11px',color:'#be185d',marginBottom:'6px'}}>✗ {ob.reason}</div>
+                      {overflowSkus.length>0&&(
+                        <div style={{fontSize:'10px',color:'#6b7280'}}>
+                          <strong style={{color:'#374151'}}>{overflowSkus.length} affected SKUs:</strong>{' '}
+                          {overflowSkus.slice(0,8).map(s=>s.sku).join(', ')}
+                          {overflowSkus.length>8&&` ... +${overflowSkus.length-8} more`}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Legacy overflow list (from calcUserDefinedStorage) */}
+            {userResult?.overflow?.length>0&&(
               <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
                 <div style={{padding:'10px 14px',borderBottom:'1px solid #fecaca',
                   background:'#fff1f2',fontWeight:'700',fontSize:'12px',color:'#991b1b',
