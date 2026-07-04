@@ -2801,19 +2801,19 @@ function exportPPT(analysis, design, params) {
   s1.addShape(prs.ShapeType.rect,{x:0,y:0,w:0.18,h:'100%',fill:{color:PINK}});
   s1.addText('DensiCube',{x:0.5,y:1.2,w:9,h:0.5,fontSize:13,color:'FBCFE8',bold:true,fontFace:'Calibri'});
   s1.addText('Warehouse Storage Design Report',{x:0.5,y:1.8,w:9,h:1.0,fontSize:32,color:WHITE,bold:true,fontFace:'Calibri'});
-  s1.addText(`${analysis.metrics.totSKUs.toLocaleString()} SKUs · ${analysis.metrics.totLocs.toLocaleString()} locations · ${design.wW}×${design.wL}m recommended`,
+  s1.addText(`${(analysis.metrics?.totSKUs||0).toLocaleString()} SKUs · ${(analysis.metrics?.totLocs||0).toLocaleString()} locations · ${design.wW}×${design.wL}m recommended`,
     {x:0.5,y:3.0,w:9,h:0.4,fontSize:13,color:'94A3B8',fontFace:'Calibri'});
   s1.addText(`Generated: ${today}`,{x:0.5,y:5.8,w:9,h:0.3,fontSize:10,color:'475569',fontFace:'Calibri'});
 
   // Slide 2: Key Metrics
   const s2=prs.addSlide(); hdr(s2,'Key Metrics','Headline numbers from SKU slotting analysis');
   const mStats=[
-    [analysis.metrics.totSKUs.toLocaleString(),'Total SKUs',PINK],
-    [analysis.metrics.totLocs.toLocaleString(),'Locations Required',BLUE],
-    [analysis.metrics.totStock.toLocaleString(),'Current Stock Units',GREEN],
+    [(analysis.metrics?.totSKUs||0).toLocaleString(),'Total SKUs',PINK],
+    [(analysis.metrics?.totLocs||0).toLocaleString(),'Locations Required',BLUE],
+    [(analysis.metrics?.totStock||0).toLocaleString(),'Current Stock Units',GREEN],
     [analysis.metrics.longCount,'Long/Awkward Items',AMBER],
     [`${design.wW}×${design.wL}m`,'Recommended Size',DARK],
-    [design.totalGrossArea.toLocaleString()+'m²','Gross Floor Area',GRAY],
+    [(design.totalGrossArea||0).toLocaleString()+'m²','Gross Floor Area',GRAY],
   ];
   mStats.forEach(([v,l,c],i)=>{
     const x=0.4+(i%3)*3.2, y=i<3?1.3:2.8;
@@ -2842,8 +2842,8 @@ function exportPPT(analysis, design, params) {
     {text:ZONE_DEFS[z]?.label||z,options:{bold:true,color:DARK}},
     {text:ZONE_DEFS[z]?.desc||'',options:{color:GRAY,fontSize:9}},
     {text:String(v.skus),options:{align:'center'}},
-    {text:v.locs.toLocaleString(),options:{align:'center',bold:true}},
-    {text:v.pickLines.toLocaleString(),options:{align:'center'}},
+    {text:(v.locs||0).toLocaleString(),options:{align:'center',bold:true}},
+    {text:(v.pickLines||0).toLocaleString(),options:{align:'center'}},
   ]);
   s4.addTable([
     [{text:'Zone',options:{bold:true,color:WHITE,fill:{color:PINK}}},
@@ -2860,8 +2860,8 @@ function exportPPT(analysis, design, params) {
   const rackRows2=Object.entries(analysis.rackSummary).map(([rk,rv])=>[
     {text:RACK_DEFS[rk]?.name||rk,options:{bold:true,color:DARK}},
     {text:RACK_DEFS[rk]?.desc||'',options:{color:GRAY,fontSize:9}},
-    {text:rv.skus.toLocaleString(),options:{align:'center'}},
-    {text:rv.locs.toLocaleString(),options:{align:'center',bold:true}},
+    {text:(rv.skus||0).toLocaleString(),options:{align:'center'}},
+    {text:r(v.locs||0).toLocaleString(),options:{align:'center',bold:true}},
     {text:String((design.rackAreas[rk]||0).toFixed(0))+'m²',options:{align:'center'}},
   ]);
   s5.addTable([
@@ -4064,8 +4064,8 @@ export default function WarehouseDesignerTool() {
                   <tbody>
                     {[
                       ['Total Locations',
-                        analysis.metrics.totLocs.toLocaleString(),
-                        userResult.totLocs.toLocaleString(),
+                        (analysis.metrics?.totLocs||0).toLocaleString(),
+                        (userResult?.totLocs||0).toLocaleString(),
                         userResult.totLocs - analysis.metrics.totLocs],
                       ['Floor Area (m²)',
                         (design.netRackArea||0).toFixed(0),
@@ -4075,7 +4075,7 @@ export default function WarehouseDesignerTool() {
                         (Object.values(analysis.binSummary||{}).reduce((s,b)=>s+b.utilPct,0)/Math.max(1,Object.keys(analysis.binSummary||{}).length)).toFixed(0)+'%',
                         userResult.overallUtil+'%',
                         userResult.overallUtil - (Object.values(analysis.binSummary||{}).reduce((s,b)=>s+b.utilPct,0)/Math.max(1,Object.keys(analysis.binSummary||{}).length))],
-                      ['Overflow SKUs', '0', userResult.overflow.length.toLocaleString(), userResult.overflow.length],
+                      ['Overflow SKUs', '0', (userResult?.overflow?.length||0).toLocaleString(), userResult.overflow.length],
                       ['Bin Types Used',
                         Object.keys(analysis.binSummary||{}).length,
                         userBins.filter(b=>parseFloat(b.L)>0).length,
@@ -4100,9 +4100,9 @@ export default function WarehouseDesignerTool() {
             {/* User result headline metrics */}
             <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'12px'}}>
               {[
-                [userResult.stored.length.toLocaleString(),'SKUs Stored','#f0fdf4','#166534'],
-                [userResult.totLocs.toLocaleString(),'Total Locations','#f5f3ff','#7c3aed'],
-                [userResult.overflow.length?userResult.overflow.length.toLocaleString():'0','Overflow SKUs',
+                [(userResult?.stored?.length||0).toLocaleString(),'SKUs Stored','#f0fdf4','#166534'],
+                [(userResult?.totLocs||0).toLocaleString(),'Total Locations','#f5f3ff','#7c3aed'],
+                [userResult.overflow.length?(userResult?.overflow?.length||0).toLocaleString():'0','Overflow SKUs',
                   userResult.overflow.length?'#fff1f2':'#f0fdf4',userResult.overflow.length?'#be185d':'#166534'],
                 [userResult.totArea.toFixed(0)+'m²','Floor Area','#fef9c3','#854d0e'],
                 [userResult.overallUtil+'%','Bin Utilisation',
@@ -4125,7 +4125,7 @@ export default function WarehouseDesignerTool() {
                 <div key={i} style={{marginBottom:'8px'}}>
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',marginBottom:'2px'}}>
                     <span style={{fontWeight:'600'}}>{b.name}</span>
-                    <span>{b.locs.toLocaleString()} locs · {b.stock.toLocaleString()} / {b.cap.toLocaleString()} units</span>
+                    <span>{(b.locs||0).toLocaleString()} locs · {(b.stock||0).toLocaleString()} / {(b.cap||0).toLocaleString()} units</span>
                     <span style={{fontWeight:'800',
                       color:b.utilPct>=80?'#166534':b.utilPct>=50?'#d97706':'#be185d'}}>{b.utilPct}%</span>
                   </div>
@@ -4187,7 +4187,7 @@ export default function WarehouseDesignerTool() {
                         </span>
                       </div>
                       <span style={{fontSize:'12px',fontWeight:'700',color:'#7c3aed'}}>
-                        {cfg.locs.toLocaleString()} locations
+                        {(cfg.locs||0).toLocaleString()} locations
                       </span>
                     </div>
                     <div style={{display:'grid',gridTemplateColumns:'240px 1fr',gap:'0'}}>
@@ -4316,7 +4316,7 @@ export default function WarehouseDesignerTool() {
                           <td style={{padding:'6px 10px'}}>{s.L||'—'}</td>
                           <td style={{padding:'6px 10px'}}>{s.W||'—'}</td>
                           <td style={{padding:'6px 10px'}}>{s.H||'—'}</td>
-                          <td style={{padding:'6px 10px',fontWeight:'600'}}>{s.stock.toLocaleString()}</td>
+                          <td style={{padding:'6px 10px',fontWeight:'600'}}>{(s.stock||0).toLocaleString()}</td>
                           <td style={{padding:'6px 10px',fontSize:'10px',color:'#6b7280'}}>{s.overflowReason}</td>
                         </tr>))}
                     </tbody>
@@ -4331,8 +4331,8 @@ export default function WarehouseDesignerTool() {
             {/* Headline metrics - only in system mode (needs design) */}
             {storageMode==='system' && design && (<div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px',marginBottom:'16px'}}>
               {[
-                ['Total SKUs', analysis.metrics.totSKUs.toLocaleString(), '#eff6ff','#1d4ed8'],
-                ['Locations Needed', analysis.metrics.totLocs.toLocaleString(), '#f5f3ff','#7c3aed'],
+                ['Total SKUs', (analysis.metrics?.totSKUs||0).toLocaleString(), '#eff6ff','#1d4ed8'],
+                ['Locations Needed', (analysis.metrics?.totLocs||0).toLocaleString(), '#f5f3ff','#7c3aed'],
                 ['Recommended Size', `${design.wW}×${design.wL}m`, '#f0fdf4','#166534'],
                 ['Gross Area', `${(design.wW*design.wL).toLocaleString()}m²\n(${Math.round(design.wW*design.wL*10.7639).toLocaleString()} sq ft)`, '#fef9c3','#854d0e'],
                 ['Dock Doors (calc.)', `${design.inboundDocks} inb + ${design.outboundDocks} out = ${design.totalDocks}`, '#e0f2fe','#0369a1'],
@@ -4420,9 +4420,9 @@ export default function WarehouseDesignerTool() {
                           borderRadius:'8px',padding:'8px 10px'}}>
                           <div style={{fontWeight:'800',fontSize:'14px',color:col}}>{band}</div>
                           <div style={{fontSize:'10px',color:col,opacity:0.8,marginBottom:'3px'}}>{info.name}</div>
-                          <div style={{fontSize:'12px',fontWeight:'600',color:'#0f172a'}}>{info.skus.toLocaleString()} SKUs</div>
+                          <div style={{fontSize:'12px',fontWeight:'600',color:'#0f172a'}}>{(info.skus||0).toLocaleString()} SKUs</div>
                           <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'5px'}}>
-                            {info.locs.toLocaleString()} locs · {pct}% of SKUs
+                            {(info.locs||0).toLocaleString()} locs · {pct}% of SKUs
                             {info.upgrades>0&&<span style={{marginLeft:'6px',background:'#eff6ff',
                               color:'#1d4ed8',borderRadius:'99px',padding:'1px 6px',fontSize:'10px',fontWeight:'700'}}>
                               ↑{info.upgrades} qty-upgraded
@@ -4454,7 +4454,7 @@ export default function WarehouseDesignerTool() {
                   <div style={{background:'#eff6ff',border:'1px solid #93c5fd',
                     borderRadius:'8px',padding:'8px 12px',fontSize:'12px',color:'#1d4ed8',marginBottom:'6px'}}>
                     <strong>📦 Quantity-driven upgrades:</strong>{' '}
-                    {analysis.totalQtyUpgrades.toLocaleString()} SKU{analysis.totalQtyUpgrades>1?'s were':' was'} assigned
+                    {(analysis.totalQtyUpgrades||0).toLocaleString()} SKU{(analysis.totalQtyUpgrades||0)>1?'s were':' was'} assigned
                     to a larger bin than their size alone required, to fit stock in ≤{BIN_LOC_TARGET} locations.
                     This reduces total location count significantly.
                   </div>
@@ -4517,7 +4517,7 @@ export default function WarehouseDesignerTool() {
                           </span>
                         </div>
                         <span style={{fontSize:'12px',fontWeight:'700',color:'#7c3aed'}}>
-                          {cfg.locs.toLocaleString()} locations needed
+                          {(cfg.locs||0).toLocaleString()} locations needed
                         </span>
                       </div>
 
@@ -4845,10 +4845,10 @@ export default function WarehouseDesignerTool() {
                           <span style={{fontWeight:'600'}}>{ZONE_DEFS[z]?.label||z}</span>
                         </div>
                       </td>
-                      <td style={{padding:'8px 12px',textAlign:'right'}}>{v.skus.toLocaleString()}</td>
-                      <td style={{padding:'8px 12px',textAlign:'right',fontWeight:'700',color:'#7c3aed'}}>{v.locs.toLocaleString()}</td>
-                      <td style={{padding:'8px 12px',textAlign:'right'}}>{v.stock.toLocaleString()}</td>
-                      <td style={{padding:'8px 12px',textAlign:'right'}}>{v.pickLines.toLocaleString()}</td>
+                      <td style={{padding:'8px 12px',textAlign:'right'}}>{(v.skus||0).toLocaleString()}</td>
+                      <td style={{padding:'8px 12px',textAlign:'right',fontWeight:'700',color:'#7c3aed'}}>{(v.locs||0).toLocaleString()}</td>
+                      <td style={{padding:'8px 12px',textAlign:'right'}}>{(v.stock||0).toLocaleString()}</td>
+                      <td style={{padding:'8px 12px',textAlign:'right'}}>{(v.pickLines||0).toLocaleString()}</td>
                     </tr>))}
                 </tbody>
               </table>
@@ -4873,7 +4873,7 @@ export default function WarehouseDesignerTool() {
                         <div style={{fontWeight:'600'}}>{RACK_DEFS[rk]?.name||rk}</div>
                         <div style={{fontSize:'11px',color:'#9ca3af'}}>{RACK_DEFS[rk]?.desc}</div>
                       </td>
-                      <td style={{padding:'8px 12px',textAlign:'right',fontWeight:'700'}}>{rv.locs.toLocaleString()}</td>
+                      <td style={{padding:'8px 12px',textAlign:'right',fontWeight:'700'}}>{r(v.locs||0).toLocaleString()}</td>
                       <td style={{padding:'8px 12px',textAlign:'right'}}>{(design.rackAreas[rk]||0).toFixed(0)}</td>
                       <td style={{padding:'8px 12px',color:'#6b7280',fontSize:'11px'}}>
                         {RACK_DEFS[rk]?.bayW}m × {RACK_DEFS[rk]?.bayD}m
@@ -4919,7 +4919,7 @@ export default function WarehouseDesignerTool() {
                         return<td key={s} style={{padding:'7px 12px',textAlign:'center'}}>{t.toLocaleString()}</td>;
                       })}
                       <td style={{padding:'7px 12px',textAlign:'center',color:'#7c3aed'}}>
-                        {analysis.metrics.totLocs.toLocaleString()}
+                        {(analysis.metrics?.totLocs||0).toLocaleString()}
                       </td>
                     </tr>
                   </tbody>
