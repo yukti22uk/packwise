@@ -984,7 +984,7 @@ function rackAreasFromConfig(rackConfig) {
 }
 
 // ─── WAREHOUSE SIZING ─────────────────────────────────────────────────────────
-function calcWarehouseSize(analysis, params, customRackAreas) {
+function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
   const { clearH, forkType, dockSide, aisleW } = params;
   const { rackSummary } = analysis;
 
@@ -1044,11 +1044,27 @@ function calcWarehouseSize(analysis, params, customRackAreas) {
   const wL = Math.ceil(totalGrossArea/wW/5)*5;
 
   // ── Zone areas ────────────────────────────────────────────────────────────
-  const totalLocs = analysis.metrics.totLocs || 1;
+  // Priority: customZoneAreas (exact, from uCfgs) > customRackAreas (rack-type mapped) > system zoneSummary
+  const RACK_TO_ZONE_CWS = {
+    shelving:'golden', liveStorage:'golden',
+    selective:'reserve', doubleDeep:'reserve',
+    driveIn:'bulk', cantilever:'long', ground:'bulk',
+  };
   const zoneAreas = {};
-  Object.entries(analysis.zoneSummary).forEach(([z, zs]) => {
-    zoneAreas[z] = +(netRackArea * (zs.locs/totalLocs)).toFixed(1);
-  });
+  if (customZoneAreas) {
+    // Exact zone areas from user rack config (no system zones bleed through)
+    Object.entries(customZoneAreas).forEach(([z, a]) => { zoneAreas[z] = +a.toFixed(1); });
+  } else if (customRackAreas) {
+    Object.entries(customRackAreas).forEach(([rack, area]) => {
+      const zone = RACK_TO_ZONE_CWS[rack] || 'golden';
+      zoneAreas[zone] = +((zoneAreas[zone]||0) + area).toFixed(1);
+    });
+  } else {
+    const totalLocs = analysis.metrics.totLocs || 1;
+    Object.entries(analysis.zoneSummary).forEach(([z, zs]) => {
+      zoneAreas[z] = +(netRackArea * (zs.locs/totalLocs)).toFixed(1);
+    });
+  }
 
   return { wW, wL,
     totalGrossArea: +totalGrossArea.toFixed(0),
@@ -3238,10 +3254,10 @@ export default function WarehouseDesignerTool() {
       totLocs:res.uCfgs.reduce((s,x)=>s+x.locs,0),
       totArea:res.uCfgs.reduce((s,x)=>s+(x.area||0),0),
       totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
-    const ca={};
-    res.uCfgs.forEach(x=>{ca[x.rack]=(ca[x.rack]||0)+(x.area||0);});
+    const ca={},cza={};
+    res.uCfgs.forEach(x=>{ca[x.rack]=(ca[x.rack]||0)+(x.area||0);cza[x.zone]=(cza[x.zone]||0)+(x.area||0);});
     if(!Object.keys(ca).length) ca.shelving=50;
-    try{setUserDesign(calcWarehouseSize(analysis,params,ca));}catch(e){}
+    try{setUserDesign(calcWarehouseSize(analysis,params,ca,cza));}catch(e){}
   },[userRacks,analysis,storageMode]); // eslint-disable-line
 
   const runAll = () => {
@@ -3273,10 +3289,13 @@ export default function WarehouseDesignerTool() {
               totLocs:res.uCfgs.reduce((s,x)=>s+x.locs,0),
               totArea:res.uCfgs.reduce((s,x)=>s+(x.area||0),0),
               totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
-            const ca2={};
-            res.uCfgs.forEach(x=>{ca2[x.rack]=(ca2[x.rack]||0)+(x.area||0);});
+            const ca2={},cza2={};
+            res.uCfgs.forEach(x=>{
+              ca2[x.rack]=(ca2[x.rack]||0)+(x.area||0);
+              cza2[x.zone]=(cza2[x.zone]||0)+(x.area||0);
+            });
             if(!Object.keys(ca2).length) ca2.shelving=50;
-            setUserDesign(calcWarehouseSize(a,params,ca2));
+            setUserDesign(calcWarehouseSize(a,params,ca2,cza2));
           } else {
             // No valid user racks yet — clear user results
             setUserResult({stored:[],overflow:[],totLocs:0,totArea:0,
@@ -3458,10 +3477,10 @@ export default function WarehouseDesignerTool() {
         setUserRackConfig(uCfgs.length>0?uCfgs:null);
 
         // Step 4: ALWAYS compute layout
-        const ca={};
-        uCfgs.forEach(cfg=>{ca[cfg.rack]=(ca[cfg.rack]||0)+(cfg.area||0);});
+        const ca={},cza={};
+        uCfgs.forEach(cfg=>{ca[cfg.rack]=(ca[cfg.rack]||0)+(cfg.area||0);});cza[cfg.zone]=(cza[cfg.zone]||0)+(cfg.area||0);
         if(!Object.keys(ca).length) ca.shelving=r?.totArea||50;
-        setUserDesign(calcWarehouseSize(curA,params,ca));
+        setUserDesign(calcWarehouseSize(curA,params,ca,cza));
 
       } catch(e){ console.error('User calc error:',e.message,e); }
       setUserLoading(false);
