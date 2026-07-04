@@ -2186,8 +2186,8 @@ function Warehouse3DModel({ analysis, design, params, rackConfig }) {
 
           // ── GROUND LOCATION ──────────────────────────────────────────────
           else if(dom==='ground'){
-            const stackLayers=zoneCfg?.stackH||zoneCfg?.levels||1;
-            const itemH=(zoneCfg?.binDims?.[2]||300)/1000; // bin height in metres
+            const stackLayers=zc?.stackH||zc?.levels||1;
+            const itemH=(zc?.binDims?.[2]||300)/1000; // bin height in metres
             const gW=2.0, nCols=Math.max(1,Math.floor((wW-0.4)/gW));
             const gndMat=new THREE.MeshPhongMaterial({color:0x92400e,opacity:0.3,transparent:true});
             // Ground footprint base
@@ -3910,46 +3910,61 @@ export default function WarehouseDesignerTool() {
                 Enter your rack bay dimensions. Tool calculates how many bins fit per bay
                 and how many bays are needed.
               </div>
-              <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'hidden',marginBottom:'8px'}}>
-                <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+              <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',
+                overflow:'auto',marginBottom:'8px'}}>
+                <table style={{width:'100%',minWidth:'520px',borderCollapse:'collapse',fontSize:'11px'}}>
                   <thead><tr style={{background:'#f8fafc'}}>
-                    {['Rack Name','Rack Type','Bay W (mm)','Bay D (mm)','Bay H (mm)','Shelf Levels',''].map(h=>(
-                      <th key={h} style={{padding:'6px 8px',textAlign:'left',fontWeight:'700',
-                        fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0'}}>{h}</th>))}
+                    {['Name','Type','Bay W','Bay D','Bay H','Levels*',''].map(h=>(
+                      <th key={h} style={{padding:'5px 6px',textAlign:'left',fontWeight:'700',
+                        fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0',
+                        whiteSpace:'nowrap'}}>{h}</th>))}
                   </tr></thead>
                   <tbody>
                     {userRacks.map((r,i)=>(
                       <tr key={r.id} style={{background:i%2===0?'#fff':'#fafbfc'}}>
-                        <td style={{padding:'4px 6px'}}>
+                        <td style={{padding:'3px 5px'}}>
                           <input value={r.name} onChange={e=>updateUserRack(r.id,'name',e.target.value)}
-                            style={{...inp,marginBottom:0,fontSize:'11px',padding:'3px 5px',width:'100%'}}/>
+                            style={{...inp,marginBottom:0,fontSize:'10px',padding:'2px 4px',width:'70px'}}/>
                         </td>
-                        <td style={{padding:'4px 6px'}}>
+                        <td style={{padding:'3px 5px'}}>
                           <select value={r.rackType||'shelving'}
                             onChange={e=>updateUserRack(r.id,'rackType',e.target.value)}
-                            style={{...inp,marginBottom:0,fontSize:'11px',padding:'3px 5px',width:'100%'}}>
+                            style={{...inp,marginBottom:0,fontSize:'10px',padding:'2px 3px',width:'80px'}}>
                             <option value="shelving">Shelving</option>
                             <option value="liveStorage">Carton Live</option>
                             <option value="selective">Selective Pallet</option>
                             <option value="doubleDeep">Double-Deep</option>
                             <option value="driveIn">Drive-In</option>
                             <option value="cantilever">Cantilever</option>
-                            <option value="ground">Ground Location</option>
+                            <option value="ground">Ground</option>
                           </select>
                         </td>
-                        {['bayW','bayD','bayH','levels'].map(f=>(
-                          <td key={f} style={{padding:'4px 6px'}}>
+                        {['bayW','bayD','bayH'].map(f=>(
+                          <td key={f} style={{padding:'3px 5px'}}>
                             <input type="number" min="1" value={r[f]}
                               onChange={e=>updateUserRack(r.id,f,e.target.value)}
-                              style={{...inp,marginBottom:0,width:'60px',fontSize:'11px',padding:'3px 5px'}}/>
+                              placeholder="mm"
+                              style={{...inp,marginBottom:0,width:'56px',fontSize:'10px',padding:'2px 4px'}}/>
                           </td>))}
-                        <td style={{padding:'4px 6px',textAlign:'center'}}>
+                        <td style={{padding:'3px 5px'}}>
+                          <input type="number" min="1" max="20" value={r.levels}
+                            onChange={e=>updateUserRack(r.id,'levels',e.target.value)}
+                            placeholder="1"
+                            title="Shelf Levels (for shelving) or Stack Layers (for ground)"
+                            style={{...inp,marginBottom:0,width:'44px',fontSize:'10px',padding:'2px 4px',
+                              background:'#fffbeb',border:'1px solid #fcd34d'}}/>
+                        </td>
+                        <td style={{padding:'3px 5px',textAlign:'center'}}>
                           {userRacks.length>1&&<button onClick={()=>removeUserRack(r.id)}
-                            style={{background:'none',border:'none',color:'#be185d',cursor:'pointer',fontSize:'15px'}}>×</button>}
+                            style={{background:'none',border:'none',color:'#be185d',cursor:'pointer',fontSize:'14px'}}>×</button>}
                         </td>
                       </tr>))}
                   </tbody>
                 </table>
+                <div style={{fontSize:'9px',color:'#6b7280',padding:'4px 8px',
+                  borderTop:'1px solid #f1f5f9',background:'#fafafa'}}>
+                  * Levels = number of shelves (shelving/selective) or stack layers (ground)
+                </div>
               </div>
               {/* Live stacking preview */}
               {analysis?.binSummary && userRacks.some(r=>parseFloat(r.bayW)>0) && (
