@@ -3069,6 +3069,142 @@ function calcUserDefinedStorage(slotted, userBins, userRacks, params) {
 }
 
 
+
+// ─── FORWARD PICK + RESERVE STORAGE CALCULATION ───────────────────────────────
+// Splits each SKU's stock between a forward pick face and reserve storage.
+// Forward locations = ceil(dailyPicks × forwardDays / unitsPerBin)
+// Reserve locations = ceil((totalStock - forwardStock) / unitsPerBin)
+function calcForwardReserve(analysis, forwardRacks, reserveRacks, forwardDays, params) {
+  if (!analysis?.slotted?.length) return null;
+  const CLEAR = 30;
+  const ORIENTS = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+  const aisleHalf = (parseFloat(params.aisleW)||3.0)/2;
+  const fDays = Math.max(1, parseInt(forwardDays)||3);
+  // Velocity → estimated daily picks if no order data
+  const VEL_PICKS = {VF:25,F:12,M:5,S:2,VS:1,NM:0};
+  // Zone assignment for forward (near dispatch) and reserve (back)
+  const FWD_ZONE = {shelving:'golden',liveStorage:'golden',selective:'mid',
+    doubleDeep:'mid',driveIn:'reserve',cantilever:'reserve',ground:'bulk'};
+  const RES_ZONE = {shelving:'reserve',liveStorage:'reserve',selective:'bulk',
+    doubleDeep:'bulk',driveIn:'bulk',cantilever:'long',ground:'bulk'};
+
+  const vFwd  = forwardRacks.filter(r=>parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
+  const vRes  = reserveRacks.filter(r=>parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
+
+  // Helper: find best fitting rack from a list for a given bin
+  const bestFit = (racks, bL, bW, bH) => {
+    let bestLPB=0, bestCfg=null;
+    racks.forEach(rk=>{
+      const rW=parseFloat(rk.bayW), rD=parseFloat(rk.bayD);
+      const rTH=parseFloat(rk.bayH)||2200;
+      const lvl=Math.max(1,parseInt(rk.levels)||1);
+      const shelfH=Math.floor(rTH/lvl);
+      const isGround=(rk.rackType||'shelving')==='ground';
+      if(isGround){
+        const dims=[bL,bW,bH].slice().sort((a,b)=>a-b);
+        const [d1,d2]=dims;
+        const oA={aw:Math.floor(rW/d1),ad:Math.floor(rD/d2)};
+        const oB={aw:Math.floor(rW/d2),ad:Math.floor(rD/d1)};
+        const best=oA.aw*oA.ad>=oB.aw*oB.ad?oA:oB;
+        if(!best.aw||!best.ad) return;
+        const stack=Math.max(1,parseInt(rk.levels)||1);
+        const lpb=best.aw*best.ad*stack;
+        if(lpb>bestLPB){bestLPB=lpb;bestCfg={rk,aw:best.aw,ad:best.ad,stack,lvl:1,shelfH:dims[2],lpb,orient:'ground'};}
+        return;
+      }
+      ORIENTS.forEach(([x,y,z])=>{
+        const dim=[bL,bW,bH];
+        const aw=Math.floor(rW/dim[x]),ad=Math.floor(rD/dim[y]);
+        if(!aw||!ad) return;
+        const stack=Math.floor((shelfH-CLEAR)/dim[z]);
+        if(stack<1) return;
+        const lpb=aw*ad*stack*lvl;
+        if(lpb>bestLPB){bestLPB=lpb;bestCfg={rk,aw,ad,stack,lvl,shelfH,lpb,orient:x===0?'LW':'WL'};}
+      });
+    });
+    return bestCfg;
+  };
+
+  const fwdCfgMap={}, resCfgMap={}, overflow=[];
+  const fwdLocs={}, resLocs={};
+
+  // Process each bin type from system analysis
+  Object.entries(analysis.binSummary||{}).forEach(([binKey,binInfo])=>{
+    const bc=BIN_CATALOG[binKey]; if(!bc?.phys) return;
+    const [bL,bW,bH]=bc.phys;
+    const totalLocs=binInfo.locs||0; if(!totalLocs) return;
+
+    // Estimate forward locations from slotted velocity data
+    const skusForBin=(analysis.slotted||[]).filter(s=>s.bin===binKey);
+    const totalDailyPicks=skusForBin.reduce((s,sku)=>{
+      const picks=sku.dailyPicks||sku.avgPicks||(VEL_PICKS[sku.velocity]||2);
+      const upb=sku.upb||1;
+      return s+Math.ceil((picks*fDays)/upb);
+    },0);
+    const fwdLocsNeeded=Math.min(totalDailyPicks, totalLocs);
+    const resLocsNeeded=Math.max(0, totalLocs-fwdLocsNeeded);
+
+    // Find best forward rack
+    if(fwdLocsNeeded>0 && vFwd.length>0){
+      const fc=bestFit(vFwd,bL,bW,bH);
+      if(fc){
+        const rt=fc.rk.rackType||'shelving';
+        const bays=Math.ceil(fwdLocsNeeded/fc.lpb);
+        const area=+(bays*(parseFloat(fc.rk.bayW)/1000)*((parseFloat(fc.rk.bayD)/1000)+aisleHalf)).toFixed(1);
+        if(!fwdCfgMap[`${binKey}-fwd`]){
+          fwdCfgMap[`${binKey}-fwd`]={
+            id:`fr-fwd-${binKey}`,rack:rt,bin:binKey,phase:'forward',
+            rackName:fc.rk.name||'Forward Pick',binName:binInfo.name||binKey,
+            binDims:[bL,bW,bH],bayW:parseFloat(fc.rk.bayW),bayD:parseFloat(fc.rk.bayD),
+            shelfH:parseFloat(fc.rk.bayH)||2200,tierHeight:fc.shelfH,clearance:CLEAR,
+            orientation:fc.orient,tiers:1,levels:fc.lvl,
+            acrossW:fc.aw,acrossD:fc.ad,stackH:fc.stack,
+            locsPerBay:fc.lpb,locsPerBayTotal:fc.lpb,
+            locs:fwdLocsNeeded,baysNeeded:bays,area,feasible:true,
+            zone:FWD_ZONE[rt]||'golden',
+          };
+        }
+        fwdLocs[binKey]=fwdLocsNeeded;
+      } else { overflow.push({binKey,phase:'forward',dims:`${bL}×${bW}×${bH}mm`,totalLocs:fwdLocsNeeded,reason:'No forward rack fits this bin'}); }
+    }
+
+    // Find best reserve rack
+    if(resLocsNeeded>0 && vRes.length>0){
+      const rc=bestFit(vRes,bL,bW,bH);
+      if(rc){
+        const rt=rc.rk.rackType||'selective';
+        const bays=Math.ceil(resLocsNeeded/rc.lpb);
+        const area=+(bays*(parseFloat(rc.rk.bayW)/1000)*((parseFloat(rc.rk.bayD)/1000)+aisleHalf)).toFixed(1);
+        if(!resCfgMap[`${binKey}-res`]){
+          resCfgMap[`${binKey}-res`]={
+            id:`fr-res-${binKey}`,rack:rt,bin:binKey,phase:'reserve',
+            rackName:rc.rk.name||'Reserve',binName:binInfo.name||binKey,
+            binDims:[bL,bW,bH],bayW:parseFloat(rc.rk.bayW),bayD:parseFloat(rc.rk.bayD),
+            shelfH:parseFloat(rc.rk.bayH)||6000,tierHeight:rc.shelfH,clearance:CLEAR,
+            orientation:rc.orient,tiers:1,levels:rc.lvl,
+            acrossW:rc.aw,acrossD:rc.ad,stackH:rc.stack,
+            locsPerBay:rc.lpb,locsPerBayTotal:rc.lpb,
+            locs:resLocsNeeded,baysNeeded:bays,area,feasible:true,
+            zone:RES_ZONE[rt]||'reserve',
+          };
+        }
+        resLocs[binKey]=resLocsNeeded;
+      } else { overflow.push({binKey,phase:'reserve',dims:`${bL}×${bW}×${bH}mm`,totalLocs:resLocsNeeded,reason:'No reserve rack fits this bin'}); }
+    }
+  });
+
+  const fwdCfgs=Object.values(fwdCfgMap);
+  const resCfgs=Object.values(resCfgMap);
+  const allCfgs=[...fwdCfgs,...resCfgs];
+  const totFwdLocs=Object.values(fwdLocs).reduce((s,v)=>s+v,0);
+  const totResLocs=Object.values(resLocs).reduce((s,v)=>s+v,0);
+  const totFwdArea=fwdCfgs.reduce((s,c)=>s+(c.area||0),0);
+  const totResArea=resCfgs.reduce((s,c)=>s+(c.area||0),0);
+
+  return {fwdCfgs,resCfgs,allCfgs,overflow,
+    totFwdLocs,totResLocs,totFwdArea,totResArea,fDays};
+}
+
 // ─── USER-DEFINED RACK CONFIG FROM SYSTEM BINS ───────────────────────────────
 // Bins are fixed from system analysis. User defines rack sizes only.
 // Supports vertical stacking: floor((shelfH - clearance) / binH) bins tall per slot.
@@ -3218,6 +3354,19 @@ export default function WarehouseDesignerTool() {
   const [userOverflowBins, setUserOverflowBins] = useState([]);
   const [userLoading, setUserLoading] = useState(false);
 
+  // ── Forward Pick + Reserve mode state ──────────────────────────────────────
+  const [forwardDays,  setForwardDays]  = useState('3');
+  const [forwardRacks, setForwardRacks] = useState([
+    {id:1,name:'Forward Pick',rackType:'shelving',bayW:'900',bayD:'600',bayH:'2200',levels:'4'},
+  ]);
+  const [reserveRacks, setReserveRacks] = useState([
+    {id:1,name:'Reserve SPR',rackType:'selective',bayW:'2700',bayD:'1100',bayH:'6000',levels:'4'},
+  ]);
+  const [frResult,     setFrResult]     = useState(null);
+  const [frDesign,     setFrDesign]     = useState(null);
+  const [frRackConfig, setFrRackConfig] = useState(null);
+  const [frOverflow,   setFrOverflow]   = useState([]);
+
   // Results
   const [analysis,  setAnalysis]  = useState(null);
   const [rackConfig,setRackConfig]= useState(null);
@@ -3279,6 +3428,25 @@ export default function WarehouseDesignerTool() {
     try{setUserDesign(calcWarehouseSize(analysis,params,ca,cza));}catch(e){}
   },[userRacks,analysis,storageMode]); // eslint-disable-line
 
+
+  // Auto-recalculate FR config when racks/days/analysis change
+  useEffect(()=>{
+    if(storageMode!=='fr') return;
+    if(!analysis?.binSummary||!Object.keys(analysis.binSummary).length) return;
+    const hasF=forwardRacks.some(r=>parseFloat(r.bayW)>0);
+    const hasR=reserveRacks.some(r=>parseFloat(r.bayW)>0);
+    if(!hasF&&!hasR) return;
+    const res=calcForwardReserve(analysis,forwardRacks,reserveRacks,forwardDays,params);
+    if(!res) return;
+    setFrResult(res);
+    setFrRackConfig(res.allCfgs);
+    setFrOverflow(res.overflow);
+    const cza={};
+    res.allCfgs.forEach(cfg=>{cza[cfg.zone]=(cza[cfg.zone]||0)+(cfg.area||0);});
+    if(!Object.keys(cza).length) cza.golden=50;
+    try{setFrDesign(calcWarehouseSize(analysis,params,null,cza));}catch(e){}
+  },[forwardRacks,reserveRacks,forwardDays,analysis,storageMode]); // eslint-disable-line
+
   const runAll = () => {
     setError(''); setLoading(true);
     setTimeout(() => {
@@ -3298,6 +3466,17 @@ export default function WarehouseDesignerTool() {
         const d = calcWarehouseSize(a, params);
         setDesign(d);
 
+        // If in FR mode, also run FR calc
+        if (storageMode === 'fr') {
+          const res=calcForwardReserve(a,forwardRacks,reserveRacks,forwardDays,params);
+          if(res){
+            setFrResult(res); setFrRackConfig(res.allCfgs); setFrOverflow(res.overflow);
+            const cza={};
+            res.allCfgs.forEach(cfg=>{cza[cfg.zone]=(cza[cfg.zone]||0)+(cfg.area||0);});
+            if(!Object.keys(cza).length) cza.golden=50;
+            try{setFrDesign(calcWarehouseSize(a,params,null,cza));}catch(e){}
+          }
+        }
         // If in user defined mode, ALSO run user calc immediately
         if (storageMode === 'user') {
           const res=calcUserRackConfigFromSystemBins(a,userRacks,params);
@@ -4105,6 +4284,190 @@ export default function WarehouseDesignerTool() {
           )}
 
           {/* ── USER DEFINED RESULTS ──────────────────────────────────────────────── */}
+          {/* ── FORWARD PICK + RESERVE RESULTS ─────────────────────────────── */}
+          {storageMode==='fr' && frResult && (<>
+            {/* Summary metrics */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'14px'}}>
+              {[
+                ['Forward Locations',(frResult.totFwdLocs||0).toLocaleString(),'#f0fdf4','#059669'],
+                ['Reserve Locations',(frResult.totResLocs||0).toLocaleString(),'#f5f3ff','#7c3aed'],
+                ['Forward Area',`${(frResult.totFwdArea||0).toFixed(0)}m²`,'#eff6ff','#1d4ed8'],
+                ['Reserve Area',`${(frResult.totResArea||0).toFixed(0)}m²`,'#fdf4ff','#9333ea'],
+                ['Total Locations',((frResult.totFwdLocs||0)+(frResult.totResLocs||0)).toLocaleString(),'#fff7ed','#c2410c'],
+                ['Cover Days',`${frResult.fDays} days`,'#fef9c3','#854d0e'],
+              ].map(([l,v,bg,col])=>(
+                <div key={l} style={{background:bg,borderRadius:'9px',padding:'9px',
+                  textAlign:'center',border:`1px solid ${col}22`}}>
+                  <div style={{fontSize:'15px',fontWeight:'800',color:col}}>{v}</div>
+                  <div style={{fontSize:'9px',color:'#6b7280',marginTop:'1px',fontWeight:'600',
+                    textTransform:'uppercase'}}>{l}</div>
+                </div>))}
+            </div>
+
+            {/* Forward Pick rack config */}
+            {frResult.fwdCfgs.length>0&&(
+              <div style={{...S.card,marginBottom:'10px'}}>
+                <div style={{fontWeight:'700',fontSize:'13px',color:'#059669',marginBottom:'8px'}}>
+                  🟢 Forward Pick Configuration — {frResult.fDays} day cover
+                </div>
+                {frResult.fwdCfgs.map((cfg,i)=>(
+                  <div key={i} style={{border:'1px solid #d1fae5',borderRadius:'9px',overflow:'hidden',marginBottom:'8px'}}>
+                    <div style={{background:'#f0fdf4',padding:'8px 12px',borderBottom:'1px solid #d1fae5',
+                      display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <div>
+                        <span style={{fontWeight:'700',fontSize:'12px',color:'#059669'}}>{cfg.rackName}</span>
+                        <span style={{fontSize:'10px',color:'#6b7280',marginLeft:'8px'}}>{cfg.binName}
+                          {cfg.binDims?` (${cfg.binDims.join('×')}mm)`:''}</span>
+                      </div>
+                      <span style={{fontSize:'12px',fontWeight:'700',color:'#059669'}}>
+                        {(cfg.locs||0).toLocaleString()} locs
+                      </span>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'240px 1fr'}}>
+                      <div style={{padding:'8px',background:'#fafffe',borderRight:'1px solid #d1fae5',
+                        display:'flex',flexDirection:'column',alignItems:'center'}}>
+                        <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
+                          textTransform:'uppercase',marginBottom:'3px'}}>Elevation</div>
+                        <RackElevationSVG cfg={cfg} W={220} H={140}/>
+                      </div>
+                      <div style={{padding:'10px',fontSize:'11px'}}>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'5px',marginBottom:'7px'}}>
+                          {[['Bay W',`${cfg.bayW}mm`],['Bay D',`${cfg.bayD}mm`],
+                            ['Shelves',cfg.levels],['Stack/slot',cfg.stackH||1],
+                            ['Items/W',cfg.acrossW],['Items/D',cfg.acrossD]
+                          ].map(([l,v])=>(
+                            <div key={l}><span style={{color:'#6b7280'}}>{l}: </span><strong>{v}</strong></div>))}
+                        </div>
+                        <div style={{background:'#f0fdf4',borderRadius:'7px',padding:'7px 10px',
+                          fontSize:'11px',color:'#166534',fontWeight:'700'}}>
+                          ✓ {cfg.acrossW}W × {cfg.acrossD}D × {cfg.levels} shelves × {cfg.stackH||1} stacked
+                          = {cfg.locsPerBayTotal}/bay → {cfg.baysNeeded} bays → {cfg.area}m²
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Reserve rack config */}
+            {frResult.resCfgs.length>0&&(
+              <div style={{...S.card,marginBottom:'10px'}}>
+                <div style={{fontWeight:'700',fontSize:'13px',color:'#7c3aed',marginBottom:'8px'}}>
+                  🟣 Reserve Storage Configuration
+                </div>
+                {frResult.resCfgs.map((cfg,i)=>(
+                  <div key={i} style={{border:'1px solid #ede9fe',borderRadius:'9px',overflow:'hidden',marginBottom:'8px'}}>
+                    <div style={{background:'#f5f3ff',padding:'8px 12px',borderBottom:'1px solid #ede9fe',
+                      display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <div>
+                        <span style={{fontWeight:'700',fontSize:'12px',color:'#7c3aed'}}>{cfg.rackName}</span>
+                        <span style={{fontSize:'10px',color:'#6b7280',marginLeft:'8px'}}>{cfg.binName}
+                          {cfg.binDims?` (${cfg.binDims.join('×')}mm)`:''}</span>
+                      </div>
+                      <span style={{fontSize:'12px',fontWeight:'700',color:'#7c3aed'}}>
+                        {(cfg.locs||0).toLocaleString()} locs
+                      </span>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'240px 1fr'}}>
+                      <div style={{padding:'8px',background:'#faf9ff',borderRight:'1px solid #ede9fe',
+                        display:'flex',flexDirection:'column',alignItems:'center'}}>
+                        <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
+                          textTransform:'uppercase',marginBottom:'3px'}}>Elevation</div>
+                        <RackElevationSVG cfg={cfg} W={220} H={140}/>
+                      </div>
+                      <div style={{padding:'10px',fontSize:'11px'}}>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'5px',marginBottom:'7px'}}>
+                          {[['Bay W',`${cfg.bayW}mm`],['Bay D',`${cfg.bayD}mm`],
+                            ['Levels',cfg.levels],['Stack/slot',cfg.stackH||1],
+                            ['Items/W',cfg.acrossW],['Items/D',cfg.acrossD]
+                          ].map(([l,v])=>(
+                            <div key={l}><span style={{color:'#6b7280'}}>{l}: </span><strong>{v}</strong></div>))}
+                        </div>
+                        <div style={{background:'#f5f3ff',borderRadius:'7px',padding:'7px 10px',
+                          fontSize:'11px',color:'#4c1d95',fontWeight:'700'}}>
+                          ✓ {cfg.acrossW}W × {cfg.acrossD}D × {cfg.levels} levels × {cfg.stackH||1} stacked
+                          = {cfg.locsPerBayTotal}/bay → {cfg.baysNeeded} bays → {cfg.area}m²
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Overflow */}
+            {frOverflow.length>0&&(
+              <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
+                <div style={{padding:'9px 14px',background:'#fff1f2',borderBottom:'1px solid #fecaca',
+                  fontWeight:'700',fontSize:'12px',color:'#991b1b'}}>
+                  ⚠ {frOverflow.length} bin type(s) could not be accommodated
+                </div>
+                {frOverflow.map((o,i)=>{
+                  const skus=(analysis?.slotted||[]).filter(s=>s.bin===o.binKey);
+                  return(<div key={i} style={{padding:'8px 14px',borderBottom:'1px solid #fee2e2',fontSize:'11px'}}>
+                    <strong style={{color:'#be185d'}}>{o.binKey} — {o.binName}</strong>
+                    <span style={{color:'#9ca3af',marginLeft:'8px'}}>{o.dims}</span>
+                    <span style={{marginLeft:'8px',fontSize:'10px',color:'#ef4444',
+                      background:'#fff1f2',padding:'1px 6px',borderRadius:'4px'}}>
+                      {o.phase==='forward'?'No forward rack fits':'No reserve rack fits'}
+                    </span>
+                    {skus.length>0&&<div style={{fontSize:'10px',color:'#6b7280',marginTop:'3px'}}>
+                      {skus.length} SKUs: {skus.slice(0,5).map(s=>s.sku).join(', ')}
+                      {skus.length>5&&` +${skus.length-5} more`}
+                    </div>}
+                  </div>);
+                })}
+              </div>
+            )}
+
+            {/* 3D / 2D Layout */}
+            {frDesign&&(
+              <div style={{...S.card,marginBottom:'10px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}}>
+                  <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a'}}>
+                    {viewMode3D==='3d'?'🧊 3D Layout — Forward Pick + Reserve':'📐 Plan View — Forward Pick + Reserve'}
+                  </div>
+                  <div style={{display:'flex',gap:'6px'}}>
+                    {[['2d','📐 Plan'],['3d','🧊 3D']].map(([m,l])=>(
+                      <button key={m} onClick={()=>setViewMode3D(m)}
+                        style={{padding:'4px 12px',borderRadius:'7px',cursor:'pointer',
+                          fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                          border:`2px solid ${viewMode3D===m?'#7c3aed':'#e2e8f0'}`,
+                          background:viewMode3D===m?'#f5f3ff':'#fff',
+                          color:viewMode3D===m?'#7c3aed':'#6b7280'}}>{l}</button>))}
+                  </div>
+                </div>
+                {viewMode3D==='3d'
+                  ?<Warehouse3DModel analysis={analysis} design={frDesign}
+                      params={params} rackConfig={frRackConfig||[]}/>
+                  :(<div ref={plan2DRef}>
+                    <FloorPlanSVG analysis={analysis} design={frDesign}
+                      params={params} rackConfig={frRackConfig||[]}/>
+                    </div>)}
+                {viewMode3D==='2d'&&(
+                  <div style={{display:'flex',gap:'8px',marginTop:'10px',flexWrap:'wrap'}}>
+                    <button onClick={()=>downloadPlan2D('svg')}
+                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
+                        fontSize:'11px',fontWeight:'700',background:'#f0fdf4',border:'1px solid #86efac',color:'#166534'}}>
+                      ⬇ Download SVG
+                    </button>
+                    <button onClick={()=>downloadPlan2D('png')}
+                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
+                        fontSize:'11px',fontWeight:'700',background:'#eff6ff',border:'1px solid #93c5fd',color:'#1d4ed8'}}>
+                      ⬇ Download PNG (2×)
+                    </button>
+                    <button onClick={()=>exportDXF(analysis,frDesign,params,frRackConfig||[])}
+                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
+                        fontSize:'11px',fontWeight:'700',background:'#fef9c3',border:'1px solid #fde047',color:'#854d0e'}}>
+                      ⬇ Download DXF
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </>)}
+
           {storageMode==='user' && (userResult||userDesign) && (<>
 
             {/* Comparison table (when both results exist) */}
@@ -4566,7 +4929,158 @@ export default function WarehouseDesignerTool() {
           {/* ── USER DEFINED RESULTS ────────────────────────────────── */}
 
           {/* ── SYSTEM DEFINED RESULTS (shown when in system mode) ────── */}
+          {storageMode==='fr' && (<>
+            {/* ── FORWARD DAYS ────────────────────────────────────────── */}
+            <div style={S.card}>
+              <div style={S.cardTitle}>📦 Forward Pick + Reserve Storage</div>
+              <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'10px'}}>
+                Stock is split: a <strong>forward pick face</strong> holds active picking stock
+                (days of cover), <strong>reserve</strong> holds the remainder and replenishes
+                the forward face. Define both rack types below.
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'12px',
+                background:'#eff6ff',borderRadius:'8px',padding:'8px 12px'}}>
+                <span style={{fontSize:'12px',fontWeight:'700',color:'#1d4ed8'}}>
+                  📅 Days of Forward Stock Cover:
+                </span>
+                <input type="number" min="1" max="30" value={forwardDays}
+                  onChange={e=>setForwardDays(e.target.value)}
+                  style={{...inp,marginBottom:0,width:'60px',fontSize:'14px',
+                    fontWeight:'800',textAlign:'center',padding:'4px 6px'}}/>
+                <span style={{fontSize:'11px',color:'#6b7280'}}>days</span>
+              </div>
+            </div>
+
+            {/* ── FORWARD PICK RACKS ─────────────────────────────────── */}
+            <div style={S.card}>
+              <div style={{fontWeight:'700',fontSize:'12px',color:'#059669',marginBottom:'6px'}}>
+                🟢 Forward Pick Racks <span style={{fontSize:'10px',color:'#6b7280',fontWeight:'400'}}>
+                  — ergonomic, near dispatch, daily replenished
+                </span>
+              </div>
+              <div style={{border:'1px solid #d1fae5',borderRadius:'8px',overflow:'auto',marginBottom:'6px'}}>
+                <table style={{width:'100%',minWidth:'480px',borderCollapse:'collapse',fontSize:'10px'}}>
+                  <thead><tr style={{background:'#f0fdf4'}}>
+                    {['Name','Type','Bay W','Bay D','Bay H','Levels*',''].map(h=>(
+                      <th key={h} style={{padding:'5px 6px',textAlign:'left',fontWeight:'700',
+                        color:'#059669',borderBottom:'1px solid #d1fae5',whiteSpace:'nowrap'}}>{h}</th>))}
+                  </tr></thead>
+                  <tbody>
+                    {forwardRacks.map((r,i)=>(
+                      <tr key={r.id} style={{background:i%2===0?'#fff':'#f9fffe'}}>
+                        <td style={{padding:'3px 4px'}}>
+                          <input value={r.name} onChange={e=>setForwardRacks(prev=>prev.map(x=>x.id===r.id?{...x,name:e.target.value}:x))}
+                            style={{...inp,marginBottom:0,fontSize:'10px',padding:'2px 4px',width:'65px'}}/>
+                        </td>
+                        <td style={{padding:'3px 4px'}}>
+                          <select value={r.rackType||'shelving'} onChange={e=>setForwardRacks(prev=>prev.map(x=>x.id===r.id?{...x,rackType:e.target.value}:x))}
+                            style={{...inp,marginBottom:0,fontSize:'10px',padding:'2px 3px',width:'80px'}}>
+                            <option value="shelving">Shelving</option>
+                            <option value="liveStorage">Flow Rack</option>
+                            <option value="selective">Selective</option>
+                            <option value="ground">Ground</option>
+                          </select>
+                        </td>
+                        {['bayW','bayD','bayH'].map(f=>(
+                          <td key={f} style={{padding:'3px 4px'}}>
+                            <input type="number" min="1" value={r[f]} placeholder="mm"
+                              onChange={e=>setForwardRacks(prev=>prev.map(x=>x.id===r.id?{...x,[f]:e.target.value}:x))}
+                              style={{...inp,marginBottom:0,width:'54px',fontSize:'10px',padding:'2px 4px'}}/>
+                          </td>))}
+                        <td style={{padding:'3px 4px'}}>
+                          <input type="number" min="1" value={r.levels} placeholder="4"
+                            onChange={e=>setForwardRacks(prev=>prev.map(x=>x.id===r.id?{...x,levels:e.target.value}:x))}
+                            style={{...inp,marginBottom:0,width:'40px',fontSize:'10px',padding:'2px 4px',
+                              background:'#fffbeb',border:'1px solid #fcd34d'}}/>
+                        </td>
+                        <td style={{padding:'3px 4px',textAlign:'center'}}>
+                          {forwardRacks.length>1&&<button onClick={()=>setForwardRacks(p=>p.filter(x=>x.id!==r.id))}
+                            style={{background:'none',border:'none',color:'#be185d',cursor:'pointer',fontSize:'13px'}}>×</button>}
+                        </td>
+                      </tr>))}
+                  </tbody>
+                </table>
+                <div style={{fontSize:'9px',color:'#6b7280',padding:'3px 8px',background:'#f9fffe',
+                  borderTop:'1px solid #d1fae5'}}>
+                  * Shelves per rack (shelving/flow) or stack layers (ground)
+                </div>
+              </div>
+              {forwardRacks.length<3&&<button onClick={()=>setForwardRacks(p=>[...p,{id:Date.now(),name:`Forward ${p.length+1}`,rackType:'shelving',bayW:'',bayD:'',bayH:'',levels:''}])}
+                style={{fontSize:'11px',fontWeight:'600',color:'#059669',background:'#f0fdf4',
+                  border:'1px dashed #86efac',borderRadius:'6px',padding:'4px 10px',
+                  cursor:'pointer',width:'100%'}}>+ Add Forward Rack</button>}
+            </div>
+
+            {/* ── RESERVE RACKS ──────────────────────────────────────── */}
+            <div style={S.card}>
+              <div style={{fontWeight:'700',fontSize:'12px',color:'#7c3aed',marginBottom:'6px'}}>
+                🟣 Reserve Storage Racks <span style={{fontSize:'10px',color:'#6b7280',fontWeight:'400'}}>
+                  — bulk, forklift access, replenishes forward
+                </span>
+              </div>
+              <div style={{border:'1px solid #ede9fe',borderRadius:'8px',overflow:'auto',marginBottom:'6px'}}>
+                <table style={{width:'100%',minWidth:'480px',borderCollapse:'collapse',fontSize:'10px'}}>
+                  <thead><tr style={{background:'#f5f3ff'}}>
+                    {['Name','Type','Bay W','Bay D','Bay H','Levels*',''].map(h=>(
+                      <th key={h} style={{padding:'5px 6px',textAlign:'left',fontWeight:'700',
+                        color:'#7c3aed',borderBottom:'1px solid #ede9fe',whiteSpace:'nowrap'}}>{h}</th>))}
+                  </tr></thead>
+                  <tbody>
+                    {reserveRacks.map((r,i)=>(
+                      <tr key={r.id} style={{background:i%2===0?'#fff':'#faf9ff'}}>
+                        <td style={{padding:'3px 4px'}}>
+                          <input value={r.name} onChange={e=>setReserveRacks(prev=>prev.map(x=>x.id===r.id?{...x,name:e.target.value}:x))}
+                            style={{...inp,marginBottom:0,fontSize:'10px',padding:'2px 4px',width:'65px'}}/>
+                        </td>
+                        <td style={{padding:'3px 4px'}}>
+                          <select value={r.rackType||'selective'} onChange={e=>setReserveRacks(prev=>prev.map(x=>x.id===r.id?{...x,rackType:e.target.value}:x))}
+                            style={{...inp,marginBottom:0,fontSize:'10px',padding:'2px 3px',width:'80px'}}>
+                            <option value="selective">Selective SPR</option>
+                            <option value="doubleDeep">Double-Deep</option>
+                            <option value="driveIn">Drive-In</option>
+                            <option value="cantilever">Cantilever</option>
+                            <option value="ground">Ground</option>
+                            <option value="shelving">Shelving</option>
+                          </select>
+                        </td>
+                        {['bayW','bayD','bayH'].map(f=>(
+                          <td key={f} style={{padding:'3px 4px'}}>
+                            <input type="number" min="1" value={r[f]} placeholder="mm"
+                              onChange={e=>setReserveRacks(prev=>prev.map(x=>x.id===r.id?{...x,[f]:e.target.value}:x))}
+                              style={{...inp,marginBottom:0,width:'54px',fontSize:'10px',padding:'2px 4px'}}/>
+                          </td>))}
+                        <td style={{padding:'3px 4px'}}>
+                          <input type="number" min="1" value={r.levels} placeholder="4"
+                            onChange={e=>setReserveRacks(prev=>prev.map(x=>x.id===r.id?{...x,levels:e.target.value}:x))}
+                            style={{...inp,marginBottom:0,width:'40px',fontSize:'10px',padding:'2px 4px',
+                              background:'#fffbeb',border:'1px solid #fcd34d'}}/>
+                        </td>
+                        <td style={{padding:'3px 4px',textAlign:'center'}}>
+                          {reserveRacks.length>1&&<button onClick={()=>setReserveRacks(p=>p.filter(x=>x.id!==r.id))}
+                            style={{background:'none',border:'none',color:'#be185d',cursor:'pointer',fontSize:'13px'}}>×</button>}
+                        </td>
+                      </tr>))}
+                  </tbody>
+                </table>
+                <div style={{fontSize:'9px',color:'#6b7280',padding:'3px 8px',background:'#faf9ff',
+                  borderTop:'1px solid #ede9fe'}}>
+                  * Shelf levels or stack layers
+                </div>
+              </div>
+              {reserveRacks.length<4&&<button onClick={()=>setReserveRacks(p=>[...p,{id:Date.now(),name:`Reserve ${p.length+1}`,rackType:'selective',bayW:'',bayD:'',bayH:'',levels:''}])}
+                style={{fontSize:'11px',fontWeight:'600',color:'#7c3aed',background:'#f5f3ff',
+                  border:'1px dashed #c4b5fd',borderRadius:'6px',padding:'4px 10px',
+                  cursor:'pointer',width:'100%'}}>+ Add Reserve Rack</button>}
+            </div>
+
+            {!analysis&&<div style={{fontSize:'11px',color:'#9ca3af',textAlign:'center',
+              padding:'8px',background:'#f8fafc',borderRadius:'6px'}}>
+              Run "Generate Warehouse Design" above to load SKU data first
+            </div>}
+          </>)}
+
           {storageMode==='system' && (<>
+          {/* ── FORWARD PICK + RESERVE INPUT PANEL ─────────────────────── */}
           {/* End of user results — system results start */}
             {analysis.binSummary && Object.keys(analysis.binSummary).length > 0 && (
               <div style={{...S.card,marginBottom:'12px'}}>
