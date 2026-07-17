@@ -4744,89 +4744,130 @@ export default function WarehouseDesignerTool() {
               </div>
             )}
 
-            {/* Overflow bins with full SKU details */}
-            {userOverflowBins.length>0&&(
-              <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
-                <div style={{padding:'10px 14px',borderBottom:'1px solid #fecaca',
-                  background:'#fff1f2',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                  <span style={{fontWeight:'700',fontSize:'12px',color:'#991b1b'}}>
-                    ⚠ {userOverflowBins.length} Bin Type{userOverflowBins.length>1?'s':''} Don't Fit — Excluded from Layout
-                  </span>
-                  <span style={{fontSize:'11px',color:'#be185d'}}>
-                    {userOverflowBins.reduce((s,o)=>{
-                      return s+(analysis?.slotted||[]).filter(x=>x.bin===o.binKey).length;
-                    },0)} SKUs affected
-                  </span>
-                </div>
-                {userOverflowBins.map((ob,i)=>{
-                  const overflowSkus=(analysis?.slotted||[])
-                    .filter(s=>s.bin===ob.binKey)
-                    .sort((a,b)=>b.stock-a.stock);
-                  return(
-                    <div key={i} style={{borderBottom:'1px solid #fee2e2',
-                      background:i%2===0?'#fff':'#fff8f8'}}>
-                      {/* Bin type header */}
-                      <div style={{padding:'8px 14px',display:'flex',
-                        justifyContent:'space-between',alignItems:'center',
-                        borderBottom:'1px solid #fecaca',background:'#fff1f2'}}>
-                        <div>
-                          <span style={{fontWeight:'700',fontSize:'12px',color:'#be185d'}}>
-                            {ob.binKey} — {ob.binName}
-                          </span>
-                          <span style={{fontSize:'10px',color:'#9ca3af',marginLeft:'8px'}}>{ob.dims}</span>
-                        </div>
-                        <div style={{textAlign:'right',fontSize:'11px'}}>
-                          <span style={{color:'#be185d',fontWeight:'600'}}>{ob.totalLocs} locations</span>
-                          <span style={{color:'#9ca3af',marginLeft:'6px'}}>· {overflowSkus.length} SKUs</span>
-                        </div>
-                      </div>
-                      <div style={{fontSize:'10px',color:'#be185d',padding:'4px 14px',
-                        background:'#fff8f8',borderBottom:'1px solid #fecaca'}}>
-                        ✗ {ob.reason} — increase Bay W/D or add a larger rack
-                      </div>
-                      {/* SKU table */}
-                      {overflowSkus.length>0&&(
-                        <div style={{padding:'4px 0'}}>
-                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:'10px'}}>
-                            <thead><tr style={{background:'#fef2f2'}}>
-                              {['SKU','Description','Velocity','Stock','Locations'].map(h=>(
-                                <th key={h} style={{padding:'4px 10px',textAlign:'left',
-                                  color:'#9ca3af',fontWeight:'700',borderBottom:'1px solid #fee2e2'}}>{h}</th>
-                              ))}
-                            </tr></thead>
-                            <tbody>
-                              {overflowSkus.slice(0,10).map((s,si)=>(
-                                <tr key={si} style={{background:si%2===0?'#fff':'#fff8f8'}}>
-                                  <td style={{padding:'4px 10px',fontWeight:'700',color:'#0f172a'}}>{s.sku}</td>
-                                  <td style={{padding:'4px 10px',color:'#374151',maxWidth:'150px',
-                                    overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.desc||'—'}</td>
-                                  <td style={{padding:'4px 10px'}}>
-                                    <span style={{
-                                      background:{VF:'#fef9c3',F:'#f0fdf4',M:'#eff6ff',S:'#fdf4ff',VS:'#f1f5f9',NM:'#f8fafc'}[s.velocity]||'#f8fafc',
-                                      color:{VF:'#854d0e',F:'#166534',M:'#1d4ed8',S:'#7c3aed',VS:'#64748b',NM:'#9ca3af'}[s.velocity]||'#374151',
-                                      padding:'1px 6px',borderRadius:'4px',fontWeight:'700',fontSize:'9px'
-                                    }}>{s.velocity||'?'}</span>
-                                  </td>
-                                  <td style={{padding:'4px 10px',color:'#374151'}}>{(s.stock||0).toLocaleString()}</td>
-                                  <td style={{padding:'4px 10px',fontWeight:'700',color:'#be185d'}}>{s.locsReq||s.locs||1}</td>
-                                </tr>
-                              ))}
-                              {overflowSkus.length>10&&(
-                                <tr><td colSpan={5} style={{padding:'4px 10px',
-                                  color:'#9ca3af',fontStyle:'italic'}}>
-                                  ... and {overflowSkus.length-10} more SKUs
-                                </td></tr>
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
+            {/* ── OVERFLOW SKUs — direct scan of slotted data ─────────────── */}
+            {(()=>{
+              // Scan ALL slotted SKUs — flag those whose bin is NOT in any user rack
+              const fittedBins=new Set((userRackConfig||[]).map(c=>c.bin));
+              const unfitted={};
+              (analysis?.slotted||[]).forEach(s=>{
+                if(fittedBins.has(s.bin)) return;
+                if(!unfitted[s.bin]) unfitted[s.bin]={
+                  binKey:s.bin,
+                  binName:s.binName||BIN_CATALOG[s.bin]?.name||s.bin,
+                  dims:(BIN_CATALOG[s.bin]?.phys||[]).join('×')+'mm',
+                  skus:[], totalLocs:0,
+                  reason:(userOverflowBins.find(o=>o.binKey===s.bin)?.reason)
+                    ||'No user rack can accommodate this bin size',
+                };
+                unfitted[s.bin].skus.push(s);
+                unfitted[s.bin].totalLocs+=(s.locsReq||1);
+              });
+              const groups=Object.values(unfitted).sort((a,b)=>b.totalLocs-a.totalLocs);
+              if(!groups.length) return null;
+              const totalSkus=groups.reduce((s,g)=>s+g.skus.length,0);
+              const totalLocs=groups.reduce((s,g)=>s+g.totalLocs,0);
+              return(
+                <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
+                  {/* Header */}
+                  <div style={{padding:'10px 14px',background:'#fff1f2',
+                    borderBottom:'1px solid #fecaca',
+                    display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'4px'}}>
+                    <span style={{fontWeight:'700',fontSize:'12px',color:'#991b1b'}}>
+                      ⚠ {groups.length} Bin Type{groups.length>1?'s':''} Don't Fit in Your Racks
+                      — Excluded from Layout
+                    </span>
+                    <div style={{fontSize:'11px',color:'#be185d',fontWeight:'600'}}>
+                      {totalSkus} SKUs · {totalLocs.toLocaleString()} locations
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                  </div>
 
+                  {groups.map((grp,gi)=>(
+                    <div key={gi} style={{borderBottom:'1px solid #fee2e2'}}>
+                      {/* Bin type row */}
+                      <div style={{padding:'7px 14px',
+                        background:gi%2===0?'#fff8f8':'#fff',
+                        display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <div>
+                          <span style={{fontWeight:'700',color:'#be185d',fontSize:'12px'}}>
+                            {grp.binKey} — {grp.binName}
+                          </span>
+                          <span style={{fontSize:'9px',color:'#9ca3af',marginLeft:'8px'}}>
+                            {grp.dims}
+                          </span>
+                        </div>
+                        <span style={{fontSize:'11px',fontWeight:'700',color:'#be185d'}}>
+                          {grp.skus.length} SKUs · {grp.totalLocs} locs
+                        </span>
+                      </div>
+
+                      {/* Fix hint */}
+                      <div style={{padding:'3px 14px 6px',fontSize:'10px',color:'#dc2626',
+                        background:'#fff5f5',borderBottom:'1px solid #fecaca'}}>
+                        ✗ {grp.reason}
+                        {BIN_CATALOG[grp.binKey]?.phys&&(
+                          <span style={{color:'#9ca3af',marginLeft:'6px'}}>
+                            — add a rack with {grp.binKey==='LONG'?'Ground / Cantilever type, or ':''}
+                            Bay W/D &gt; {Math.min(...(BIN_CATALOG[grp.binKey]?.phys||[999]))}mm
+                          </span>
+                        )}
+                      </div>
+
+                      {/* SKU list */}
+                      <div style={{overflowX:'auto'}}>
+                        <table style={{width:'100%',minWidth:'400px',
+                          borderCollapse:'collapse',fontSize:'10px'}}>
+                          <thead>
+                            <tr style={{background:'#fef2f2'}}>
+                              {['SKU Code','Description','Velocity','Stock','Locs'].map(h=>(
+                                <th key={h} style={{padding:'4px 8px',textAlign:'left',
+                                  color:'#9ca3af',fontWeight:'700',
+                                  borderBottom:'1px solid #fee2e2',
+                                  whiteSpace:'nowrap'}}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {grp.skus.sort((a,b)=>b.stock-a.stock).slice(0,20).map((s,si)=>(
+                              <tr key={si} style={{background:si%2===0?'#fff':'#fff8f8'}}>
+                                <td style={{padding:'3px 8px',fontWeight:'700',
+                                  color:'#0f172a',whiteSpace:'nowrap'}}>{s.sku}</td>
+                                <td style={{padding:'3px 8px',color:'#374151',
+                                  maxWidth:'160px',overflow:'hidden',
+                                  textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                                  {s.desc||s.name||'—'}
+                                </td>
+                                <td style={{padding:'3px 8px'}}>
+                                  <span style={{
+                                    background:{VF:'#fef9c3',F:'#f0fdf4',M:'#eff6ff',
+                                      S:'#fdf4ff',VS:'#f1f5f9',NM:'#f8fafc'}[s.vb||s.velocity]||'#f8fafc',
+                                    color:{VF:'#854d0e',F:'#166534',M:'#1d4ed8',
+                                      S:'#7c3aed',VS:'#64748b',NM:'#9ca3af'}[s.vb||s.velocity]||'#374151',
+                                    padding:'1px 5px',borderRadius:'4px',
+                                    fontWeight:'700',fontSize:'9px'}}>
+                                    {s.vb||s.velocity||'?'}
+                                  </span>
+                                </td>
+                                <td style={{padding:'3px 8px',color:'#374151',
+                                  textAlign:'right'}}>{(s.stock||0).toLocaleString()}</td>
+                                <td style={{padding:'3px 8px',fontWeight:'700',
+                                  color:'#be185d',textAlign:'right'}}>{s.locsReq||1}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {grp.skus.length>20&&(
+                          <div style={{padding:'3px 8px 5px',fontSize:'9px',
+                            color:'#9ca3af',fontStyle:'italic',
+                            borderTop:'1px solid #fee2e2'}}>
+                            ... and {grp.skus.length-20} more SKUs
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             {/* Legacy overflow list (from calcUserDefinedStorage) */}
             {userResult?.overflow?.length>0&&(
               <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
