@@ -5196,7 +5196,7 @@ export default function WarehouseDesignerTool() {
                         )}
 
                         {/* 4-tile summary (skip for per-SKU ground) */}
-                        {!cfg.isPerSku&&(
+                        {!cfg.isPerSku&&(<>
                         <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',
                           gap:'6px',marginBottom:'8px'}}>
                           {[
@@ -5256,7 +5256,7 @@ export default function WarehouseDesignerTool() {
                           <span>📐 {+(cfg.area||0).toFixed(0)}m² floor area</span>
                           <span>📦 {(aw*ad*stackH*lvl).toLocaleString()} locs/bay</span>
                         </div>
-                        )}  {/* end !cfg.isPerSku */}
+                        </>)}  {/* end !cfg.isPerSku */}
                       </div>
                       {/* ── SKU LIST for this bin type ─────────────────── */}
                       <div style={{borderTop:'1px solid #f1f5f9'}}>
