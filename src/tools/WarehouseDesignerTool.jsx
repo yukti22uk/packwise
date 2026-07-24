@@ -549,7 +549,7 @@ function calcStagingParams(params, analysis) {
   } else {
     // Pallets mode — from Order data (daily volume) or truck mix
     if (analysis?.dailyOutboundVolM3 > 0) {
-      outDailyVolM3 = analysis.dailyOutboundVolM3;
+      outDailyVolM3 = analysis?.dailyOutboundVolM3||0;
       outUnits      = Math.ceil(outDailyVolM3 / (PALLET_VOL * PALLET_FILL));
     }
     // Also add from truck mix outbound
@@ -976,7 +976,7 @@ function generateRackConfig(analysis, params) {
 
   // Group by rack + bin
   const groups = {};
-  (analysis.slotted||[]).forEach(r => {
+  (analysis?.slotted||[]).forEach(r => {
     const key = `${r.rack}|${r.bin}`;
     if (!groups[key]) groups[key] = {
       rack:r.rack, bin:r.bin, rackName:r.rackName,
@@ -1117,8 +1117,8 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
       zoneAreas[zone] = +((zoneAreas[zone]||0) + area).toFixed(1);
     });
   } else {
-    const totalLocs = analysis.metrics.totLocs || 1;
-    Object.entries(analysis.zoneSummary).forEach(([z, zs]) => {
+    const totalLocs = analysis?.metrics?.totLocs || 1;
+    Object.entries(analysis?.zoneSummary||{}).forEach(([z, zs]) => {
       zoneAreas[z] = +(netRackArea * (zs.locs/totalLocs)).toFixed(1);
     });
   }
@@ -2924,7 +2924,7 @@ function exportPPT(analysis, design, params) {
     [(analysis.metrics?.totSKUs||0).toLocaleString(),'Total SKUs',PINK],
     [(analysis.metrics?.totLocs||0).toLocaleString(),'Locations Required',BLUE],
     [(analysis.metrics?.totStock||0).toLocaleString(),'Current Stock Units',GREEN],
-    [analysis.metrics.longCount,'Long/Awkward Items',AMBER],
+    [(analysis.metrics?.longCount||0),'Long/Awkward Items',AMBER],
     [`${design.wW}×${design.wL}m`,'Recommended Size',DARK],
     [(design.totalGrossArea||0).toLocaleString()+'m²','Gross Floor Area',GRAY],
   ];
@@ -2943,15 +2943,15 @@ function exportPPT(analysis, design, params) {
     {text:'Total',options:{bold:true,color:WHITE,fill:{color:DARK},align:'center'}}];
   const matRows=vbList.map(v=>[
     {text:v,options:{bold:true,color:PINK,fill:{color:'F8FAFC'}}},
-    ...sbList.map(s=>{const n=analysis.matrix[`${v}-${s}`]||0;return{text:n?String(n):'—',options:{align:'center',color:n?DARK:'9CA3AF'}};}),
-    {text:String(sbList.reduce((sum,s)=>sum+(analysis.matrix[`${v}-${s}`]||0),0)),options:{align:'center',bold:true}},
+    ...sbList.map(s=>{const n=(analysis?.matrix||{})[`${v}-${s}`]||0;return{text:n?String(n):'—',options:{align:'center',color:n?DARK:'9CA3AF'}};}),
+    {text:String(sbList.reduce((sum,s)=>sum+((analysis.matrix||{})[`${v}-${s}`]||0),0)),options:{align:'center',bold:true}},
   ]);
   s3.addTable([matHdr,...matRows],{x:0.5,y:1.3,w:9.1,colW:[1.8,1.2,1.2,1.2,1.2,1.2,1.3],
     fontSize:11,border:{type:'solid',color:'E2E8F0',pt:1},rowH:0.45,autoPage:false});
 
   // Slide 4: Zone Breakdown
   const s4=prs.addSlide(); hdr(s4,'Zone Layout Plan','Storage zones by velocity — drives warehouse layout');
-  const zRows=Object.entries(analysis.zoneSummary).map(([z,v])=>[
+  const zRows=Object.entries(analysis?.zoneSummary||{}).map(([z,v])=>[
     {text:ZONE_DEFS[z]?.label||z,options:{bold:true,color:DARK}},
     {text:ZONE_DEFS[z]?.desc||'',options:{color:GRAY,fontSize:9}},
     {text:String(v.skus),options:{align:'center'}},
@@ -2970,7 +2970,7 @@ function exportPPT(analysis, design, params) {
 
   // Slide 5: Rack Schedule
   const s5=prs.addSlide(); hdr(s5,'Rack Type Recommendations','Storage media selected per SKU velocity & size combination');
-  const rackRows2=Object.entries(analysis.rackSummary).map(([rk,rv])=>[
+  const rackRows2=Object.entries(analysis?.rackSummary||{}).map(([rk,rv])=>[
     {text:RACK_DEFS[rk]?.name||rk,options:{bold:true,color:DARK}},
     {text:RACK_DEFS[rk]?.desc||'',options:{color:GRAY,fontSize:9}},
     {text:(rv.skus||0).toLocaleString(),options:{align:'center'}},
@@ -3186,7 +3186,7 @@ function calcForwardReserve(analysis, forwardRacks, reserveRacks, forwardDays, p
   const fwdLocs={}, resLocs={};
 
   // Process each bin type from system analysis
-  Object.entries(analysis.binSummary||{}).forEach(([binKey,binInfo])=>{
+  Object.entries(analysis?.binSummary||{}).forEach(([binKey,binInfo])=>{
     const bc=BIN_CATALOG[binKey]; if(!bc?.phys) return;
     const [bL,bW,bH]=bc.phys;
     const totalLocs=binInfo.locs||0; if(!totalLocs) return;
@@ -3319,7 +3319,7 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
 
   const regularPass={}, groundPass={};
 
-  Object.entries(analysis.binSummary).forEach(([binKey,binInfo])=>{
+  Object.entries(analysis?.binSummary||{}).forEach(([binKey,binInfo])=>{
     const bc=BIN_CATALOG[binKey]; if(!bc?.phys) return;
     const [bL,bW,bH]=bc.phys;
     const totalLocs=binInfo.locs||0; if(!totalLocs) return;
@@ -4250,7 +4250,7 @@ export default function WarehouseDesignerTool() {
                       ✓ Bin types calculated from {(analysis.metrics?.totSKUs||0).toLocaleString()} SKUs
                     </div>
                     <div style={{display:'flex',flexWrap:'wrap',gap:'7px',marginBottom:'12px'}}>
-                      {Object.entries(analysis.binSummary)
+                      {Object.entries(analysis?.binSummary||{})
                         .sort((a,b)=>['XS','S','M','L','XL','LONG'].indexOf(a[0])-['XS','S','M','L','XL','LONG'].indexOf(b[0]))
                         .map(([band,info])=>{
                           const bc=BIN_CATALOG[band];
@@ -4685,19 +4685,19 @@ export default function WarehouseDesignerTool() {
           {storageMode==='system' && (<>
           {/* ── FORWARD PICK + RESERVE INPUT PANEL ─────────────────────── */}
           {/* End of user results — system results start */}
-            {analysis.binSummary && Object.keys(analysis.binSummary).length > 0 && (
+            {analysis?.binSummary && Object.keys(analysis.binSummary).length > 0 && (
               <div style={{...S.card,marginBottom:'12px'}}>
                 <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'8px'}}>
                   📦 Bin Variety Summary
                   <span style={{fontSize:'11px',fontWeight:'400',color:'#6b7280',marginLeft:'8px'}}>
-                    {Object.keys(analysis.binSummary).length} bin type{Object.keys(analysis.binSummary).length>1?'s':''} in use
+                    {Object.keys(analysis?.binSummary||{}).length} bin type{Object.keys(analysis?.binSummary||{}).length>1?'s':''} in use
                   </span>
                 </div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:'8px',marginBottom:'10px'}}>
-                  {Object.entries(analysis.binSummary)
+                  {Object.entries(analysis?.binSummary||{})
                     .sort((a,b)=>['XS','S','M','L','XL','LONG'].indexOf(a[0])-['XS','S','M','L','XL','LONG'].indexOf(b[0]))
                     .map(([band,info])=>{
-                      const pct = Math.round(info.skus/analysis.metrics.totSKUs*100);
+                      const pct = Math.round(info.skus/(analysis?.metrics?.totSKUs||1)*100);
                       const COLORS={XS:['#f1f5f9','#64748b'],S:['#eff6ff','#1d4ed8'],
                         M:['#f5f3ff','#7c3aed'],L:['#f0fdf4','#166534'],
                         XL:['#fef9c3','#854d0e'],LONG:['#fdf4ff','#9333ea']};
@@ -4737,7 +4737,7 @@ export default function WarehouseDesignerTool() {
                     })}
                 </div>
                 {/* Quantity upgrade note */}
-                {analysis.totalQtyUpgrades > 0 && (
+                {(analysis?.totalQtyUpgrades||0) > 0 && (
                   <div style={{background:'#eff6ff',border:'1px solid #93c5fd',
                     borderRadius:'8px',padding:'8px 12px',fontSize:'12px',color:'#1d4ed8',marginBottom:'6px'}}>
                     <strong>📦 Quantity-driven upgrades:</strong>{' '}
@@ -4982,7 +4982,7 @@ export default function WarehouseDesignerTool() {
                               <span><strong style={{color:'#059669'}}>{cfg.area}m²</strong> total</span>
                               {/* Utilization from binSummary */}
                               {analysis?.binSummary?.[cfg.bin] && (() => {
-                                const bi = analysis.binSummary[cfg.bin];
+                                const bi = analysis?.binSummary?.[cfg.bin];
                                 const util = bi.utilPct || 0;
                                 const uColor = util>=80?'#166534':util>=50?'#d97706':'#be185d';
                                 return (
@@ -5123,7 +5123,7 @@ export default function WarehouseDesignerTool() {
                       background:'#f8fafc',borderBottom:'1px solid #e8edf2'}}>{h}</th>))}
                 </tr></thead>
                 <tbody>
-                  {Object.entries(analysis.zoneSummary).map(([z,v],i)=>(
+                  {Object.entries(analysis?.zoneSummary||{}).map(([z,v],i)=>(
                     <tr key={z} style={{background:i%2===0?'#fff':'#fafbfc'}}>
                       <td style={{padding:'8px 12px'}}>
                         <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
@@ -5154,7 +5154,7 @@ export default function WarehouseDesignerTool() {
                       background:'#f8fafc',borderBottom:'1px solid #e8edf2'}}>{h}</th>))}
                 </tr></thead>
                 <tbody>
-                  {Object.entries(analysis.rackSummary).map(([rk,rv],i)=>(
+                  {Object.entries(analysis?.rackSummary||{}).map(([rk,rv],i)=>(
                     <tr key={rk} style={{background:i%2===0?'#fff':'#fafbfc'}}>
                       <td style={{padding:'8px 12px'}}>
                         <div style={{fontWeight:'600'}}>{RACK_DEFS[rk]?.name||rk}</div>
@@ -5186,7 +5186,7 @@ export default function WarehouseDesignerTool() {
                   </tr></thead>
                   <tbody>
                     {['VF','F','M','S','VS','NM'].map((v,i)=>{
-                      const row = ['XS','S','M','L','XL'].map(s=>analysis.matrix[`${v}-${s}`]||0);
+                      const row = ['XS','S','M','L','XL'].map(s=>(analysis?.matrix||{})[`${v}-${s}`]||0);
                       const tot = row.reduce((a,b)=>a+b,0);
                       return(<tr key={v} style={{background:i%2===0?'#fff':'#fafbfc'}}>
                         <td style={{padding:'7px 12px',fontWeight:'700',
@@ -5202,7 +5202,7 @@ export default function WarehouseDesignerTool() {
                     <tr style={{background:'#f8fafc',fontWeight:'700'}}>
                       <td style={{padding:'7px 12px'}}>Total</td>
                       {['XS','S','M','L','XL'].map(s=>{
-                        const t=['VF','F','M','S','VS','NM'].reduce((sum,v)=>sum+(analysis.matrix[`${v}-${s}`]||0),0);
+                        const t=['VF','F','M','S','VS','NM'].reduce((sum,v)=>sum+((analysis?.matrix||{})[rix[`${v}-${s}`]||0),0);
                         return<td key={s} style={{padding:'7px 12px',textAlign:'center'}}>{t.toLocaleString()}</td>;
                       })}
                       <td style={{padding:'7px 12px',textAlign:'center',color:'#7c3aed'}}>
