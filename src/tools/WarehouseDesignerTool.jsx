@@ -4528,10 +4528,119 @@ export default function WarehouseDesignerTool() {
 
           </>)}
 
-          {/* ── USER DEFINED RESULTS ────────────────────────────────── */}
+          {/* ── STEP 2: MASTER SKU DATA ────────────────────────────────── */}
+          <div style={S.card}>
+            <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'12px'}}>
+              {stepCircle(2, !!masterText.trim())}
+              <div style={S.cardTitle}>② Master SKU Data</div>
+            </div>
+            <div style={{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'8px'}}>
+              {['SKU Code','Length (mm)','Width (mm)','Height (mm)','Weight (kg)'].map((col,i)=>(
+                <span key={i} style={{background:'#f1f5f9',border:'1px solid #e2e8f0',
+                  borderRadius:'6px',padding:'3px 8px',fontSize:'11px',fontWeight:'600',
+                  color:'#475569',display:'flex',alignItems:'center',gap:'4px'}}>
+                  <span style={{background:'#be185d',color:'#fff',borderRadius:'50%',
+                    width:'14px',height:'14px',display:'inline-flex',alignItems:'center',
+                    justifyContent:'center',fontSize:'9px',fontWeight:'800',flexShrink:0}}>{i+1}</span>
+                  {col}
+                </span>))}
+            </div>
+            <textarea value={masterText} onChange={e=>setMasterText(e.target.value)}
+              placeholder={'Paste SKU master data (Ctrl+V)\n\nExample:\nSKU-001\t300\t200\t150\t2.5\nSKU-002\t650\t80\t80\t1.2'}
+              style={{width:'100%',height:'110px',border:'1px solid #e2e8f0',borderRadius:'8px',
+                padding:'9px 11px',fontSize:'12px',fontFamily:'monospace',resize:'vertical',
+                outline:'none',boxSizing:'border-box',color:'#374151',lineHeight:'1.5'}}/>
+            {masterText.trim() && (
+              <div style={{fontSize:'11px',color:'#059669',marginTop:'4px',fontWeight:'600'}}>
+                ✓ {masterText.trim().split('\n').filter(l=>l.trim()).length} rows detected
+              </div>
+            )}
+          </div>
 
+          {/* ── STEP 3: ORDER / PICK DATA ──────────────────────────────── */}
+          <div style={S.card}>
+            <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'8px'}}>
+              {stepCircle(3, !!orderText.trim())}
+              <div>
+                <div style={S.cardTitle}>③ Order / Pick Data
+                  <span style={{fontSize:'11px',fontWeight:'400',color:'#059669',marginLeft:'6px'}}>(Optional)</span>
+                </div>
+                <div style={{fontSize:'11px',color:'#6b7280'}}>Drives velocity band classification (VF/F/M/S/VS/NM)</div>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'6px'}}>
+              {['Order No','Dispatch Location','SKU Code','Qty','Date'].map((col,i)=>(
+                <span key={i} style={{background:'#f1f5f9',border:'1px solid #e2e8f0',
+                  borderRadius:'6px',padding:'2px 7px',fontSize:'10px',fontWeight:'600',color:'#475569'}}>
+                  {col}
+                </span>))}
+            </div>
+            <textarea value={orderText} onChange={e=>setOrderText(e.target.value)}
+              placeholder={'Paste order/pick data — SKU frequency drives zone assignment\n\nWithout this, all SKUs treated as equal velocity'}
+              style={{width:'100%',height:'90px',border:'1px solid #e2e8f0',borderRadius:'8px',
+                padding:'9px 11px',fontSize:'12px',fontFamily:'monospace',resize:'vertical',
+                outline:'none',boxSizing:'border-box',color:'#374151',lineHeight:'1.5'}}/>
+          </div>
 
-          {/* ── SYSTEM DEFINED RESULTS (shown when in system mode) ────── */}
+          {/* ── STEP 4: INVENTORY ──────────────────────────────────────── */}
+          <div style={S.card}>
+            <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'8px'}}>
+              {stepCircle(4, !!invText.trim())}
+              <div>
+                <div style={S.cardTitle}>④ Current Inventory
+                  <span style={{fontSize:'11px',fontWeight:'400',color:'#059669',marginLeft:'6px'}}>(Optional)</span>
+                </div>
+                <div style={{fontSize:'11px',color:'#6b7280'}}>Calculates locations required per SKU</div>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'6px'}}>
+              {['SKU Code','Current Stock Qty'].map((col,i)=>(
+                <span key={i} style={{background:'#f1f5f9',border:'1px solid #e2e8f0',
+                  borderRadius:'6px',padding:'2px 7px',fontSize:'10px',fontWeight:'600',color:'#475569'}}>
+                  {col}
+                </span>))}
+            </div>
+            <textarea value={invText} onChange={e=>setInvText(e.target.value)}
+              placeholder={'Paste inventory\n\nSKU-001\t2500\nSKU-002\t180'}
+              style={{width:'100%',height:'80px',border:'1px solid #e2e8f0',borderRadius:'8px',
+                padding:'9px 11px',fontSize:'12px',fontFamily:'monospace',resize:'vertical',
+                outline:'none',boxSizing:'border-box',color:'#374151',lineHeight:'1.5'}}/>
+          </div>
+
+          {error && <div style={{...S.error,marginBottom:'10px'}}>⚠ {error}</div>}
+
+          {/* ── GENERATE BUTTON ────────────────────────────────────────── */}
+          <button onClick={runAll} disabled={loading||!masterText.trim()}
+            style={{width:'100%',padding:'13px',
+              background:masterText.trim()&&!loading?'linear-gradient(135deg,#7c3aed,#6d28d9)':'#e2e8f0',
+              color:masterText.trim()&&!loading?'#fff':'#9ca3af',
+              border:'none',borderRadius:'10px',fontWeight:'700',fontSize:'15px',
+              cursor:masterText.trim()&&!loading?'pointer':'not-allowed',fontFamily:'inherit',
+              boxShadow:masterText.trim()?'0 4px 14px rgba(124,58,237,0.35)':'none'}}>
+            {loading?'⏳ Analysing...'
+              :storageMode==='user'?'🏭 Generate Warehouse Design (User Defined)'
+              :'🏭 Generate Warehouse Design'}
+          </button>
+          {/* Progress bar */}
+          {loading&&(
+            <div style={{marginTop:'8px'}}>
+              <div style={{display:'flex',justifyContent:'space-between',
+                fontSize:'10px',color:'#6b7280',marginBottom:'3px'}}>
+                <span>{progressMsg||'Processing…'}</span>
+                <span>{progress}%</span>
+              </div>
+              <div style={{background:'#e2e8f0',borderRadius:'99px',height:'6px',overflow:'hidden'}}>
+                <div style={{height:'100%',borderRadius:'99px',
+                  background:'linear-gradient(90deg,#7c3aed,#a78bfa)',
+                  width:`${progress}%`,transition:'width 0.3s ease'}}/>
+              </div>
+            </div>
+          )}
+
+        </div>{/* END LEFT PANEL */}
+
+        {/* ══ RIGHT PANEL ═══════════════════════════════════════════════ */}
+        <div>
           {storageMode==='fr' && (<>
             {/* ── FORWARD DAYS ────────────────────────────────────────── */}
             <div style={S.card}>
