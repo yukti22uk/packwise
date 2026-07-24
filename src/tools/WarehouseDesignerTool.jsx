@@ -3329,45 +3329,88 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
   // ── usable height per level ────────────────────────────────────────────────
   // levelH  = floor(totalBayH / levels)       — space allocated per level
   // usableH = levelH - beamClearance          — space available for bins to sit in
-  const calcUsableH = (rk, lvl) => {
-    const totalH = parseFloat(rk.bayH) || 2200;
-    const levelH = Math.floor(totalH / Math.max(1, lvl));
-    const clr    = RACK_BEAM_CLR(rk.rackType || 'shelving');
-    return { totalH, levelH, usableH: Math.max(0, levelH - clr), clr };
+  // ── Auto-level calculation by rack type ─────────────────────────────────────
+  // Returns { levels, stack, levelToLevel, firstLevelH, calcNote } from:
+  //   clearH (total usable clear height user entered) and binH (bin vertical dimension)
+  //
+  // SHELVING:
+  //   level-to-level = bin_H + shelf board (25mm) + pick headroom (30mm)
+  //   stack per level = 1 (no bin stacking on shelves)
+  //   levels = floor(clear_H / level_to_level)
+  //
+  // PALLET RACK (selective / doubleDeep / driveIn):
+  //   level 1 sits on floor → no beam below: firstLevel = pallet_base(144) + load_H + MHE_clr(100)
+  //   upper levels: + beam(100mm): levelToLevel = pallet_base + load_H + MHE_clr(100) + beam(100)
+  //   levels = clear_H >= firstLevel ? 1 + floor((clear_H - firstLevel) / levelToLevel) : 0
+  //   stack per level = 1 (one pallet high)
+  //
+  // CANTILEVER / LIVE STORAGE:
+  //   level-to-level = bin_H + arm_clearance(50mm) + headroom(50mm)
+  //   stack = 1
+  const PALLET_BASE_H  = 144;  // mm — standard pallet base height
+  const MHE_CLEARANCE  = 100;  // mm — forklift clearance above load to beam
+  const PALLET_BEAM_H  = 100;  // mm — pallet beam height
+  const SHELF_BOARD_H  =  25;  // mm — shelf board thickness
+  const SHELF_HEADROOM =  30;  // mm — label/pick clearance above bin
+
+  const calcLevels = (rackType, clearH, binH) => {
+    const cH = Math.max(0, parseFloat(clearH) || 0);
+    const bH = Math.max(1, binH);
+
+    if (['shelving','liveStorage'].includes(rackType)) {
+      const levelToLevel = bH + SHELF_BOARD_H + SHELF_HEADROOM;
+      const levels = Math.max(0, Math.floor(cH / levelToLevel));
+      return { levels, stack:1, levelToLevel, firstLevelH: levelToLevel,
+        calcNote:`${bH}mm bin + ${SHELF_BOARD_H}mm shelf + ${SHELF_HEADROOM}mm headroom = ${levelToLevel}mm/level` };
+    }
+    if (['selective','doubleDeep','driveIn'].includes(rackType)) {
+      const firstLevelH    = PALLET_BASE_H + bH + MHE_CLEARANCE;  // level 1 on floor — no beam
+      const levelToLevel   = PALLET_BASE_H + bH + MHE_CLEARANCE + PALLET_BEAM_H;
+      const levels = cH >= firstLevelH
+        ? 1 + Math.max(0, Math.floor((cH - firstLevelH) / levelToLevel))
+        : 0;
+      return { levels, stack:1, levelToLevel, firstLevelH,
+        calcNote:`Level 1 (floor): ${PALLET_BASE_H}mm pallet + ${bH}mm load + ${MHE_CLEARANCE}mm MHE = ${firstLevelH}mm | Upper levels: +${PALLET_BEAM_H}mm beam = ${levelToLevel}mm` };
+    }
+    if (rackType === 'cantilever') {
+      const levelToLevel = bH + 50 + 50;  // bin + arm clr + headroom
+      const levels = Math.max(0, Math.floor(cH / levelToLevel));
+      return { levels, stack:1, levelToLevel, firstLevelH: levelToLevel,
+        calcNote:`${bH}mm bin + 50mm arm clr + 50mm headroom = ${levelToLevel}mm/level` };
+    }
+    // Fallback
+    return { levels:1, stack:1, levelToLevel:cH, firstLevelH:cH, calcNote:'' };
   };
 
   // ── Helper: best fit in a given set of racks ────────────────────────────────
   const bestFitInRacks = (racks, bL, bW, bH) => {
     let best=null, bestLPB=0;
     racks.forEach(rk=>{
-      const rW  = parseFloat(rk.bayW);
-      const rD  = parseFloat(rk.bayD);
-      const lvl = Math.max(1, parseInt(rk.levels)||1);
-      const { totalH, levelH, usableH, clr } = calcUsableH(rk, lvl);
-      // Always use upright orientation — all bins/totes/pallets stored with H vertical
+      const rW    = parseFloat(rk.bayW);
+      const rD    = parseFloat(rk.bayD);
+      const clearH = parseFloat(rk.bayH) || 2200;  // user enters clear height
+      // Levels auto-calculated from bin height (H always vertical — upright)
+      const { levels, stack, levelToLevel, firstLevelH, calcNote } = calcLevels(rk.rackType, clearH, bH);
+      if (levels < 1) return;
+      // Only try L↔W swap — H always vertical
       UPRIGHT_ORIENTS.forEach(([x,y,z])=>{
         const dim = [bL, bW, bH];
-        // aw = bins across bay WIDTH (dim[x] is the bin face going along W)
-        // ad = bins along bay DEPTH  (dim[y] is the bin face going along D)
-        // stack = bins stacked vertically per level
-        const aw    = Math.floor(rW / dim[x]);
-        const ad    = Math.floor(rD / dim[y]);
+        const aw  = Math.floor(rW / dim[x]);
+        const ad  = Math.floor(rD / dim[y]);
         if (!aw || !ad) return;
-        const stack = Math.floor(usableH / dim[z]);
-        if (stack < 1) return;
-        const lpb = aw * ad * stack * lvl;
+        // stack = 1 always (no bin stacking — one bin/pallet high per level)
+        const lpb = aw * ad * stack * levels;
         if (lpb > bestLPB) {
           bestLPB = lpb;
-          // Describe which bin dimension goes where
           const AXIS=['L','W','H'];
-          const wDim=AXIS[x], dDim=AXIS[y], hDim=AXIS[z];
+          const wDim=AXIS[x], dDim=AXIS[y];
           best = {
-            rk, aw, ad, stack, lvl, lpb,
-            totalH, levelH, usableH, beamClr: clr,
-            // human-readable: "L→width, W→depth, H→stack"
-            orientDesc: `Bin ${wDim}(${dim[x]}mm)→width, ${dDim}(${dim[y]}mm)→depth, ${hDim}(${dim[z]}mm)→stack`,
-            wDimMm: dim[x], dDimMm: dim[y], hDimMm: dim[z],
-            orient: x===0&&y===1?'LW': x===1&&y===0?'WL': `${wDim}${dDim}`,
+            rk, aw, ad, stack, lvl:levels, lpb,
+            totalH:clearH, levelH:levelToLevel, usableH:bH, beamClr:0,
+            levels, levelToLevel, firstLevelH, calcNote,
+            orientDesc:`Bin ${wDim}(${dim[x]}mm)→width, ${dDim}(${dim[y]}mm)→depth, H(${bH}mm) vertical`,
+            wDimMm:dim[x], dDimMm:dim[y], hDimMm:bH,
+            orient: x===0&&y===1?'LW':'WL',
           };
         }
       });
@@ -3486,8 +3529,9 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
       id:`u-${binKey}`,rack:rt,bin:binKey,
       rackName:fc.rk.name||'Custom Rack',binName:binInfo.name||binKey,
       binDims:[bL,bW,bH],bayW:rW,bayD:rD,
-      shelfH:fc.totalH,tierHeight:fc.levelH,clearance:fc.beamClr,
-      levelH:fc.levelH,usableH:fc.usableH,beamClr:fc.beamClr,
+      shelfH:fc.totalH,tierHeight:fc.levelH,clearance:0,
+      levelH:fc.levelH,usableH:fc.usableH,beamClr:0,
+      firstLevelH:fc.firstLevelH, calcNote:fc.calcNote,
       orientDesc:fc.orientDesc,wDimMm:fc.wDimMm,dDimMm:fc.dDimMm,hDimMm:fc.hDimMm,
       orientation:fc.orient,tiers:1,levels:fc.lvl,
       acrossW:fc.aw,acrossD:fc.ad,stackH:fc.stack,
@@ -4489,6 +4533,8 @@ export default function WarehouseDesignerTool() {
                   const LABELS={shelving:'📦 Shelving',liveStorage:'🔄 Flow Rack',
                     selective:'🏗 Selective Pallet',doubleDeep:'🔩 Double-Deep',
                     driveIn:'🚗 Drive-In',cantilever:'🪵 Cantilever',ground:'🏔 Ground'};
+                  const isPallet=['selective','doubleDeep','driveIn'].includes(key);
+                  const isShelving=['shelving','liveStorage','cantilever'].includes(key);
                   const d=udRackDefs[key]||{};
                   const upd=(f,v)=>setUdRackDefs(prev=>({...prev,[key]:{...prev[key],[f]:v}}));
                   return(
@@ -4504,9 +4550,9 @@ export default function WarehouseDesignerTool() {
                         {[
                           ['Bay Width (mm)','bayW'],
                           ['Bay Depth (mm)','bayD'],
-                          key==='ground'?['Stack Layers','levels']:['Bay Height (mm)','bayH'],
-                          key==='ground'?['Bay H (mm) — optional','bayH']:['Shelf Levels','levels'],
-                        ].map(([label,field])=>(
+                          key==='ground'?['Stack Layers','levels']:['Clear Height (mm)','bayH'],
+                          key==='ground'?['Stacked H (mm) — optional','bayH']:null,
+                        ].filter(Boolean).map(([label,field])=>(
                           <div key={field}>
                             <div style={{fontSize:'10px',color:'#6b7280',
                               fontWeight:'600',marginBottom:'3px'}}>{label}</div>
@@ -4514,11 +4560,19 @@ export default function WarehouseDesignerTool() {
                               onChange={e=>upd(field,e.target.value)}
                               placeholder={field==='bayH'&&key==='ground'?'optional':'mm'}
                               style={{...inp,marginBottom:0,width:'100%',
-                                fontSize:'12px',padding:'5px 8px',
-                                background:field==='levels'?'#fffbeb':'#fff',
-                                border:`1px solid ${field==='levels'?'#fcd34d':'#e2e8f0'}`}}/>
+                                fontSize:'12px',padding:'5px 8px'}}/>
                           </div>
                         ))}
+                      </div>
+                      {/* Auto-level hint */}
+                      {(isShelving||isPallet)&&d.bayH&&(
+                        <div style={{padding:'5px 12px 8px',fontSize:'10px',
+                          color:'#7c3aed',background:'#faf5ff',
+                          borderTop:'1px solid #ede9fe'}}>
+                          {isShelving&&`⚙ Levels auto-calculated: clear ${d.bayH}mm ÷ (bin H + 25mm shelf + 30mm headroom)`}
+                          {isPallet&&`⚙ Levels auto-calculated: level 1 on floor (pallet 144mm + load H + 100mm MHE), upper levels +100mm beam`}
+                        </div>
+                      )}
                       </div>
                     </div>
                   );
@@ -4841,34 +4895,20 @@ export default function WarehouseDesignerTool() {
                         </div>
 
                         {/* Height breakdown per level */}
-                        {!isGround&&cfg.levelH>0&&(
+                        {!isGround&&cfg.calcNote&&(
                           <div style={{background:'#f1f5f9',borderRadius:'8px',padding:'8px 12px',
                             marginBottom:'10px'}}>
-                            <div style={{fontWeight:'700',color:'#475569',marginBottom:'6px',
+                            <div style={{fontWeight:'700',color:'#475569',marginBottom:'5px',
                               fontSize:'10px',textTransform:'uppercase',letterSpacing:'0.04em'}}>
-                              Height Per Level
+                              Level Height Calculation (auto)
                             </div>
-                            <div style={{display:'flex',alignItems:'center',gap:'5px',
-                              flexWrap:'wrap',fontSize:'11px'}}>
-                              <span style={{background:'#e2e8f0',padding:'2px 8px',
-                                borderRadius:'5px',fontWeight:'700',color:'#0f172a'}}>
-                                Bay H {cfg.shelfH}mm
-                              </span>
-                              <span style={{color:'#9ca3af'}}>÷ {cfg.levels} levels</span>
-                              <span style={{background:'#dbeafe',padding:'2px 8px',
-                                borderRadius:'5px',fontWeight:'700',color:'#1d4ed8'}}>
-                                = {cfg.levelH}mm per level
-                              </span>
-                              <span style={{color:'#9ca3af'}}>− {cfg.beamClr}mm beam/shelf</span>
-                              <span style={{background:'#dcfce7',padding:'2px 8px',
-                                borderRadius:'5px',fontWeight:'700',color:'#166534'}}>
-                                = {cfg.usableH}mm usable H
-                              </span>
-                              <span style={{color:'#9ca3af'}}>÷ H{cfg.binDims?.[2]}mm bin</span>
-                              <span style={{background:'#f5f3ff',padding:'2px 8px',
-                                borderRadius:'5px',fontWeight:'800',color:'#7c3aed'}}>
-                                = {cfg.stackH} stack{(cfg.stackH||1)>1?'s':''}
-                              </span>
+                            <div style={{fontSize:'10px',color:'#374151',lineHeight:'1.6'}}>
+                              {cfg.calcNote}
+                            </div>
+                            <div style={{marginTop:'5px',fontSize:'11px',fontWeight:'700',
+                              color:'#7c3aed'}}>
+                              → <strong>{cfg.levels}</strong> level{(cfg.levels||1)>1?'s':''} fit in {cfg.shelfH}mm clear height
+                              &nbsp;·&nbsp; 1 bin/pallet per level (no stacking)
                             </div>
                           </div>
                         )}
