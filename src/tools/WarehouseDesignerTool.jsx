@@ -781,12 +781,19 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params, preferredBins
     invMap[sku] = parseFloat(r[1])||0;
   });
 
-  // All SKUs = union of master + pick + inventory
-  const allSkus = new Set([...Object.keys(master), ...Object.keys(pickMap), ...Object.keys(invMap)]);
+  // SKU universe for slotting:
+  // When inventory data is provided → ONLY slot SKUs that appear in inventory
+  //   (locations are meaningless for SKUs not currently in stock)
+  // When NO inventory data → use all master + order SKUs as fallback
+  const hasInv = Object.keys(invMap).length > 0;
+  const allSkus = hasInv
+    ? new Set(Object.keys(invMap))                                    // ← inventory SKUs only
+    : new Set([...Object.keys(master), ...Object.keys(pickMap)]);     // ← fallback: all
 
-  // Prepare items for velocity classification
-  const items = [...allSkus].map(sku => ({
-    sku, pickLines: pickMap[sku]||0 }));
+  // Velocity classification uses ALL order data for accurate bands
+  // (even if a SKU isn't in inventory right now, its historical velocity is valid)
+  const allOrderSkus = new Set([...Object.keys(master), ...Object.keys(pickMap)]);
+  const items = [...allOrderSkus].map(sku => ({ sku, pickLines: pickMap[sku]||0 }));
   const velocityMap = classifyVelocity(items);
 
   // Build per-SKU slotting data
@@ -854,7 +861,8 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params, preferredBins
   });
 
   // Headline metrics
-  const totSKUs    = slotted.length;
+  const totSKUs    = slotted.length;                          // SKUs slotted (inventory only when inv data provided)
+  const totSKUsMaster = Object.keys(master).length;          // total master catalogue size
   const totLocs    = slotted.reduce((s,r)=>s+r.locsReq,0);
   const totStock   = slotted.reduce((s,r)=>s+r.stock,0);
   const longCount  = slotted.filter(r=>r.isLong).length;
@@ -910,7 +918,8 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params, preferredBins
   return { slotted:finalSlotted, matrix, zoneSummary:zoneSum2, rackSummary:rackSum2,
     binSummary, binConsolidation, totalQtyUpgrades,
     metrics: { totSKUs:finalSlotted.length, totLocs:fTotLocs, totStock:fTotStock,
-      longCount, nmCount, nmStock },
+      longCount, nmCount, nmStock,
+      totSKUsMaster, hasInv },
     dailyOutboundVolM3: +dailyOutboundVolM3.toFixed(3),
     dailyOutboundBoxes: +dailyOutboundBoxes.toFixed(1),
     avgBoxFootprintM2:  +avgBoxFootprintM2.toFixed(4) };
@@ -4679,61 +4688,248 @@ export default function WarehouseDesignerTool() {
           {/* ── USER DEFINED RESULTS ──────────────────────────────────── */}
           {storageMode==='user' && udStep===4 && (userResult||userDesign) && (<>
 
-            {/* Rack config cards */}
+            {/* ── Detailed rack config cards with bin fit + SKU list ─── */}
             {userRackConfig?.length>0&&(<>
-              <div style={{...S.card,marginBottom:'12px'}}>
-                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'10px'}}>
-                  🗄 Rack Configuration — User Defined
+              <div style={{...S.card,marginBottom:'12px',padding:'0',overflow:'hidden'}}>
+                <div style={{padding:'10px 16px',background:'#f8fafc',
+                  borderBottom:'1px solid #e2e8f0',
+                  display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span style={{fontWeight:'700',fontSize:'13px',color:'#0f172a'}}>
+                    🗄 Rack Configuration — User Defined
+                  </span>
+                  <span style={{fontSize:'11px',color:'#6b7280'}}>
+                    {userRackConfig.length} rack type{userRackConfig.length>1?'s':''}
+                    · {userRackConfig.reduce((s,c)=>s+(c.locs||0),0).toLocaleString()} total locs
+                  </span>
                 </div>
+
                 {userRackConfig.map((cfg,ci)=>{
-                  const isShelving=['shelving','liveStorage','cantilever'].includes(cfg.rack);
                   const RACK_ICONS={shelving:'📦',liveStorage:'🔄',selective:'🏗',
                     doubleDeep:'🔩',driveIn:'🚗',cantilever:'🪵',ground:'🏔'};
+                  const isGround = cfg.rack==='ground';
+                  const aw = cfg.acrossW||1;
+                  const ad = cfg.acrossD||1;
+                  const stackH = cfg.stackH||cfg.levels||1;
+                  const lvl   = cfg.levels||1;
+
+                  // SKUs that use this bin type
+                  const binSkus=(analysis?.slotted||[])
+                    .filter(s=>s.bin===cfg.bin)
+                    .sort((a,b)=>(b.locsReq||0)-(a.locsReq||0));
+
+                  // Max cells to show in the grid (cap at 12 wide, 8 deep)
+                  const showW=Math.min(aw,12), showD=Math.min(ad,8);
+
                   return(
-                    <div key={ci} style={{border:'1px solid #e2e8f0',borderRadius:'9px',
-                      overflow:'hidden',marginBottom:'10px'}}>
-                      <div style={{padding:'8px 14px',background:'#f8fafc',
-                        borderBottom:'1px solid #e2e8f0',
+                    <div key={ci} style={{borderBottom:ci<userRackConfig.length-1?'2px solid #e2e8f0':'none'}}>
+
+                      {/* Card header */}
+                      <div style={{padding:'10px 16px',background:'#fff',
                         display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                         <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-                          <span style={{fontSize:'16px'}}>{RACK_ICONS[cfg.rack]||'🏗'}</span>
+                          <span style={{fontSize:'18px'}}>{RACK_ICONS[cfg.rack]||'🏗'}</span>
                           <div>
-                            <span style={{fontWeight:'700',fontSize:'12px',color:'#0f172a'}}>
+                            <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a'}}>
                               {cfg.rackName||cfg.rack}
-                            </span>
-                            <span style={{fontSize:'10px',color:'#9ca3af',marginLeft:'8px'}}>
-                              {cfg.binName} bins
-                            </span>
+                            </div>
+                            <div style={{fontSize:'10px',color:'#6b7280'}}>
+                              {cfg.bayW}×{cfg.bayD}
+                              {cfg.shelfH&&!isGround?`×${cfg.shelfH}`:''}mm
+                              · {cfg.levels} {isGround?'stack level':'shelf level'}{cfg.levels>1?'s':''}
+                            </div>
                           </div>
                         </div>
-                        <span style={{fontSize:'12px',fontWeight:'700',color:'#7c3aed'}}>
-                          {cfg.locs?.toLocaleString()} locs
-                        </span>
+                        <div style={{textAlign:'right'}}>
+                          <div style={{fontWeight:'800',fontSize:'14px',color:'#7c3aed'}}>
+                            {(cfg.locs||0).toLocaleString()}
+                          </div>
+                          <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'600',
+                            textTransform:'uppercase'}}>locations</div>
+                        </div>
                       </div>
+
                       {cfg.autoAssigned&&(
                         <div style={{fontSize:'10px',color:'#7c3aed',fontWeight:'600',
-                          background:'#f5f3ff',padding:'3px 14px',
-                          borderBottom:'1px solid #ede9fe'}}>
+                          background:'#f5f3ff',padding:'3px 16px',
+                          borderTop:'1px solid #ede9fe'}}>
                           ⚡ {cfg.autoAssigned}
                         </div>
                       )}
-                      <div style={{display:'grid',
-                        gridTemplateColumns:isShelving?'repeat(4,1fr)':'repeat(3,1fr)',
-                        gap:'0'}}>
-                        {[
-                          ['Bay W',cfg.bayW+'mm'],['Bay D',cfg.bayD+'mm'],
-                          ...(!isShelving?[['Levels',cfg.levels]]:[['Shelf H',Math.round(cfg.tierHeight||0)+'mm'],['Levels',cfg.levels]]),
-                          ['Locs/Bay',cfg.locsPerBay],['Bays',cfg.baysNeeded],
-                          ['Area',+(cfg.area||0).toFixed(0)+'m²'],
-                        ].map(([l,v])=>(
-                          <div key={l} style={{padding:'8px 12px',borderRight:'1px solid #f1f5f9',
-                            borderBottom:'1px solid #f1f5f9'}}>
-                            <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
-                              textTransform:'uppercase',marginBottom:'2px'}}>{l}</div>
-                            <div style={{fontSize:'12px',fontWeight:'700',color:'#0f172a'}}>{v}</div>
+
+                      {/* ── BIN TYPE + FIT LAYOUT ─────────────────────── */}
+                      <div style={{padding:'10px 16px',background:'#fafafa',
+                        borderTop:'1px solid #f1f5f9',borderBottom:'1px solid #f1f5f9'}}>
+
+                        {/* Bin type badge */}
+                        <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'10px'}}>
+                          <span style={{background:'#eff6ff',color:'#1d4ed8',fontWeight:'800',
+                            fontSize:'13px',padding:'3px 10px',borderRadius:'7px',
+                            border:'1px solid #bfdbfe'}}>
+                            {cfg.bin}
+                          </span>
+                          <span style={{fontSize:'11px',color:'#374151',fontWeight:'600'}}>
+                            {cfg.binName}
+                          </span>
+                          {cfg.binDims&&(
+                            <span style={{fontSize:'10px',color:'#9ca3af'}}>
+                              ({cfg.binDims.join('×')}mm)
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Fit dimensions */}
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',
+                          gap:'6px',marginBottom:'10px'}}>
+                          {[
+                            ['← Width →', `${aw} ${aw>1?'bins':'bin'}`, '#eff6ff','#1d4ed8'],
+                            ['↔ Depth →', `${ad} ${ad>1?'bins':'bin'}`, '#f0fdf4','#166534'],
+                            [isGround?'⬆ Stack':'↑ Stack/shelf',
+                              `${stackH} layer${stackH>1?'s':''}`, '#fef9c3','#854d0e'],
+                            ['× Shelves', `${lvl} level${lvl>1?'s':''}`, '#fdf4ff','#9333ea'],
+                          ].map(([l,v,bg,col])=>(
+                            <div key={l} style={{background:bg,borderRadius:'8px',
+                              padding:'7px 10px',textAlign:'center',
+                              border:`1px solid ${col}22`}}>
+                              <div style={{fontSize:'9px',color:col,fontWeight:'700',
+                                textTransform:'uppercase',marginBottom:'2px'}}>{l}</div>
+                              <div style={{fontSize:'13px',fontWeight:'800',color:col}}>{v}</div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Visual grid — top view of ONE shelf */}
+                        <div style={{marginBottom:'10px'}}>
+                          <div style={{fontSize:'10px',color:'#6b7280',fontWeight:'600',
+                            marginBottom:'6px'}}>
+                            Top view — 1 shelf ({aw} wide × {ad} deep)
+                            {aw>12||ad>8?' — showing partial':''} :
                           </div>
-                        ))}
+                          <div style={{display:'inline-block',
+                            border:'2px solid #cbd5e1',borderRadius:'6px',
+                            padding:'4px',background:'#f1f5f9'}}>
+                            {Array.from({length:showD},(_,di)=>(
+                              <div key={di} style={{display:'flex',gap:'2px',
+                                marginBottom:di<showD-1?'2px':'0'}}>
+                                {Array.from({length:showW},(_,wi)=>(
+                                  <div key={wi} style={{
+                                    width:'18px',height:'14px',borderRadius:'3px',
+                                    background:'#3b82f6',opacity: 0.6+0.4*(wi===0&&di===0?1:0),
+                                    border:'1px solid #2563eb',
+                                    display:'flex',alignItems:'center',justifyContent:'center',
+                                    fontSize:'7px',color:'#fff',fontWeight:'700'}}>
+                                    {wi===0&&di===0?'B':''}
+                                  </div>
+                                ))}
+                                {aw>12&&<span style={{fontSize:'9px',color:'#64748b',
+                                  alignSelf:'center',marginLeft:'2px'}}>+{aw-12}</span>}
+                              </div>
+                            ))}
+                            {ad>8&&(
+                              <div style={{fontSize:'9px',color:'#64748b',
+                                textAlign:'center',marginTop:'2px'}}>+{ad-8} more rows</div>
+                            )}
+                          </div>
+                          <div style={{fontSize:'10px',color:'#374151',marginTop:'6px',
+                            fontWeight:'600'}}>
+                            {aw} × {ad} = <strong>{aw*ad}</strong> bins/shelf
+                            × {stackH} layer{stackH>1?'s':''}/shelf
+                            × {lvl} shelf{lvl>1?'s':''} =&nbsp;
+                            <strong style={{color:'#7c3aed'}}>
+                              {(aw*ad*stackH*lvl).toLocaleString()} bins/bay
+                            </strong>
+                            &nbsp;·&nbsp;
+                            <strong>{cfg.baysNeeded?.toLocaleString()}</strong> bays needed
+                          </div>
+                        </div>
+
+                        {/* Stats row */}
+                        <div style={{display:'flex',gap:'16px',fontSize:'11px',
+                          color:'#6b7280',flexWrap:'wrap',
+                          borderTop:'1px solid #e2e8f0',paddingTop:'8px'}}>
+                          <span>🏗 {cfg.baysNeeded?.toLocaleString()} bays</span>
+                          <span>📐 {+(cfg.area||0).toFixed(0)}m² floor area</span>
+                          <span>📦 {(aw*ad*stackH*lvl).toLocaleString()} locs/bay</span>
+                        </div>
                       </div>
+
+                      {/* ── SKU LIST for this bin type ─────────────────── */}
+                      <div style={{borderTop:'1px solid #f1f5f9'}}>
+                        <div style={{padding:'7px 16px',background:'#f8fafc',
+                          display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <span style={{fontSize:'11px',fontWeight:'700',color:'#374151'}}>
+                            SKUs in {cfg.bin} bins ({binSkus.length.toLocaleString()} SKUs)
+                          </span>
+                          <span style={{fontSize:'10px',color:'#9ca3af'}}>
+                            {(cfg.locs||0).toLocaleString()} locations total
+                          </span>
+                        </div>
+                        <div style={{maxHeight:'200px',overflowY:'auto'}}>
+                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                            <thead>
+                              <tr style={{background:'#f1f5f9',position:'sticky',top:0}}>
+                                {['SKU','Description','Velocity','Stock','Locs'].map(h=>(
+                                  <th key={h} style={{padding:'5px 10px',textAlign:'left',
+                                    fontWeight:'700',color:'#64748b',
+                                    fontSize:'9px',textTransform:'uppercase',
+                                    borderBottom:'1px solid #e2e8f0',whiteSpace:'nowrap'}}>
+                                    {h}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {binSkus.slice(0,50).map((s,si)=>(
+                                <tr key={si} style={{background:si%2===0?'#fff':'#f8fafc'}}>
+                                  <td style={{padding:'4px 10px',fontWeight:'700',
+                                    color:'#0f172a',whiteSpace:'nowrap',fontSize:'11px'}}>
+                                    {s.sku}
+                                  </td>
+                                  <td style={{padding:'4px 10px',color:'#374151',
+                                    maxWidth:'150px',overflow:'hidden',
+                                    textOverflow:'ellipsis',whiteSpace:'nowrap',
+                                    fontSize:'10px'}}>
+                                    {s.desc||s.name||'—'}
+                                  </td>
+                                  <td style={{padding:'4px 10px'}}>
+                                    <span style={{
+                                      background:{VF:'#fef9c3',F:'#f0fdf4',M:'#eff6ff',
+                                        S:'#fdf4ff',VS:'#f1f5f9',NM:'#f8fafc'}[s.vb||s.velocity]||'#f8fafc',
+                                      color:{VF:'#854d0e',F:'#166534',M:'#1d4ed8',
+                                        S:'#7c3aed',VS:'#64748b',NM:'#9ca3af'}[s.vb||s.velocity]||'#374151',
+                                      padding:'1px 6px',borderRadius:'4px',
+                                      fontWeight:'700',fontSize:'9px'}}>
+                                      {s.vb||s.velocity||'?'}
+                                    </span>
+                                  </td>
+                                  <td style={{padding:'4px 10px',color:'#374151',
+                                    textAlign:'right',fontSize:'11px'}}>
+                                    {(s.stock||0).toLocaleString()}
+                                  </td>
+                                  <td style={{padding:'4px 10px',fontWeight:'700',
+                                    color:'#7c3aed',textAlign:'right',fontSize:'11px'}}>
+                                    {s.locsReq||1}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {binSkus.length>50&&(
+                            <div style={{padding:'5px 10px',fontSize:'10px',
+                              color:'#9ca3af',fontStyle:'italic',textAlign:'center',
+                              borderTop:'1px solid #f1f5f9'}}>
+                              Showing 50 of {binSkus.length.toLocaleString()} SKUs
+                              — download Excel for full list
+                            </div>
+                          )}
+                          {binSkus.length===0&&(
+                            <div style={{padding:'12px',textAlign:'center',
+                              fontSize:'11px',color:'#9ca3af'}}>
+                              No SKU data available for this bin type
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
                     </div>
                   );
                 })}
@@ -4805,6 +5001,21 @@ export default function WarehouseDesignerTool() {
                 }
               </div>
               {/* Warehouse size summary */}
+              {analysis?.metrics?.hasInv&&(
+                <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'8px',
+                  padding:'8px 14px',marginBottom:'10px',fontSize:'12px',color:'#166534',
+                  display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span>
+                    ✓ Locations based on <strong>{(analysis.metrics.totSKUs||0).toLocaleString()} SKUs in inventory</strong>
+                    {analysis.metrics.totSKUsMaster>analysis.metrics.totSKUs&&(
+                      <span style={{color:'#6b7280',fontWeight:'400'}}>
+                        {' '}(master has {(analysis.metrics.totSKUsMaster||0).toLocaleString()} total SKUs —
+                        {' '}{(analysis.metrics.totSKUsMaster-analysis.metrics.totSKUs).toLocaleString()} not in current stock)
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
               <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'12px'}}>
                 {[
                   ['Gross Area', `${(userDesign.wW*userDesign.wL).toLocaleString()}m²`, '#eff6ff','#1d4ed8'],
