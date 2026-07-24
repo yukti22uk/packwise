@@ -124,7 +124,8 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
   const [pL,setPL]=useState('1200'); const [pW,setPW]=useState('1000'); const [pH,setPH]=useState('1200');
   const [maxSkus,     setMaxSkus]     = useState(4);
   const [lockHeight,  setLockHeight]  = useState(false);
-  const [lockedSkus,  setLockedSkus]  = useState(new Set()); // per-SKU height locks
+  const [lockedSkus,       setLockedSkus]       = useState(new Set());
+  const [lockedCategories, setLockedCategories] = useState(new Set()); // category-level locks
   const [mixResult,   setMixResult]   = useState(null);
   const [mixError,    setMixError]    = useState('');
 
@@ -135,15 +136,26 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
   const valid = container.cL>0 && container.cW>0 && container.cH>0 && container.cMaxWt>0;
 
   // ── Per-SKU container packing ──────────────────────────────────────────────
-  function pSkus(cont, skus) {
+  function pSkus(cont, skus, locked=new Set()) {
     const { cL, cW, cH, cMaxWt } = cont;
     const cv = cL * cW * cH;
     return skus.map(s => {
       const { name, sl, sw, sh, swt, qtyAvail } = s;
       if (!name) return null;
       if (sl<=0||sw<=0||sh<=0) return { name, error:'Invalid dimensions' };
-      const { total:vQ, orient } = calcMixed(cL, cW, cH, sl, sw, sh);
-      const cStackLayers = calcStackLayers(cL, cW, cH, sl, sw, sh, false);
+      const isLocked = locked.has(name) || lockedCategories.has(s.category||'Uncategorised');
+      let vQ, orient;
+      if (isLocked) {
+        vQ = calcLockedBPP(cL, cW, cH, sl, sw, sh);
+        // Build orient string for locked (H always vertical)
+        const best = Math.floor(cL/sl)*Math.floor(cW/sw) >= Math.floor(cL/sw)*Math.floor(cW/sl)
+          ? `${sl}×${sw}×${sh}` : `${sw}×${sl}×${sh}`;
+        orient = best;
+      } else {
+        const res = calcMixed(cL, cW, cH, sl, sw, sh);
+        vQ = res.total; orient = res.orient;
+      }
+      const cStackLayers = calcStackLayers(cL, cW, cH, sl, sw, sh, isLocked);
       let eV = qtyAvail>0 ? Math.min(vQ, qtyAvail) : vQ;
       let wQ = swt>0 ? Math.floor(cMaxWt/swt) : null;
       if (wQ!==null && qtyAvail>0) wQ = Math.min(wQ, qtyAvail);
@@ -153,7 +165,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
       let con = 'Volume';
       if (wQ!==null && wQ<eV) con = 'Weight';
       if (qtyAvail>0 && eQ===qtyAvail) con = 'Stock Limit';
-      return { name, volQty:eV, wtQty:wQ!==null?wQ:'N/A', effQty:eQ, volUtil:vu, wtUtil:wu, orient, stackLayers:cStackLayers, constraint:con };
+      return { name, sl, sw, sh, category:s.category||'Uncategorised', volQty:eV, wtQty:wQ!==null?wQ:'N/A', effQty:eQ, volUtil:vu, wtUtil:wu, orient, stackLayers:cStackLayers, constraint:con, heightLocked:isLocked };
     }).filter(Boolean);
   }
 
@@ -177,7 +189,8 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
           const rr = raw[i]; if(!rr[0]&&!rr[1]) continue;
           skus.push({ name:String(rr[0]||'').trim(), sl:parseFloat(rr[1])||0,
             sw:parseFloat(rr[2])||0, sh:parseFloat(rr[3])||0,
-            swt:parseFloat(rr[4])||0, qtyAvail:parseFloat(rr[5])>0?parseFloat(rr[5]):-1 });
+            swt:parseFloat(rr[4])||0, qtyAvail:parseFloat(rr[5])>0?parseFloat(rr[5]):-1,
+            category:String(rr[6]||'').trim()||'Uncategorised' });
         }
         if (!skus.length) { setError('No SKU data found.'); return; }
         setSkuCount(skus.length); setRawSkus(skus);
@@ -198,7 +211,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
     setCapped(cap); setProcessing(true); setProgress(0); setResults(null);
     const CHUNK = 500; let done = 0; const all = [];
     function next() {
-      all.push(...pSkus(container, toProcess.slice(done, done+CHUNK)));
+      all.push(...pSkus(container, toProcess.slice(done, done+CHUNK), lockedSkus));
       done += CHUNK;
       setProgress(Math.round((Math.min(done,toProcess.length)/toProcess.length)*100));
       if (done < toProcess.length) setTimeout(next, 0);
@@ -219,6 +232,53 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
     if (!skusForMix.length) { setMixError('No SKUs with available qty found.'); return; }
     const mr = calcPalletMix(skusForMix, PL, PW, PH, maxSkus, lockHeight, lockedSkus);
     setMixResult(mr);
+  };
+
+  // Toggle category-level lock — locks all SKUs in that category at once
+  const toggleCategoryLock = (cat) => {
+    setLockedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      // Re-compute all SKUs in this category
+      if (rawSkus && valid) {
+        const catSkus = rawSkus.filter(s=>(s.category||'Uncategorised')===cat);
+        if (catSkus.length) {
+          const updated = pSkus(container, catSkus, lockedSkus);
+          setResults(prev2 => prev2
+            ? prev2.map(r => {
+                const u = updated.find(u=>u.name===r.name);
+                return u || r;
+              })
+            : prev2);
+        }
+      }
+      return next;
+    });
+  };
+
+  // Toggle per-SKU lock in CONTAINER packing and instantly re-compute that SKU
+  const toggleContainerLock = (skuName) => {
+    setLockedSkus(prev => {
+      const next = new Set(prev);
+      if (next.has(skuName)) next.delete(skuName); else next.add(skuName);
+      // Re-compute just this SKU's container result instantly
+      const skuData = rawSkus?.find(s=>s.name===skuName);
+      if (skuData && valid) {
+        const [updated] = pSkus(container, [skuData], next);
+        if (updated) {
+          setResults(prev2 => prev2
+            ? prev2.map(r => r.name===skuName ? updated : r)
+            : prev2);
+        }
+      }
+      // Also re-run pallet mix if it exists
+      const PL=parseFloat(pL)||0,PW=parseFloat(pW)||0,PH=parseFloat(pH)||0;
+      if (PL&&PW&&PH&&rawSkus?.length) {
+        const skusForMix=rawSkus.filter(s=>s.qtyAvail>0).map(s=>({...s}));
+        if (skusForMix.length) setMixResult(calcPalletMix(skusForMix,PL,PW,PH,maxSkus,lockHeight,next));
+      }
+      return next;
+    });
   };
 
   // Toggle per-SKU height lock and re-run mix instantly
@@ -252,7 +312,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
   // ── Excel export ───────────────────────────────────────────────────────────
   const exp = () => {
     const wb = XLSX.utils.book_new();
-    const h = ['SKU Name','Max Qty (Volume)','Max Qty (Weight)','Effective Max Qty','Volume Used (%)','Weight Used (%)','L-axis (mm)','W-axis (mm)','H-axis / Stack (mm)','Stacking Layers','Constraint'];
+    const h = ['SKU Name','Category','Max Qty (Volume)','Max Qty (Weight)','Effective Max Qty','Volume Used (%)','Weight Used (%)','L-axis (mm)','W-axis (mm)','H-axis / Stack (mm)','Stacking Layers','Constraint'];
     const rows = results.map(r => r.error
       ? [r.name,r.error,'','','','','','']
       : [r.name,r.volQty,r.wtQty,r.effQty,(r.volUtil*100).toFixed(2)+'%',
@@ -336,10 +396,11 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
               {rawSkus&&<div style={{marginTop:'6px',fontSize:'12px',color:'#059669',fontWeight:'600'}}>✓ {skuCount.toLocaleString()} SKUs loaded</div>}
               <input id="fi2" type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={e=>parseFile(e.target.files[0])}/>
             </div>
-            <div style={S.noteBox}><strong>Columns:</strong> SKU Name | L (mm) | W (mm) | H (mm) | Weight (kg) | Qty</div>
+            <div style={S.noteBox}><strong>Columns:</strong> SKU Name | L (mm) | W (mm) | H (mm) | Weight (kg) | Qty | <strong>Category</strong></div>
             <PasteFromExcel mode="bulk" onFill={(rows)=>{
               const skus = rows.map(r=>({name:r.name,sl:parseFloat(r.L)||0,sw:parseFloat(r.W)||0,
-                sh:parseFloat(r.H)||0,swt:parseFloat(r.weight)||0,qtyAvail:parseFloat(r.qty)||0}));
+                sh:parseFloat(r.H)||0,swt:parseFloat(r.weight)||0,qtyAvail:parseFloat(r.qty)||0,
+                category:String(r.category||r[6]||'').trim()||'Uncategorised'}));
               setRawSkus(skus); setSkuCount(skus.length); setFileName('');
             }}/>
           </div>
@@ -458,10 +519,49 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                 <span style={{fontWeight:'600',fontSize:'13px'}}>Container Packing Preview</span>
                 <span style={{fontSize:'12px',color:'#9ca3af'}}>{results.length.toLocaleString()} SKUs</span>
               </div>
+              {/* Category lock toggles */}
+              {results && (() => {
+                const cats = [...new Set(results.filter(r=>!r.error).map(r=>r.category||'Uncategorised'))].sort();
+                if (cats.length < 2) return null;
+                return (
+                  <div style={{padding:'10px 16px',borderBottom:'1px solid #e8edf2',
+                    background:'#f8fafc',display:'flex',flexWrap:'wrap',gap:'6px',alignItems:'center'}}>
+                    <span style={{fontSize:'11px',fontWeight:'700',color:'#374151',marginRight:'4px'}}>
+                      🔒 Lock by Category:
+                    </span>
+                    {cats.map(cat=>{
+                      const isLocked=lockedCategories.has(cat);
+                      const skuCount=results.filter(r=>r.category===cat).length;
+                      return(
+                        <button key={cat} onClick={()=>toggleCategoryLock(cat)}
+                          title={isLocked?`Unlock all ${skuCount} SKUs in "${cat}"`:`Lock height for all ${skuCount} SKUs in "${cat}"`}
+                          style={{
+                            padding:'4px 12px',borderRadius:'99px',cursor:'pointer',
+                            fontFamily:'inherit',fontSize:'11px',fontWeight:'700',border:'none',
+                            background:isLocked?'#ede9fe':'#e2e8f0',
+                            color:isLocked?'#6d28d9':'#6b7280',
+                            transition:'all 0.15s',
+                          }}>
+                          {isLocked?'🔒':'🔓'} {cat}
+                          <span style={{marginLeft:'4px',opacity:0.7,fontWeight:'400'}}>({skuCount})</span>
+                        </button>
+                      );
+                    })}
+                    {lockedCategories.size>0&&(
+                      <button onClick={()=>{setLockedCategories(new Set());}}
+                        style={{padding:'4px 10px',borderRadius:'99px',cursor:'pointer',
+                          fontFamily:'inherit',fontSize:'10px',fontWeight:'600',border:'none',
+                          background:'#fee2e2',color:'#be185d',marginLeft:'auto'}}>
+                        ✕ Clear all category locks
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
               <div style={{overflowX:'auto'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
                   <thead><tr>
-                    {['SKU','Vol Qty','Wt Qty','Eff Qty','Vol%','Wt%','→ L-axis','→ W-axis','→ H-axis (stack)','Layers','Constraint'].map(h=>(
+                    {['SKU','Category','Vol Qty','Wt Qty','Eff Qty','Vol%','Wt%','→ L-axis','→ W-axis','→ H-axis (stack)','Layers','Constraint','🔒 Lock H'].map(h=>(
                       <th key={h} style={{padding:'9px 12px',textAlign:'left',fontWeight:'600',
                         fontSize:'11px',color:'#6b7a8d',textTransform:'uppercase',
                         background:'#f8fafc',borderBottom:'1px solid #e8edf2',whiteSpace:'nowrap'}}>{h}</th>))}
@@ -474,6 +574,13 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                         </tr>)
                       : (<tr key={i} style={{background:i%2===0?'#fff':'#fafbfc'}}>
                           <td style={{padding:'8px 12px',fontWeight:'500'}}>{r.name}</td>
+                          <td style={{padding:'8px 12px'}}>
+                            <span style={{background:'#f1f5f9',color:'#475569',
+                              padding:'2px 8px',borderRadius:'99px',fontSize:'10px',
+                              fontWeight:'600',whiteSpace:'nowrap'}}>
+                              {r.category||'—'}
+                            </span>
+                          </td>
                           <td style={{padding:'8px 12px',textAlign:'right'}}>{r.volQty?.toLocaleString()}</td>
                           <td style={{padding:'8px 12px',textAlign:'right'}}>{typeof r.wtQty==='number'?r.wtQty.toLocaleString():r.wtQty}</td>
                           <td style={{padding:'8px 12px',textAlign:'right',fontWeight:'700'}}>{r.effQty?.toLocaleString()}</td>
@@ -499,9 +606,11 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                           })()}
                           <td style={{padding:'8px 12px',textAlign:'center'}}>
                             {r.stackLayers>0&&(
-                              <span style={{background:'#eff6ff',color:'#1d4ed8',
+                              <span style={{
+                                background:r.heightLocked?'#ede9fe':'#eff6ff',
+                                color:r.heightLocked?'#6d28d9':'#1d4ed8',
                                 padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'700'}}>
-                                {r.stackLayers}L
+                                {r.stackLayers}{r.heightLocked?' 🔒':''}L
                               </span>
                             )}
                           </td>
@@ -511,6 +620,22 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               color:r.constraint==='Volume'?'#1d4ed8':r.constraint==='Weight'?'#c2410c':'#6d28d9'}}>
                               {r.constraint}
                             </span>
+                          </td>
+                          <td style={{padding:'8px 12px',textAlign:'center'}}>
+                            <button
+                              onClick={()=>toggleContainerLock(r.name)}
+                              title={lockedSkus.has(r.name)
+                                ? 'Height locked — box stays upright. Click to unlock.'
+                                : 'Click to lock height — box H stays vertical (no tipping)'}
+                              style={{
+                                padding:'3px 8px',borderRadius:'99px',cursor:'pointer',
+                                fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                                border:'none',transition:'all 0.15s',
+                                background:lockedSkus.has(r.name)?'#ede9fe':'#f1f5f9',
+                                color:lockedSkus.has(r.name)?'#6d28d9':'#9ca3af',
+                              }}>
+                              {lockedSkus.has(r.name)?'🔒':'🔓'}
+                            </button>
                           </td>
                         </tr>))}
                   </tbody>
