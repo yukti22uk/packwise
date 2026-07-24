@@ -3478,8 +3478,7 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
     const rW=parseFloat(fc.rk.bayW),rD=parseFloat(fc.rk.bayD);
     const bays=Math.ceil(totalLocs/fc.lpb);
     const area=+(bays*(rW/1000)*((rD/1000)+aisleHalf)).toFixed(1);
-    // Both L-W and W-L orientations (with locked height = bH always vertical for shelving)
-    const isUpright = UPRIGHT_RACKS.has(rt);
+    // All bins are always upright (H vertical) — only L↔W swap considered
     const {usableH:uH} = fc;
     const o1aw=Math.floor(rW/bL),o1ad=Math.floor(rD/bW),o1st=uH>0?Math.floor(uH/bH):0;
     const o2aw=Math.floor(rW/bW),o2ad=Math.floor(rD/bL),o2st=uH>0?Math.floor(uH/bH):0;
