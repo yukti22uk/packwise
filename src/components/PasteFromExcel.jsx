@@ -19,7 +19,7 @@ export default function PasteFromExcel({ mode = 'multisku', onFill }) {
       hint: 'Arrange your Excel columns in this order, select the cells, copy (Ctrl+C), then paste below.',
     },
     bulk: {
-      cols: ['SKU Name', 'Length (mm)', 'Width (mm)', 'Height (mm)', 'Weight/Box (kg)', 'Available Qty'],
+      cols: ['SKU Name', 'Length (mm)', 'Width (mm)', 'Height (mm)', 'Weight/Box (kg)', 'Available Qty', 'Category'],
       hint: 'Arrange your Excel columns in this order, select the cells, copy (Ctrl+C), then paste below.',
     },
   };
@@ -56,6 +56,7 @@ export default function PasteFromExcel({ mode = 'multisku', onFill }) {
       weight:    r[4] || '',
       qty:       r[5] || '',
       targetQty: r[5] || '',
+      category:  r[6] || '',
     })).filter(r => r.name && (r.L || r.W || r.H));
 
     if (!parsed.length) {
