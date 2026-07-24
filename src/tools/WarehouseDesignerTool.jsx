@@ -3264,9 +3264,13 @@ function calcForwardReserve(analysis, forwardRacks, reserveRacks, forwardDays, p
 
 // ─── USER-DEFINED RACK CONFIG FROM SYSTEM BINS ───────────────────────────────
 // TWO-PASS ASSIGNMENT:
-//   Pass 1 — fit each bin in non-ground racks (shelving, selective, drive-in)
+//   Pass 1 — fit each bin in the APPROPRIATE rack type by affinity, then any rack as fallback
 //   Pass 2 — bins that overflow + isLong items → automatically try ground racks
-// Ground storage auto-receives: LONG/odd-shaped SKUs + anything too big for regular racks
+//
+// BIN AFFINITY RULES (warehouse best-practice):
+//   XS/S/M → manual-pick racks (shelving, liveStorage, cantilever)
+//   L/XL   → pallet racks (selective, doubleDeep, driveIn)
+//   LONG   → ground / cantilever
 function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
   if (!analysis?.binSummary || !Object.keys(analysis.binSummary).length) return null;
   const CLEAR    = 30;
@@ -3274,14 +3278,25 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
   const ZONE_MAP = {XS:'golden',S:'golden',M:'mid',L:'reserve',XL:'bulk',LONG:'bulk'};
   const aisleHalf = (parseFloat(params.aisleW)||3.0)/2;
 
+  // Rack category sets
+  const MANUAL_RACK_TYPES = new Set(['shelving','liveStorage','cantilever']);
+  const PALLET_RACK_TYPES = new Set(['selective','doubleDeep','driveIn']);
+
+  // Bin → preferred rack category
+  const BIN_PREFERRED_CATEGORY = {
+    XS:'manual', S:'manual', M:'manual',
+    L:'pallet',  XL:'pallet',
+    LONG:'ground',
+  };
+
   const groundRacks  = userRacks.filter(r=>r.rackType==='ground'&&parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
   const regularRacks = userRacks.filter(r=>r.rackType!=='ground'&&parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
   if (!groundRacks.length && !regularRacks.length) return null;
 
-  // Helper: best fit in regular racks
-  const bestRegular = (bL,bW,bH) => {
+  // Helper: best fit in a subset of racks (or all regular racks if subset empty)
+  const bestFitInRacks = (racks, bL,bW,bH) => {
     let best=null, bestLPB=0;
-    regularRacks.forEach(rk=>{
+    racks.forEach(rk=>{
       const rW=parseFloat(rk.bayW), rD=parseFloat(rk.bayD);
       const rTH=parseFloat(rk.bayH)||2200, lvl=Math.max(1,parseInt(rk.levels)||1);
       const shelfH=Math.floor(rTH/lvl);
@@ -3294,6 +3309,23 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
       });
     });
     return best;
+  };
+
+  // Helper: best fit in regular racks — tries preferred category first, falls back to all
+  const bestRegular = (bL,bW,bH,binKey) => {
+    const pref = BIN_PREFERRED_CATEGORY[binKey];
+    // Filter preferred racks for this bin type
+    const preferredRacks = regularRacks.filter(rk=>
+      pref==='manual' ? MANUAL_RACK_TYPES.has(rk.rackType) :
+      pref==='pallet' ? PALLET_RACK_TYPES.has(rk.rackType) : false
+    );
+    // Try preferred racks first
+    if (preferredRacks.length>0) {
+      const fc = bestFitInRacks(preferredRacks, bL,bW,bH);
+      if (fc) return fc;
+    }
+    // Fallback: try ALL regular racks (if no preferred rack available)
+    return bestFitInRacks(regularRacks, bL,bW,bH);
   };
 
   // Helper: best fit in ground racks (cross-section: 2 smallest dims as footprint)
@@ -3328,7 +3360,7 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
     const forceGround=(longBins.has(binKey)||binKey==='LONG')&&groundRacks.length>0;
 
     if(!forceGround&&regularRacks.length>0){
-      const fc=bestRegular(bL,bW,bH);
+      const fc=bestRegular(bL,bW,bH,binKey); // pass binKey for affinity lookup
       if(fc){ regularPass[binKey]={fc,bL,bW,bH,totalLocs,binInfo}; return; }
     }
     // Overflow from regular (or forced to ground)
