@@ -3457,27 +3457,14 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
   // Bins flagged as LONG/odd in slotted data → auto-route to ground/cantilever if available
   const longBins=new Set((analysis.slotted||[]).filter(s=>s.isLong).map(s=>s.bin));
 
-  // For LONG bin type: compute representative cross-section dimensions from actual slotted items.
-  // BIN_CATALOG['LONG'] has no fixed phys — items vary. We use the average of the 2 smallest
-  // dimensions (cross-section footprint) and max of the largest (protrudes out of rack).
-  const longSlottedItems = (analysis.slotted||[]).filter(s=>s.bin==='LONG'&&s.L>0&&s.W>0&&s.H>0);
-  let longRepDims = [3000, 300, 200]; // safe default if no data
-  if (longSlottedItems.length > 0) {
-    const cross1 = Math.round(longSlottedItems.reduce((s,r)=>s+Math.min(r.L,r.W,r.H),0)/longSlottedItems.length);
-    const cross2 = Math.round(longSlottedItems.reduce((s,r)=>{
-      const sorted=[r.L,r.W,r.H].sort((a,b)=>a-b); return s+sorted[1];
-    },0)/longSlottedItems.length);
-    const length = Math.round(longSlottedItems.reduce((s,r)=>s+Math.max(r.L,r.W,r.H),0)/longSlottedItems.length);
-    longRepDims = [length, Math.max(cross1,cross2), Math.min(cross1,cross2)];
-  }
-
   const regularPass={}, groundPass={};
 
   Object.entries(analysis?.binSummary||{}).forEach(([binKey,binInfo])=>{
-    // Resolve bin physical dimensions
+    // Resolve bin physical dimensions (skip LONG here — handled per-SKU in Pass 2)
     let bL, bW, bH;
     if (binKey === 'LONG') {
-      [bL, bW, bH] = longRepDims; // use computed representative dimensions
+      // LONG has no single phys → always goes to ground pass for per-SKU fitting
+      bL=0; bW=0; bH=0;
     } else {
       const bc = BIN_CATALOG[binKey];
       if (!bc?.phys) return;
@@ -3485,66 +3472,148 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
     }
     const totalLocs=binInfo.locs||0; if(!totalLocs) return;
 
-    // LONG/isLong bins → always try ground first (if ground rack available)
-    // If no ground rack but cantilever is available, cantilever preferred
-    // If user hasn't selected cantilever but has ground → ground storage
     const hasCantilever = regularRacks.some(r=>r.rackType==='cantilever');
-    const forceGround  = (longBins.has(binKey)||binKey==='LONG') && groundRacks.length>0 && !hasCantilever;
-    const forceGround2 = (longBins.has(binKey)||binKey==='LONG') && groundRacks.length>0;
+    const isLongBin = longBins.has(binKey) || binKey==='LONG';
 
-    if(!forceGround&&regularRacks.length>0){
+    // LONG/isLong → skip regular rack assignment, go straight to ground
+    if(isLongBin && groundRacks.length>0){
+      groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround:true,perSku:isLongBin};
+      return;
+    }
+    // LONG without ground → try cantilever or overflow
+    if(isLongBin){
+      if(regularRacks.length>0){
+        const fc=bestRegular(bL||3000,bW||300,bH||200,binKey);
+        if(fc){ regularPass[binKey]={fc,bL:bL||3000,bW:bW||300,bH:bH||200,totalLocs,binInfo}; return; }
+      }
+      groundPass[binKey]={bL:bL||3000,bW:bW||300,bH:bH||200,totalLocs,binInfo,forceGround:false,perSku:true};
+      return;
+    }
+
+    if(regularRacks.length>0){
       const fc=bestRegular(bL,bW,bH,binKey);
       if(fc){ regularPass[binKey]={fc,bL,bW,bH,totalLocs,binInfo}; return; }
     }
-    // No regular rack fit (or forced) → try ground
-    if(forceGround2&&groundRacks.length>0){
-      groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround:true};
-    } else {
-      groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround:false};
-    }
+    groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround:false,perSku:false};
   });
 
   const uCfgs=[], overflowBins=[];
 
   // Pass 2: assign ground-pass bins to ground racks
-  Object.entries(groundPass).forEach(([binKey,{bL,bW,bH,totalLocs,binInfo,forceGround}])=>{
+  Object.entries(groundPass).forEach(([binKey,{bL,bW,bH,totalLocs,binInfo,forceGround,perSku}])=>{
     if(groundRacks.length>0){
-      const gc=bestGround(bL,bW,bH);
-      if(gc){
-        const rk=gc.rk;
-        const rW=parseFloat(rk.bayW),rD=parseFloat(rk.bayD);
-        const bays=Math.ceil(totalLocs/gc.lpb);
-        const area=+(bays*(rW/1000)*((rD/1000)+aisleHalf)).toFixed(1);
-        uCfgs.push({
-          id:`u-${binKey}`,rack:'ground',bin:binKey,
-          rackName:rk.name||'Ground Storage',binName:binInfo.name||binKey,
-          binDims:[bL,bW,bH],bayW:rW,bayD:rD,
-          shelfH:gc.totalH||500,tierHeight:0,clearance:0,
-          levelH:0,usableH:0,beamClr:0,
-          orientDesc:gc.orientDesc,wDimMm:gc.wDimMm,dDimMm:gc.dDimMm,hDimMm:gc.hDimMm,
-          orientation:gc.orient,tiers:1,levels:gc.stack,
-          acrossW:gc.aw,acrossD:gc.ad,stackH:gc.stack,
-          locsPerBay:gc.lpb,locsPerBayTotal:gc.lpb,
-          locs:totalLocs,baysNeeded:bays,area,feasible:true,zone:'bulk',
-          autoAssigned:forceGround
-            ? (binKey==='LONG'?`Long goods → ground storage (avg cross-section ${gc.wDimMm}×${gc.dDimMm}mm, length ${gc.hDimMm}mm protrudes)`
-               :'Long/odd-shaped → auto-routed to ground')
-            :'Overflow from regular racks → ground',
-          o1:{acrossW:gc.aw,acrossD:gc.ad,feasible:true,levels:gc.stack,locsPerBay:gc.lpb},
-          o2:{acrossW:gc.aw,acrossD:gc.ad,feasible:true,levels:gc.stack,locsPerBay:gc.lpb},
+      const rk = groundRacks[0]; // use first ground rack
+      const rW=parseFloat(rk.bayW), rD=parseFloat(rk.bayD);
+      const stackLayers=Math.max(1,parseInt(rk.levels)||1);
+
+      if(perSku && (binKey==='LONG'||longBins.has(binKey))){
+        // ── PER-SKU FITTING for LONG goods ─────────────────────────────────
+        const longSkus=(analysis.slotted||[]).filter(s=>s.bin===binKey&&s.stock>0&&s.L>0&&s.W>0&&s.H>0);
+        const fittedSkus=[], unfittedSkus=[];
+        let sumLocs=0, sumBays=0;
+
+        longSkus.forEach(s=>{
+          // Cross-section: sort dims → 2 smallest = footprint, largest protrudes
+          const [d1,d2,d3]=[s.L,s.W,s.H].slice().sort((a,b)=>a-b);
+          const oA={aw:Math.floor(rW/d1),ad:Math.floor(rD/d2)};
+          const oB={aw:Math.floor(rW/d2),ad:Math.floor(rD/d1)};
+          const bo=oA.aw*oA.ad>=oB.aw*oB.ad?oA:oB;
+
+          if(!bo.aw||!bo.ad){
+            unfittedSkus.push({...s, reason:`Cross-section (${d1}×${d2}mm) exceeds bay (${rW}×${rD}mm)`});
+            return;
+          }
+          const locsPerSlot=bo.aw*bo.ad*stackLayers; // items per bay
+          const locsNeeded=s.locsReq||Math.ceil((s.stock||1)/1);
+          const baysNeeded=Math.ceil(locsNeeded/locsPerSlot);
+          const area=+(baysNeeded*(rW/1000)*((rD/1000)+aisleHalf)).toFixed(1);
+          fittedSkus.push({
+            sku:s.sku, desc:s.desc||s.name||'', vb:s.vb||s.velocity,
+            L:s.L, W:s.W, H:s.H, stock:s.stock||0,
+            d1,d2,d3, aw:bo.aw, ad:bo.ad,
+            locsPerSlot, locsNeeded, baysNeeded, area,
+          });
+          sumLocs+=locsNeeded;
+          sumBays+=baysNeeded;
         });
+
+        const totalArea=+(sumBays*(rW/1000)*((rD/1000)+aisleHalf)).toFixed(1);
+
+        if(fittedSkus.length>0||unfittedSkus.length>0){
+          uCfgs.push({
+            id:`u-${binKey}`,rack:'ground',bin:binKey,
+            rackName:rk.name||'Ground Storage',binName:binInfo.name||binKey,
+            binDims:null, bayW:rW, bayD:rD,
+            shelfH:0,tierHeight:0,clearance:0,levelH:0,usableH:0,beamClr:0,
+            orientation:'ground',tiers:1,levels:stackLayers,
+            acrossW:0,acrossD:0,stackH:stackLayers,
+            locsPerBay:0,locsPerBayTotal:0,
+            locs:sumLocs,baysNeeded:sumBays,area:totalArea,feasible:true,zone:'bulk',
+            autoAssigned:`Long goods → per-SKU cross-section fitting in ground storage`,
+            perSkuFitted:fittedSkus,
+            perSkuUnfitted:unfittedSkus,
+            isPerSku:true,
+            o1:{acrossW:0,acrossD:0,feasible:true,levels:stackLayers,locsPerBay:0},
+            o2:{acrossW:0,acrossD:0,feasible:true,levels:stackLayers,locsPerBay:0},
+          });
+          // Push unfitted as overflow
+          if(unfittedSkus.length>0){
+            overflowBins.push({
+              binKey, binName:binInfo.name||binKey,
+              totalLocs:unfittedSkus.reduce((s,u)=>s+(u.locsReq||1),0),
+              dims:'per SKU',
+              skuList:unfittedSkus,
+              reason:`${unfittedSkus.length} SKU(s) cross-section exceeds ground bay (${rW}×${rD}mm)`,
+            });
+          }
+        } else {
+          // No long items with stock — skip
+        }
         return;
       }
+
+      // Regular ground storage (non-LONG) — cross-section with representative dims
+      const gc = {
+        rk,
+        ...(()=>{
+          const [d1,d2,d3]=[bL,bW,bH].slice().sort((a,b)=>a-b);
+          const oA={aw:Math.floor(rW/d1),ad:Math.floor(rD/d2)};
+          const oB={aw:Math.floor(rW/d2),ad:Math.floor(rD/d1)};
+          const bo=oA.aw*oA.ad>=oB.aw*oB.ad?oA:oB;
+          return {aw:bo.aw,ad:bo.ad,stack:stackLayers,lpb:bo.aw*bo.ad*stackLayers,
+            wDimMm:bo===oA?d1:d2,dDimMm:bo===oA?d2:d1,hDimMm:d3,
+            totalH:parseFloat(rk.bayH)||500,
+            orientDesc:`Cross-section ${bo===oA?d1:d2}×${bo===oA?d2:d1}mm footprint, ${d3}mm length protrudes`};
+        })()
+      };
+      if(!gc.aw||!gc.ad){
+        const allR=[...regularRacks,...groundRacks];
+        const maxW=Math.max(...allR.map(r=>parseFloat(r.bayW)||0),0);
+        const maxD=Math.max(...allR.map(r=>parseFloat(r.bayD)||0),0);
+        overflowBins.push({binKey,binName:binInfo.name||binKey,totalLocs,dims:`${bL}×${bW}×${bH}mm`,
+          reason:`Cross-section exceeds ground bay (${maxW}×${maxD}mm)`});
+        return;
+      }
+      const bays=Math.ceil(totalLocs/gc.lpb);
+      const area=+(bays*(rW/1000)*((rD/1000)+aisleHalf)).toFixed(1);
+      uCfgs.push({
+        id:`u-${binKey}`,rack:'ground',bin:binKey,
+        rackName:rk.name||'Ground Storage',binName:binInfo.name||binKey,
+        binDims:[bL,bW,bH],bayW:rW,bayD:rD,
+        shelfH:gc.totalH||500,tierHeight:0,clearance:0,
+        levelH:0,usableH:0,beamClr:0,
+        orientDesc:gc.orientDesc,wDimMm:gc.wDimMm,dDimMm:gc.dDimMm,hDimMm:gc.hDimMm,
+        orientation:'ground',tiers:1,levels:gc.stack,
+        acrossW:gc.aw,acrossD:gc.ad,stackH:gc.stack,
+        locsPerBay:gc.lpb,locsPerBayTotal:gc.lpb,
+        locs:totalLocs,baysNeeded:bays,area,feasible:true,zone:'bulk',
+        autoAssigned:forceGround?'Odd-shaped → auto-routed to ground':'Overflow from regular racks → ground',
+        o1:{acrossW:gc.aw,acrossD:gc.ad,feasible:true,levels:gc.stack,locsPerBay:gc.lpb},
+        o2:{acrossW:gc.aw,acrossD:gc.ad,feasible:true,levels:gc.stack,locsPerBay:gc.lpb},
+      });
+      return;
     }
-    // Still can't fit — overflow
-    const allR=[...regularRacks,...groundRacks];
-    const maxW=Math.max(...allR.map(r=>parseFloat(r.bayW)||0),0);
-    const maxD=Math.max(...allR.map(r=>parseFloat(r.bayD)||0),0);
-    overflowBins.push({binKey,binName:binInfo.name||binKey,totalLocs,
-      dims:`${bL}×${bW}×${bH}mm`,
-      reason:groundRacks.length>0
-        ?`Cross-section exceeds ground bay (${maxW}×${maxD}mm) — increase Bay W or D`
-        :`No rack fits — add a Ground rack, or enlarge Bay W/D beyond ${Math.min(bL,bW)}mm`});
+    // No ground rack available — overflow
   });
 
   // Finalise regular rack assignments
@@ -4992,15 +5061,142 @@ export default function WarehouseDesignerTool() {
                           </div>
                         )}
 
-                        {/* Ground storage note */}
-                        {isGround&&cfg.orientDesc&&(
+                        {/* ── PER-SKU FITTING TABLE for LONG goods ───────── */}
+                        {isGround&&cfg.isPerSku&&(
+                          <div style={{marginBottom:'8px'}}>
+                            {/* Header */}
+                            <div style={{display:'flex',justifyContent:'space-between',
+                              alignItems:'center',marginBottom:'6px'}}>
+                              <span style={{fontSize:'10px',fontWeight:'700',color:'#374151',
+                                textTransform:'uppercase',letterSpacing:'0.04em'}}>
+                                Per-SKU Cross-Section Fit in {cfg.bayW}×{cfg.bayD}mm bay
+                              </span>
+                              <div style={{display:'flex',gap:'8px',fontSize:'10px'}}>
+                                <span style={{color:'#166534',fontWeight:'700'}}>
+                                  ✓ {(cfg.perSkuFitted||[]).length} fit
+                                </span>
+                                {(cfg.perSkuUnfitted||[]).length>0&&(
+                                  <span style={{color:'#be185d',fontWeight:'700'}}>
+                                    ✗ {cfg.perSkuUnfitted.length} don't fit
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Fitted SKUs */}
+                            {(cfg.perSkuFitted||[]).length>0&&(
+                              <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',
+                                overflow:'hidden',marginBottom:'8px'}}>
+                                <div style={{background:'#f0fdf4',padding:'5px 10px',
+                                  fontSize:'10px',fontWeight:'700',color:'#166534',
+                                  borderBottom:'1px solid #dcfce7'}}>
+                                  ✓ Fitted SKUs — cross-section fits in {cfg.bayW}×{cfg.bayD}mm
+                                </div>
+                                <div style={{overflowX:'auto',maxHeight:'220px',overflowY:'auto'}}>
+                                  <table style={{width:'100%',borderCollapse:'collapse',
+                                    fontSize:'10px',minWidth:'500px'}}>
+                                    <thead>
+                                      <tr style={{background:'#f8fafc'}}>
+                                        {['SKU','L×W×H (mm)','Cross-section','← W','↔ D','×Stack','Locs','Bays'].map(h=>(
+                                          <th key={h} style={{padding:'4px 8px',textAlign:'left',
+                                            fontWeight:'700',color:'#64748b',fontSize:'9px',
+                                            textTransform:'uppercase',borderBottom:'1px solid #e2e8f0',
+                                            whiteSpace:'nowrap'}}>{h}</th>
+                                        ))}
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {cfg.perSkuFitted.map((s,si)=>(
+                                        <tr key={si} style={{background:si%2===0?'#fff':'#f8fafc'}}>
+                                          <td style={{padding:'3px 8px',fontWeight:'700',
+                                            color:'#0f172a',whiteSpace:'nowrap',fontSize:'10px'}}>{s.sku}</td>
+                                          <td style={{padding:'3px 8px',color:'#374151',fontSize:'10px',
+                                            whiteSpace:'nowrap'}}>{s.L}×{s.W}×{s.H}</td>
+                                          <td style={{padding:'3px 8px',fontSize:'10px',
+                                            color:'#6b7280',whiteSpace:'nowrap'}}>
+                                            {s.d1}×{s.d2}mm</td>
+                                          <td style={{padding:'3px 8px',textAlign:'center',
+                                            fontWeight:'700',color:'#1d4ed8',fontSize:'11px'}}>{s.aw}</td>
+                                          <td style={{padding:'3px 8px',textAlign:'center',
+                                            fontWeight:'700',color:'#166534',fontSize:'11px'}}>{s.ad}</td>
+                                          <td style={{padding:'3px 8px',textAlign:'center',
+                                            color:'#854d0e',fontSize:'11px'}}>{cfg.levels}</td>
+                                          <td style={{padding:'3px 8px',textAlign:'right',
+                                            fontWeight:'700',color:'#7c3aed',fontSize:'11px'}}>{s.locsNeeded}</td>
+                                          <td style={{padding:'3px 8px',textAlign:'right',
+                                            color:'#374151',fontSize:'11px'}}>{s.baysNeeded}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Unfitted SKUs */}
+                            {(cfg.perSkuUnfitted||[]).length>0&&(
+                              <div style={{border:'1px solid #fecaca',borderRadius:'8px',
+                                overflow:'hidden'}}>
+                                <div style={{background:'#fff1f2',padding:'5px 10px',
+                                  fontSize:'10px',fontWeight:'700',color:'#be185d',
+                                  borderBottom:'1px solid #fecaca'}}>
+                                  ✗ {cfg.perSkuUnfitted.length} SKU{cfg.perSkuUnfitted.length>1?'s':''} Don't Fit
+                                  — cross-section exceeds {cfg.bayW}×{cfg.bayD}mm bay
+                                </div>
+                                <div style={{overflowX:'auto',maxHeight:'160px',overflowY:'auto'}}>
+                                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'10px'}}>
+                                    <thead>
+                                      <tr style={{background:'#fef2f2'}}>
+                                        {['SKU','L×W×H (mm)','Cross-section','Reason'].map(h=>(
+                                          <th key={h} style={{padding:'4px 8px',textAlign:'left',
+                                            fontWeight:'700',color:'#9ca3af',fontSize:'9px',
+                                            textTransform:'uppercase',borderBottom:'1px solid #fee2e2',
+                                            whiteSpace:'nowrap'}}>{h}</th>
+                                        ))}
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {cfg.perSkuUnfitted.map((s,si)=>(
+                                        <tr key={si} style={{background:si%2===0?'#fff':'#fff8f8'}}>
+                                          <td style={{padding:'3px 8px',fontWeight:'700',
+                                            color:'#be185d',whiteSpace:'nowrap'}}>{s.sku}</td>
+                                          <td style={{padding:'3px 8px',color:'#374151',whiteSpace:'nowrap'}}>
+                                            {s.L}×{s.W}×{s.H}mm</td>
+                                          <td style={{padding:'3px 8px',color:'#be185d',
+                                            fontWeight:'600',whiteSpace:'nowrap'}}>
+                                            {Math.min(s.L,s.W,s.H)}×{[s.L,s.W,s.H].sort((a,b)=>a-b)[1]}mm
+                                          </td>
+                                          <td style={{padding:'3px 8px',color:'#6b7280',
+                                            fontSize:'9px'}}>{s.reason}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Summary */}
+                            <div style={{fontSize:'10px',color:'#374151',marginTop:'6px',
+                              fontWeight:'600'}}>
+                              Total: {(cfg.perSkuFitted||[]).length} SKUs fitted
+                              · <strong style={{color:'#7c3aed'}}>{cfg.locs?.toLocaleString()} locations</strong>
+                              · <strong>{cfg.baysNeeded?.toLocaleString()}</strong> bays
+                              · {cfg.area?.toFixed(0)}m²
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Ground storage note (non-LONG) */}
+                        {isGround&&!cfg.isPerSku&&cfg.orientDesc&&(
                           <div style={{fontSize:'10px',color:'#6b7280',background:'#f1f5f9',
                             borderRadius:'6px',padding:'6px 10px',marginBottom:'8px'}}>
                             📐 {cfg.orientDesc}
                           </div>
                         )}
 
-                        {/* 4-tile summary */}
+                        {/* 4-tile summary (skip for per-SKU ground) */}
+                        {!cfg.isPerSku&&(
                         <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',
                           gap:'6px',marginBottom:'8px'}}>
                           {[
@@ -5060,6 +5256,7 @@ export default function WarehouseDesignerTool() {
                           <span>📐 {+(cfg.area||0).toFixed(0)}m² floor area</span>
                           <span>📦 {(aw*ad*stackH*lvl).toLocaleString()} locs/bay</span>
                         </div>
+                        )}  {/* end !cfg.isPerSku */}
                       </div>
                       {/* ── SKU LIST for this bin type ─────────────────── */}
                       <div style={{borderTop:'1px solid #f1f5f9'}}>
