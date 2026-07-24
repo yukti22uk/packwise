@@ -3298,42 +3298,89 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
     LONG:'ground',
   };
 
-  const groundRacks  = userRacks.filter(r=>r.rackType==='ground'&&parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
-  const regularRacks = userRacks.filter(r=>r.rackType!=='ground'&&parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
-  if (!groundRacks.length && !regularRacks.length) return null;
+  // ── Per-rack-type beam/shelf clearance (mm per level) ──────────────────────
+  // Beam clearance = space taken by shelf board/pallet beam per level
+  // After dividing total bay height by levels, subtract this to get usable bin space
+  const BEAM_CLR = {
+    shelving:    50,   // shelf board (25mm) + label clearance
+    liveStorage: 60,   // flow rail depth
+    selective:  150,   // pallet beam (100mm) + top-of-pallet to beam headroom
+    doubleDeep: 150,
+    driveIn:    150,
+    cantilever: 100,   // arm clearance
+    ground:       0,   // no levels
+  };
 
-  // Helper: best fit in a subset of racks (or all regular racks if subset empty)
-  const bestFitInRacks = (racks, bL,bW,bH) => {
+  // ── Orientation sets ──────────────────────────────────────────────────────
+  // ALL standard bins (XS/S/M/L/XL) must always be upright — H is always vertical.
+  // Only the L↔W footprint swap is allowed. Tipping a pallet or crate on its side
+  // is never acceptable in a real warehouse.
+  // Exception: LONG/ground storage uses cross-section method (handled separately).
+  const UPRIGHT_ORIENTS = [[0,1,2],[1,0,2]]; // [L-W-H] and [W-L-H]; H (index 2) always vertical
+
+  // ── Clearance per rack type ────────────────────────────────────────────────
+  const RACK_BEAM_CLR = (rackType) => BEAM_CLR[rackType] ?? 75;
+
+  // ── usable height per level ────────────────────────────────────────────────
+  // levelH  = floor(totalBayH / levels)       — space allocated per level
+  // usableH = levelH - beamClearance          — space available for bins to sit in
+  const calcUsableH = (rk, lvl) => {
+    const totalH = parseFloat(rk.bayH) || 2200;
+    const levelH = Math.floor(totalH / Math.max(1, lvl));
+    const clr    = RACK_BEAM_CLR(rk.rackType || 'shelving');
+    return { totalH, levelH, usableH: Math.max(0, levelH - clr), clr };
+  };
+
+  // ── Helper: best fit in a given set of racks ────────────────────────────────
+  const bestFitInRacks = (racks, bL, bW, bH) => {
     let best=null, bestLPB=0;
     racks.forEach(rk=>{
-      const rW=parseFloat(rk.bayW), rD=parseFloat(rk.bayD);
-      const rTH=parseFloat(rk.bayH)||2200, lvl=Math.max(1,parseInt(rk.levels)||1);
-      const shelfH=Math.floor(rTH/lvl);
-      ORIENTS.forEach(([x,y,z])=>{
-        const dim=[bL,bW,bH];
-        const aw=Math.floor(rW/dim[x]), ad=Math.floor(rD/dim[y]); if(!aw||!ad) return;
-        const stack=Math.floor((shelfH-CLEAR)/dim[z]); if(stack<1) return;
-        const lpb=aw*ad*stack*lvl;
-        if(lpb>bestLPB){bestLPB=lpb;best={rk,aw,ad,stack,lvl,shelfH,lpb,orient:x===0?'LW':'WL'};}
+      const rW  = parseFloat(rk.bayW);
+      const rD  = parseFloat(rk.bayD);
+      const lvl = Math.max(1, parseInt(rk.levels)||1);
+      const { totalH, levelH, usableH, clr } = calcUsableH(rk, lvl);
+      // Always use upright orientation — all bins/totes/pallets stored with H vertical
+      UPRIGHT_ORIENTS.forEach(([x,y,z])=>{
+        const dim = [bL, bW, bH];
+        // aw = bins across bay WIDTH (dim[x] is the bin face going along W)
+        // ad = bins along bay DEPTH  (dim[y] is the bin face going along D)
+        // stack = bins stacked vertically per level
+        const aw    = Math.floor(rW / dim[x]);
+        const ad    = Math.floor(rD / dim[y]);
+        if (!aw || !ad) return;
+        const stack = Math.floor(usableH / dim[z]);
+        if (stack < 1) return;
+        const lpb = aw * ad * stack * lvl;
+        if (lpb > bestLPB) {
+          bestLPB = lpb;
+          // Describe which bin dimension goes where
+          const AXIS=['L','W','H'];
+          const wDim=AXIS[x], dDim=AXIS[y], hDim=AXIS[z];
+          best = {
+            rk, aw, ad, stack, lvl, lpb,
+            totalH, levelH, usableH, beamClr: clr,
+            // human-readable: "L→width, W→depth, H→stack"
+            orientDesc: `Bin ${wDim}(${dim[x]}mm)→width, ${dDim}(${dim[y]}mm)→depth, ${hDim}(${dim[z]}mm)→stack`,
+            wDimMm: dim[x], dDimMm: dim[y], hDimMm: dim[z],
+            orient: x===0&&y===1?'LW': x===1&&y===0?'WL': `${wDim}${dDim}`,
+          };
+        }
       });
     });
     return best;
   };
 
-  // Helper: best fit in regular racks — tries preferred category first, falls back to all
+  // ── Helper: best fit in regular racks — preferred category first ─────────────
   const bestRegular = (bL,bW,bH,binKey) => {
     const pref = BIN_PREFERRED_CATEGORY[binKey];
-    // Filter preferred racks for this bin type
     const preferredRacks = regularRacks.filter(rk=>
       pref==='manual' ? MANUAL_RACK_TYPES.has(rk.rackType) :
       pref==='pallet' ? PALLET_RACK_TYPES.has(rk.rackType) : false
     );
-    // Try preferred racks first
     if (preferredRacks.length>0) {
       const fc = bestFitInRacks(preferredRacks, bL,bW,bH);
       if (fc) return fc;
     }
-    // Fallback: try ALL regular racks (if no preferred rack available)
     return bestFitInRacks(regularRacks, bL,bW,bH);
   };
 
@@ -3350,7 +3397,11 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
       if(!bo.aw||!bo.ad) return;
       const lpb=bo.aw*bo.ad*stackLayers;
       if(lpb>bestLPB){bestLPB=lpb;
-        best={rk,aw:bo.aw,ad:bo.ad,stack:stackLayers,lvl:1,shelfH:d3,lpb,orient:'ground'};}
+        best={rk,aw:bo.aw,ad:bo.ad,stack:stackLayers,lvl:1,
+          totalH:parseFloat(rk.bayH)||500, levelH:0, usableH:0, beamClr:0,
+          wDimMm:d1,dDimMm:d2,hDimMm:d3,
+          orientDesc:`Cross-section ${d1}×${d2}mm footprint, ${d3}mm length protrudes`,
+          lpb,orient:'ground'};}
     });
     return best;
   };
@@ -3391,7 +3442,9 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
           id:`u-${binKey}`,rack:'ground',bin:binKey,
           rackName:rk.name||'Ground Storage',binName:binInfo.name||binKey,
           binDims:[bL,bW,bH],bayW:rW,bayD:rD,
-          shelfH:parseFloat(rk.bayH)||500,tierHeight:gc.shelfH,clearance:CLEAR,
+          shelfH:gc.totalH||500,tierHeight:0,clearance:0,
+          levelH:0,usableH:0,beamClr:0,
+          orientDesc:gc.orientDesc,wDimMm:gc.wDimMm,dDimMm:gc.dDimMm,hDimMm:gc.hDimMm,
           orientation:gc.orient,tiers:1,levels:gc.stack,
           acrossW:gc.aw,acrossD:gc.ad,stackH:gc.stack,
           locsPerBay:gc.lpb,locsPerBayTotal:gc.lpb,
@@ -3417,24 +3470,32 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
   // Finalise regular rack assignments
   Object.entries(regularPass).forEach(([binKey,{fc,bL,bW,bH,totalLocs,binInfo}])=>{
     const rt=fc.rk.rackType||'shelving';
-    const rW=parseFloat(fc.rk.bayW),rD=parseFloat(fc.rk.bayD),rTH=parseFloat(fc.rk.bayH)||2200;
-    const shelfH2=Math.floor(rTH/fc.lvl);
+    const rW=parseFloat(fc.rk.bayW),rD=parseFloat(fc.rk.bayD);
     const bays=Math.ceil(totalLocs/fc.lpb);
     const area=+(bays*(rW/1000)*((rD/1000)+aisleHalf)).toFixed(1);
+    // Both L-W and W-L orientations (with locked height = bH always vertical for shelving)
+    const isUpright = UPRIGHT_RACKS.has(rt);
+    const {usableH:uH} = fc;
+    const o1aw=Math.floor(rW/bL),o1ad=Math.floor(rD/bW),o1st=uH>0?Math.floor(uH/bH):0;
+    const o2aw=Math.floor(rW/bW),o2ad=Math.floor(rD/bL),o2st=uH>0?Math.floor(uH/bH):0;
     uCfgs.push({
       id:`u-${binKey}`,rack:rt,bin:binKey,
       rackName:fc.rk.name||'Custom Rack',binName:binInfo.name||binKey,
-      binDims:[bL,bW,bH],bayW:rW,bayD:rD,shelfH:rTH,tierHeight:shelfH2,clearance:CLEAR,
+      binDims:[bL,bW,bH],bayW:rW,bayD:rD,
+      shelfH:fc.totalH,tierHeight:fc.levelH,clearance:fc.beamClr,
+      levelH:fc.levelH,usableH:fc.usableH,beamClr:fc.beamClr,
+      orientDesc:fc.orientDesc,wDimMm:fc.wDimMm,dDimMm:fc.dDimMm,hDimMm:fc.hDimMm,
       orientation:fc.orient,tiers:1,levels:fc.lvl,
       acrossW:fc.aw,acrossD:fc.ad,stackH:fc.stack,
       locsPerBay:fc.lpb,locsPerBayTotal:fc.lpb,
       locs:totalLocs,baysNeeded:bays,area,feasible:true,zone:ZONE_MAP[binKey]||'golden',
-      o1:{acrossW:Math.floor(rW/bL),acrossD:Math.floor(rD/bW),feasible:Math.floor(rW/bL)>0,
-          levels:bH>0?Math.max(0,Math.floor((shelfH2-CLEAR)/bH)):0,
-          locsPerBay:Math.floor(rW/bL)*Math.floor(rD/bW)*Math.max(0,Math.floor((shelfH2-CLEAR)/bH))*fc.lvl},
-      o2:{acrossW:Math.floor(rW/bW),acrossD:Math.floor(rD/bL),feasible:Math.floor(rW/bW)>0,
-          levels:bH>0?Math.max(0,Math.floor((shelfH2-CLEAR)/bH)):0,
-          locsPerBay:Math.floor(rW/bW)*Math.floor(rD/bL)*Math.max(0,Math.floor((shelfH2-CLEAR)/bH))*fc.lvl},
+      // LW and WL orientations for display
+      o1:{acrossW:o1aw,acrossD:o1ad,feasible:o1aw>0&&o1ad>0&&o1st>0,
+          levels:o1st,locsPerBay:o1aw*o1ad*o1st*fc.lvl,
+          desc:`${bL}mm wide × ${bW}mm deep × ${bH}mm tall`},
+      o2:{acrossW:o2aw,acrossD:o2ad,feasible:o2aw>0&&o2ad>0&&o2st>0,
+          levels:o2st,locsPerBay:o2aw*o2ad*o2st*fc.lvl,
+          desc:`${bW}mm wide × ${bL}mm deep × ${bH}mm tall`},
     });
   });
 
@@ -4767,56 +4828,139 @@ export default function WarehouseDesignerTool() {
                             border:'1px solid #bfdbfe'}}>
                             {cfg.bin}
                           </span>
-                          <span style={{fontSize:'11px',color:'#374151',fontWeight:'600'}}>
-                            {cfg.binName}
-                          </span>
+                          <span style={{fontSize:'11px',color:'#374151',fontWeight:'600'}}>{cfg.binName}</span>
                           {cfg.binDims&&(
                             <span style={{fontSize:'10px',color:'#9ca3af'}}>
-                              ({cfg.binDims.join('×')}mm)
+                              (L{cfg.binDims[0]}×W{cfg.binDims[1]}×H{cfg.binDims[2]}mm)
                             </span>
                           )}
                         </div>
 
-                        {/* Fit dimensions */}
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',
-                          gap:'6px',marginBottom:'10px'}}>
+                        {/* Height breakdown per level */}
+                        {!isGround&&cfg.levelH>0&&(
+                          <div style={{background:'#f1f5f9',borderRadius:'8px',padding:'8px 12px',
+                            marginBottom:'10px'}}>
+                            <div style={{fontWeight:'700',color:'#475569',marginBottom:'6px',
+                              fontSize:'10px',textTransform:'uppercase',letterSpacing:'0.04em'}}>
+                              Height Per Level
+                            </div>
+                            <div style={{display:'flex',alignItems:'center',gap:'5px',
+                              flexWrap:'wrap',fontSize:'11px'}}>
+                              <span style={{background:'#e2e8f0',padding:'2px 8px',
+                                borderRadius:'5px',fontWeight:'700',color:'#0f172a'}}>
+                                Bay H {cfg.shelfH}mm
+                              </span>
+                              <span style={{color:'#9ca3af'}}>÷ {cfg.levels} levels</span>
+                              <span style={{background:'#dbeafe',padding:'2px 8px',
+                                borderRadius:'5px',fontWeight:'700',color:'#1d4ed8'}}>
+                                = {cfg.levelH}mm per level
+                              </span>
+                              <span style={{color:'#9ca3af'}}>− {cfg.beamClr}mm beam/shelf</span>
+                              <span style={{background:'#dcfce7',padding:'2px 8px',
+                                borderRadius:'5px',fontWeight:'700',color:'#166534'}}>
+                                = {cfg.usableH}mm usable H
+                              </span>
+                              <span style={{color:'#9ca3af'}}>÷ H{cfg.binDims?.[2]}mm bin</span>
+                              <span style={{background:'#f5f3ff',padding:'2px 8px',
+                                borderRadius:'5px',fontWeight:'800',color:'#7c3aed'}}>
+                                = {cfg.stackH} stack{(cfg.stackH||1)>1?'s':''}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Orientation comparison — LW vs WL */}
+                        {cfg.o1&&cfg.o2&&!isGround&&(
+                          <div style={{marginBottom:'10px'}}>
+                            <div style={{fontSize:'10px',fontWeight:'700',color:'#374151',
+                              textTransform:'uppercase',letterSpacing:'0.04em',marginBottom:'6px'}}>
+                              Bin Orientations (best selected ✓):
+                            </div>
+                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
+                              {[
+                                {label:'Bin L→Width, W→Depth', data:cfg.o1,
+                                 active:cfg.orientation==='LW'||cfg.wDimMm===cfg.binDims?.[0]},
+                                {label:'Bin W→Width, L→Depth', data:cfg.o2,
+                                 active:cfg.orientation==='WL'||cfg.wDimMm===cfg.binDims?.[1]},
+                              ].map(({label,data,active},oi)=>(
+                                data&&<div key={oi} style={{
+                                  border:`2px solid ${active?'#7c3aed':'#e2e8f0'}`,
+                                  borderRadius:'8px',padding:'8px 10px',
+                                  background:active?'#f5f3ff':'#fff',
+                                  opacity:data.feasible?1:0.5}}>
+                                  <div style={{display:'flex',justifyContent:'space-between',
+                                    alignItems:'center',marginBottom:'3px'}}>
+                                    <span style={{fontSize:'10px',fontWeight:'700',
+                                      color:active?'#7c3aed':'#6b7280'}}>{label}</span>
+                                    {active&&<span style={{fontSize:'9px',fontWeight:'800',
+                                      background:'#7c3aed',color:'#fff',
+                                      padding:'1px 6px',borderRadius:'4px'}}>BEST</span>}
+                                  </div>
+                                  {data.feasible
+                                    ? <div style={{fontSize:'11px',color:'#374151',lineHeight:'1.5'}}>
+                                        <strong>{data.acrossW}</strong> across W ×{' '}
+                                        <strong>{data.acrossD}</strong> along D ×{' '}
+                                        <strong>{data.levels}</strong> stack{(data.levels||1)>1?'s':''}/level ×{' '}
+                                        <strong>{cfg.levels}</strong> level{(cfg.levels||1)>1?'s':''}
+                                        <span style={{marginLeft:'6px',fontWeight:'800',color:'#7c3aed'}}>
+                                          = {(data.locsPerBay||0).toLocaleString()} locs/bay
+                                        </span>
+                                      </div>
+                                    : <div style={{fontSize:'10px',color:'#be185d'}}>
+                                        ✗ Does not fit in this bay
+                                      </div>
+                                  }
+                                  {data.desc&&<div style={{fontSize:'9px',color:'#9ca3af',marginTop:'2px'}}>{data.desc}</div>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Ground storage note */}
+                        {isGround&&cfg.orientDesc&&(
+                          <div style={{fontSize:'10px',color:'#6b7280',background:'#f1f5f9',
+                            borderRadius:'6px',padding:'6px 10px',marginBottom:'8px'}}>
+                            📐 {cfg.orientDesc}
+                          </div>
+                        )}
+
+                        {/* 4-tile summary */}
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',
+                          gap:'6px',marginBottom:'8px'}}>
                           {[
-                            ['← Width →', `${aw} ${aw>1?'bins':'bin'}`, '#eff6ff','#1d4ed8'],
-                            ['↔ Depth →', `${ad} ${ad>1?'bins':'bin'}`, '#f0fdf4','#166534'],
-                            [isGround?'⬆ Stack':'↑ Stack/shelf',
-                              `${stackH} layer${stackH>1?'s':''}`, '#fef9c3','#854d0e'],
-                            ['× Shelves', `${lvl} level${lvl>1?'s':''}`, '#fdf4ff','#9333ea'],
+                            ['← Width', `${cfg.acrossW} bins`, '#eff6ff','#1d4ed8'],
+                            ['↔ Depth',  `${cfg.acrossD} bins`, '#f0fdf4','#166534'],
+                            ['↑ Stack/lvl',`${cfg.stackH}×`, '#fef9c3','#854d0e'],
+                            ['× Levels', `${cfg.levels}`, '#fdf4ff','#9333ea'],
                           ].map(([l,v,bg,col])=>(
                             <div key={l} style={{background:bg,borderRadius:'8px',
-                              padding:'7px 10px',textAlign:'center',
-                              border:`1px solid ${col}22`}}>
+                              padding:'6px 8px',textAlign:'center',border:`1px solid ${col}22`}}>
                               <div style={{fontSize:'9px',color:col,fontWeight:'700',
-                                textTransform:'uppercase',marginBottom:'2px'}}>{l}</div>
+                                textTransform:'uppercase',marginBottom:'1px'}}>{l}</div>
                               <div style={{fontSize:'13px',fontWeight:'800',color:col}}>{v}</div>
                             </div>
                           ))}
                         </div>
 
-                        {/* Visual grid — top view of ONE shelf */}
-                        <div style={{marginBottom:'10px'}}>
+                        {/* Top-view grid */}
+                        <div style={{marginBottom:'8px'}}>
                           <div style={{fontSize:'10px',color:'#6b7280',fontWeight:'600',
-                            marginBottom:'6px'}}>
-                            Top view — 1 shelf ({aw} wide × {ad} deep)
-                            {aw>12||ad>8?' — showing partial':''} :
+                            marginBottom:'4px'}}>
+                            Top view — 1 level ({aw} wide × {ad} deep){aw>12||ad>8?' — partial':''}:
                           </div>
-                          <div style={{display:'inline-block',
-                            border:'2px solid #cbd5e1',borderRadius:'6px',
-                            padding:'4px',background:'#f1f5f9'}}>
+                          <div style={{display:'inline-block',border:'2px solid #cbd5e1',
+                            borderRadius:'6px',padding:'4px',background:'#f1f5f9'}}>
                             {Array.from({length:showD},(_,di)=>(
                               <div key={di} style={{display:'flex',gap:'2px',
                                 marginBottom:di<showD-1?'2px':'0'}}>
                                 {Array.from({length:showW},(_,wi)=>(
-                                  <div key={wi} style={{
-                                    width:'18px',height:'14px',borderRadius:'3px',
-                                    background:'#3b82f6',opacity: 0.6+0.4*(wi===0&&di===0?1:0),
+                                  <div key={wi} style={{width:'18px',height:'14px',
+                                    borderRadius:'3px',background:'#3b82f6',
                                     border:'1px solid #2563eb',
-                                    display:'flex',alignItems:'center',justifyContent:'center',
-                                    fontSize:'7px',color:'#fff',fontWeight:'700'}}>
+                                    display:'flex',alignItems:'center',
+                                    justifyContent:'center',fontSize:'7px',
+                                    color:'#fff',fontWeight:'700'}}>
                                     {wi===0&&di===0?'B':''}
                                   </div>
                                 ))}
@@ -4824,34 +4968,24 @@ export default function WarehouseDesignerTool() {
                                   alignSelf:'center',marginLeft:'2px'}}>+{aw-12}</span>}
                               </div>
                             ))}
-                            {ad>8&&(
-                              <div style={{fontSize:'9px',color:'#64748b',
-                                textAlign:'center',marginTop:'2px'}}>+{ad-8} more rows</div>
-                            )}
+                            {ad>8&&<div style={{fontSize:'9px',color:'#64748b',
+                              textAlign:'center',marginTop:'2px'}}>+{ad-8} rows</div>}
                           </div>
-                          <div style={{fontSize:'10px',color:'#374151',marginTop:'6px',
-                            fontWeight:'600'}}>
-                            {aw} × {ad} = <strong>{aw*ad}</strong> bins/shelf
-                            × {stackH} layer{stackH>1?'s':''}/shelf
-                            × {lvl} shelf{lvl>1?'s':''} =&nbsp;
-                            <strong style={{color:'#7c3aed'}}>
-                              {(aw*ad*stackH*lvl).toLocaleString()} bins/bay
-                            </strong>
-                            &nbsp;·&nbsp;
-                            <strong>{cfg.baysNeeded?.toLocaleString()}</strong> bays needed
+                          <div style={{fontSize:'10px',color:'#374151',marginTop:'5px',fontWeight:'600'}}>
+                            {aw}×{ad} = <strong>{aw*ad}</strong> per level
+                            × {stackH} stack × {lvl} level{lvl>1?'s':''} =&nbsp;
+                            <strong style={{color:'#7c3aed'}}>{(aw*ad*stackH*lvl).toLocaleString()} bins/bay</strong>
+                            &nbsp;·&nbsp;<strong>{cfg.baysNeeded?.toLocaleString()}</strong> bays
                           </div>
                         </div>
 
-                        {/* Stats row */}
-                        <div style={{display:'flex',gap:'16px',fontSize:'11px',
-                          color:'#6b7280',flexWrap:'wrap',
-                          borderTop:'1px solid #e2e8f0',paddingTop:'8px'}}>
+                        <div style={{display:'flex',gap:'16px',fontSize:'11px',color:'#6b7280',
+                          flexWrap:'wrap',borderTop:'1px solid #e2e8f0',paddingTop:'8px'}}>
                           <span>🏗 {cfg.baysNeeded?.toLocaleString()} bays</span>
                           <span>📐 {+(cfg.area||0).toFixed(0)}m² floor area</span>
                           <span>📦 {(aw*ad*stackH*lvl).toLocaleString()} locs/bay</span>
                         </div>
                       </div>
-
                       {/* ── SKU LIST for this bin type ─────────────────── */}
                       <div style={{borderTop:'1px solid #f1f5f9'}}>
                         <div style={{padding:'7px 16px',background:'#f8fafc',
