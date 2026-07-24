@@ -3481,6 +3481,7 @@ export default function WarehouseDesignerTool() {
   const [design,    setDesign]    = useState(null);
   const [configConfirmed,setConfigConfirmed]=useState(false);
   const [viewMode3D, setViewMode3D] = useState('3d'); // '2d' | '3d'
+  const [udViewMode,  setUdViewMode]  = useState('2d'); // user defined — default 2D (no WebGL risk)
   const plan2DRef = useRef(null); // ref for 2D SVG download
   const [loading,   setLoading]   = useState(false);
   const [progress,  setProgress]  = useState(0);   // 0-100
@@ -4437,6 +4438,7 @@ export default function WarehouseDesignerTool() {
                       }));
                       setUserRacks(newRacks);
                       setUdStep(4);
+                      setUdViewMode('2d'); // start with safe 2D view
                     }}
                     style={{flex:2,padding:'9px',borderRadius:'9px',cursor:'pointer',
                       fontFamily:'inherit',fontSize:'13px',fontWeight:'700',
@@ -4752,17 +4754,23 @@ export default function WarehouseDesignerTool() {
 
             {/* 3D / 2D Layout */}
             {userDesign && (<>
-              <div style={{...S.card,padding:'10px',marginBottom:'12px'}}>
-                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'8px'}}>
-                  🏭 3D Layout
-                </div>
-                <Warehouse3DModel analysis={analysis} design={userDesign} params={params} rackConfig={userRackConfig||rackConfig}/>
+              {/* View mode toggle */}
+              <div style={{display:'flex',gap:'8px',marginBottom:'10px'}}>
+                {[['2d','🗺 2D Floor Plan'],['3d','🏭 3D View']].map(([m,label])=>(
+                  <button key={m} onClick={()=>setUdViewMode(m)}
+                    style={{flex:1,padding:'8px',borderRadius:'8px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                      border:`2px solid ${udViewMode===m?'#7c3aed':'#e2e8f0'}`,
+                      background:udViewMode===m?'#f5f3ff':'#fff',
+                      color:udViewMode===m?'#7c3aed':'#6b7280'}}>
+                    {label}
+                  </button>))}
               </div>
               <div style={{...S.card,padding:'10px',marginBottom:'12px'}}>
-                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'8px'}}>
-                  🗺 2D Floor Plan
-                </div>
-                <FloorPlanSVG analysis={analysis} design={userDesign} params={params} rackConfig={userRackConfig||rackConfig}/>
+                {udViewMode==='3d'
+                  ? <Warehouse3DModel analysis={analysis} design={userDesign} params={params} rackConfig={userRackConfig||rackConfig}/>
+                  : <FloorPlanSVG analysis={analysis} design={userDesign} params={params} rackConfig={userRackConfig||rackConfig}/>
+                }
               </div>
               {/* Warehouse size summary */}
               <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'12px'}}>
