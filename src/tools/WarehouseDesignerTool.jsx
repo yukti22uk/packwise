@@ -39,10 +39,16 @@ const RACK_DEFS = {
 };
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
+// Fast TSV parser — avoids re-allocating large arrays
 function parseTSV(text) {
-  return text.trim().split('\n')
-    .map(r => r.split('\t').map(c => c.trim()))
-    .filter(r => r.some(c => c));
+  if (!text) return [];
+  const lines = text.trim().split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cells = lines[i].split('\t').map(c => c.trim());
+    if (cells.some(c => c)) out.push(cells);
+  }
+  return out;
 }
 function isHeaderRow(row) {
   const n1 = parseFloat(row[1]), n2 = parseFloat(row[2]);
@@ -695,6 +701,57 @@ function getZone(vb, isLong) {
 }
 
 // ─── MAIN ANALYSIS ────────────────────────────────────────────────────────────
+// Merge multiple runAnalysis results (from chunked processing) into one
+function mergeAnalysisChunks(chunks) {
+  if (!chunks.length) return null;
+  if (chunks.length === 1) return chunks[0];
+  const base = chunks[0];
+  for (let i = 1; i < chunks.length; i++) {
+    const ch = chunks[i];
+    // Merge slotted arrays
+    base.slotted.push(...ch.slotted);
+    // Merge binSummary
+    Object.entries(ch.binSummary||{}).forEach(([k,v])=>{
+      if (!base.binSummary[k]) base.binSummary[k]={skus:0,locs:0,stock:0,capacity:0,name:v.name,upgrades:0};
+      base.binSummary[k].skus     += v.skus;
+      base.binSummary[k].locs     += v.locs;
+      base.binSummary[k].stock    += v.stock;
+      base.binSummary[k].capacity += v.capacity;
+      base.binSummary[k].upgrades += v.upgrades;
+    });
+    // Merge zoneSummary
+    Object.entries(ch.zoneSummary||{}).forEach(([k,v])=>{
+      if (!base.zoneSummary[k]) base.zoneSummary[k]={skus:0,locs:0,area:0};
+      base.zoneSummary[k].skus += v.skus;
+      base.zoneSummary[k].locs += v.locs;
+      base.zoneSummary[k].area += v.area;
+    });
+    // Merge rackSummary
+    Object.entries(ch.rackSummary||{}).forEach(([k,v])=>{
+      if (!base.rackSummary[k]) base.rackSummary[k]={skus:0,locs:0,bays:0,area:0};
+      base.rackSummary[k].skus += v.skus;
+      base.rackSummary[k].locs += v.locs;
+      base.rackSummary[k].bays += v.bays||0;
+      base.rackSummary[k].area += v.area||0;
+    });
+    // Merge metrics
+    base.metrics.totSKUs  += ch.metrics.totSKUs;
+    base.metrics.totLocs  += ch.metrics.totLocs;
+    base.metrics.totStock += ch.metrics.totStock;
+    base.totalQtyUpgrades += ch.totalQtyUpgrades||0;
+    // Merge matrix (velocity × size counts)
+    Object.entries(ch.matrix||{}).forEach(([vb,row])=>{
+      if (!base.matrix[vb]) base.matrix[vb]={};
+      Object.entries(row).forEach(([sb,n])=>{
+        base.matrix[vb][sb]=(base.matrix[vb][sb]||0)+n;
+      });
+    });
+  }
+  // Recompute dailyOutbound metrics from merged slotted data
+  base.metrics.totLocs = base.slotted.reduce((s,r)=>s+(r.locsReq||0),0);
+  return base;
+}
+
 function runAnalysis(masterRows, orderRows, inventoryRows, params, preferredBins) {
   const { clearH, forkType } = params;
 
@@ -3206,98 +3263,144 @@ function calcForwardReserve(analysis, forwardRacks, reserveRacks, forwardDays, p
 }
 
 // ─── USER-DEFINED RACK CONFIG FROM SYSTEM BINS ───────────────────────────────
-// Bins are fixed from system analysis. User defines rack sizes only.
-// Supports vertical stacking: floor((shelfH - clearance) / binH) bins tall per slot.
+// TWO-PASS ASSIGNMENT:
+//   Pass 1 — fit each bin in non-ground racks (shelving, selective, drive-in)
+//   Pass 2 — bins that overflow + isLong items → automatically try ground racks
+// Ground storage auto-receives: LONG/odd-shaped SKUs + anything too big for regular racks
 function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
   if (!analysis?.binSummary || !Object.keys(analysis.binSummary).length) return null;
   const CLEAR    = 30;
   const ORIENTS  = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
-  const ZONE_MAP = {XS:'golden',S:'golden',M:'mid',L:'reserve',XL:'bulk',LONG:'long'};
+  const ZONE_MAP = {XS:'golden',S:'golden',M:'mid',L:'reserve',XL:'bulk',LONG:'bulk'};
   const aisleHalf = (parseFloat(params.aisleW)||3.0)/2;
-  const validRacks = userRacks.filter(rk=>parseFloat(rk.bayW)>0&&parseFloat(rk.bayD)>0);
-  if (!validRacks.length) return null;
-  const uCfgs=[], overflowBins=[];
+
+  const groundRacks  = userRacks.filter(r=>r.rackType==='ground'&&parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
+  const regularRacks = userRacks.filter(r=>r.rackType!=='ground'&&parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
+  if (!groundRacks.length && !regularRacks.length) return null;
+
+  // Helper: best fit in regular racks
+  const bestRegular = (bL,bW,bH) => {
+    let best=null, bestLPB=0;
+    regularRacks.forEach(rk=>{
+      const rW=parseFloat(rk.bayW), rD=parseFloat(rk.bayD);
+      const rTH=parseFloat(rk.bayH)||2200, lvl=Math.max(1,parseInt(rk.levels)||1);
+      const shelfH=Math.floor(rTH/lvl);
+      ORIENTS.forEach(([x,y,z])=>{
+        const dim=[bL,bW,bH];
+        const aw=Math.floor(rW/dim[x]), ad=Math.floor(rD/dim[y]); if(!aw||!ad) return;
+        const stack=Math.floor((shelfH-CLEAR)/dim[z]); if(stack<1) return;
+        const lpb=aw*ad*stack*lvl;
+        if(lpb>bestLPB){bestLPB=lpb;best={rk,aw,ad,stack,lvl,shelfH,lpb,orient:x===0?'LW':'WL'};}
+      });
+    });
+    return best;
+  };
+
+  // Helper: best fit in ground racks (cross-section: 2 smallest dims as footprint)
+  const bestGround = (bL,bW,bH) => {
+    let best=null, bestLPB=0;
+    groundRacks.forEach(rk=>{
+      const rW=parseFloat(rk.bayW), rD=parseFloat(rk.bayD);
+      const stackLayers=Math.max(1,parseInt(rk.levels)||1);
+      const [d1,d2,d3]=[bL,bW,bH].slice().sort((a,b)=>a-b);
+      const oA={aw:Math.floor(rW/d1),ad:Math.floor(rD/d2)};
+      const oB={aw:Math.floor(rW/d2),ad:Math.floor(rD/d1)};
+      const bo=oA.aw*oA.ad>=oB.aw*oB.ad?oA:oB;
+      if(!bo.aw||!bo.ad) return;
+      const lpb=bo.aw*bo.ad*stackLayers;
+      if(lpb>bestLPB){bestLPB=lpb;
+        best={rk,aw:bo.aw,ad:bo.ad,stack:stackLayers,lvl:1,shelfH:d3,lpb,orient:'ground'};}
+    });
+    return best;
+  };
+
+  // Bins flagged as LONG/odd in slotted data → auto-route to ground if available
+  const longBins=new Set((analysis.slotted||[]).filter(s=>s.isLong).map(s=>s.bin));
+
+  const regularPass={}, groundPass={};
 
   Object.entries(analysis.binSummary).forEach(([binKey,binInfo])=>{
     const bc=BIN_CATALOG[binKey]; if(!bc?.phys) return;
     const [bL,bW,bH]=bc.phys;
     const totalLocs=binInfo.locs||0; if(!totalLocs) return;
-    let bestLPB=0,bestCfg=null;
-    validRacks.forEach(rk=>{
-      const rW=parseFloat(rk.bayW),rD=parseFloat(rk.bayD);
-      const rTH=parseFloat(rk.bayH)||2200;
-      const isGround=(rk.rackType||'shelving')==='ground';
-      if(isGround){
-        // Ground storage: items (pipes, beams, odd shapes) extend beyond bay in length direction.
-        // Use the TWO SMALLEST dimensions as the ground footprint — the largest dim is the "length"
-        // that protrudes. This lets LONG bins (3000×300×200) fit in a 1400×1000 bay as 200+300 cross-section.
-        const stackLayers=Math.max(1,parseInt(rk.levels)||1);
-        const sortedDims=[bL,bW,bH].slice().sort((a,b)=>a-b); // [smallest, mid, largest]
-        const [d1,d2,d3]=sortedDims;
-        // Try both footprint orientations using the 2 smallest dims
-        const oA={aw:Math.floor(rW/d1),ad:Math.floor(rD/d2)};
-        const oB={aw:Math.floor(rW/d2),ad:Math.floor(rD/d1)};
-        const bestGO=oA.aw*oA.ad>=oB.aw*oB.ad?oA:oB;
-        if(!bestGO.aw||!bestGO.ad) return; // truly can't fit even cross-section
-        const lpb=bestGO.aw*bestGO.ad*stackLayers;
-        if(lpb>bestLPB){
-          bestLPB=lpb;
-          bestCfg={rk,aw:bestGO.aw,ad:bestGO.ad,stack:stackLayers,lvl:1,
-            shelfH:d3,   // the long dimension (length of item) — informational
-            lpb,orient:'ground',
-            note:`Cross-section ${d1}×${d2}mm, length ${d3}mm protrudes`};
-        }
+
+    // isLong or LONG bin → send directly to ground (if ground rack available)
+    const forceGround=(longBins.has(binKey)||binKey==='LONG')&&groundRacks.length>0;
+
+    if(!forceGround&&regularRacks.length>0){
+      const fc=bestRegular(bL,bW,bH);
+      if(fc){ regularPass[binKey]={fc,bL,bW,bH,totalLocs,binInfo}; return; }
+    }
+    // Overflow from regular (or forced to ground)
+    groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround};
+  });
+
+  const uCfgs=[], overflowBins=[];
+
+  // Pass 2: assign ground-pass bins to ground racks
+  Object.entries(groundPass).forEach(([binKey,{bL,bW,bH,totalLocs,binInfo,forceGround}])=>{
+    if(groundRacks.length>0){
+      const gc=bestGround(bL,bW,bH);
+      if(gc){
+        const rk=gc.rk;
+        const rW=parseFloat(rk.bayW),rD=parseFloat(rk.bayD);
+        const bays=Math.ceil(totalLocs/gc.lpb);
+        const area=+(bays*(rW/1000)*((rD/1000)+aisleHalf)).toFixed(1);
+        uCfgs.push({
+          id:`u-${binKey}`,rack:'ground',bin:binKey,
+          rackName:rk.name||'Ground Storage',binName:binInfo.name||binKey,
+          binDims:[bL,bW,bH],bayW:rW,bayD:rD,
+          shelfH:parseFloat(rk.bayH)||500,tierHeight:gc.shelfH,clearance:CLEAR,
+          orientation:gc.orient,tiers:1,levels:gc.stack,
+          acrossW:gc.aw,acrossD:gc.ad,stackH:gc.stack,
+          locsPerBay:gc.lpb,locsPerBayTotal:gc.lpb,
+          locs:totalLocs,baysNeeded:bays,area,feasible:true,zone:'bulk',
+          autoAssigned:forceGround?'Long/odd-shaped → auto-routed to ground':'Overflow from regular racks → ground',
+          o1:{acrossW:gc.aw,acrossD:gc.ad,feasible:true,levels:gc.stack,locsPerBay:gc.lpb},
+          o2:{acrossW:gc.aw,acrossD:gc.ad,feasible:true,levels:gc.stack,locsPerBay:gc.lpb},
+        });
         return;
       }
-      const lvl=Math.max(1,parseInt(rk.levels)||1);
-      const shelfH=Math.floor(rTH/lvl);
-      ORIENTS.forEach(([x,y,z])=>{
-        const dim=[bL,bW,bH];
-        const aw=Math.floor(rW/dim[x]),ad=Math.floor(rD/dim[y]);
-        if(!aw||!ad) return;
-        const stack=Math.floor((shelfH-CLEAR)/dim[z]);
-        if(stack<1) return; // bin taller than shelf — genuinely doesn't fit this orientation
-        const lpb=aw*ad*stack*lvl;
-        if(lpb>bestLPB){bestLPB=lpb;bestCfg={rk,aw,ad,stack,lvl,shelfH,lpb,orient:x===0?'LW':'WL'};}
-      });
-    });
-    if(!bestCfg||!bestLPB){
-      // Explain why it doesn't fit
-      const maxRackW=Math.max(...validRacks.map(r=>parseFloat(r.bayW)||0));
-      const maxRackD=Math.max(...validRacks.map(r=>parseFloat(r.bayD)||0));
-      const minBinDim=Math.min(bL,bW,bH);
-      const reason= minBinDim > Math.max(maxRackW,maxRackD)
-        ? `Smallest dimension (${minBinDim}mm) exceeds all rack bays`
-        : `No rack shelf is tall enough — bin height ${bH}mm exceeds shelf clearance`;
-      overflowBins.push({binKey,binName:binInfo.name||binKey,totalLocs,
-        dims:`${bL}×${bW}×${bH}mm`,reason});
-      return;
     }
-    const {rk,aw,ad,stack,lvl,shelfH,orient}=bestCfg;
-    const rW2=parseFloat(rk.bayW),rD2=parseFloat(rk.bayD),rTH2=parseFloat(rk.bayH)||2200;
-    const bays=Math.ceil(totalLocs/bestLPB);
-    const area=+(bays*(rW2/1000)*((rD2/1000)+aisleHalf)).toFixed(1);
-    const rt=rk.rackType||'shelving';
+    // Still can't fit — overflow
+    const allR=[...regularRacks,...groundRacks];
+    const maxW=Math.max(...allR.map(r=>parseFloat(r.bayW)||0),0);
+    const maxD=Math.max(...allR.map(r=>parseFloat(r.bayD)||0),0);
+    overflowBins.push({binKey,binName:binInfo.name||binKey,totalLocs,
+      dims:`${bL}×${bW}×${bH}mm`,
+      reason:groundRacks.length>0
+        ?`Cross-section exceeds ground bay (${maxW}×${maxD}mm) — increase Bay W or D`
+        :`No rack fits — add a Ground rack, or enlarge Bay W/D beyond ${Math.min(bL,bW)}mm`});
+  });
+
+  // Finalise regular rack assignments
+  Object.entries(regularPass).forEach(([binKey,{fc,bL,bW,bH,totalLocs,binInfo}])=>{
+    const rt=fc.rk.rackType||'shelving';
+    const rW=parseFloat(fc.rk.bayW),rD=parseFloat(fc.rk.bayD),rTH=parseFloat(fc.rk.bayH)||2200;
+    const shelfH2=Math.floor(rTH/fc.lvl);
+    const bays=Math.ceil(totalLocs/fc.lpb);
+    const area=+(bays*(rW/1000)*((rD/1000)+aisleHalf)).toFixed(1);
     uCfgs.push({
       id:`u-${binKey}`,rack:rt,bin:binKey,
-      rackName:rk.name||'Custom Rack',binName:binInfo.name||binKey,
-      binDims:[bL,bW,bH],bayW:rW2,bayD:rD2,
-      shelfH:rTH2,tierHeight:shelfH,clearance:CLEAR,
-      orientation:orient,tiers:1,levels:lvl,
-      acrossW:aw,acrossD:ad,stackH:stack,
-      locsPerBay:bestLPB,locsPerBayTotal:bestLPB,
-      locs:totalLocs,baysNeeded:bays,area,feasible:true,
-      zone:rt==='ground'?'bulk':(ZONE_MAP[binKey]||'golden'),
-      o1:{acrossW:Math.floor(rW2/bL),acrossD:Math.floor(rD2/bW),feasible:Math.floor(rW2/bL)>0,
-          levels:bH>0?Math.max(1,Math.floor((shelfH-CLEAR)/bH)):0,
-          locsPerBay:Math.floor(rW2/bL)*Math.floor(rD2/bW)*Math.max(1,Math.floor((shelfH-CLEAR)/bH))*lvl},
-      o2:{acrossW:Math.floor(rW2/bW),acrossD:Math.floor(rD2/bL),feasible:Math.floor(rW2/bW)>0,
-          levels:bH>0?Math.max(1,Math.floor((shelfH-CLEAR)/bH)):0,
-          locsPerBay:Math.floor(rW2/bW)*Math.floor(rD2/bL)*Math.max(1,Math.floor((shelfH-CLEAR)/bH))*lvl},
+      rackName:fc.rk.name||'Custom Rack',binName:binInfo.name||binKey,
+      binDims:[bL,bW,bH],bayW:rW,bayD:rD,shelfH:rTH,tierHeight:shelfH2,clearance:CLEAR,
+      orientation:fc.orient,tiers:1,levels:fc.lvl,
+      acrossW:fc.aw,acrossD:fc.ad,stackH:fc.stack,
+      locsPerBay:fc.lpb,locsPerBayTotal:fc.lpb,
+      locs:totalLocs,baysNeeded:bays,area,feasible:true,zone:ZONE_MAP[binKey]||'golden',
+      o1:{acrossW:Math.floor(rW/bL),acrossD:Math.floor(rD/bW),feasible:Math.floor(rW/bL)>0,
+          levels:bH>0?Math.max(0,Math.floor((shelfH2-CLEAR)/bH)):0,
+          locsPerBay:Math.floor(rW/bL)*Math.floor(rD/bW)*Math.max(0,Math.floor((shelfH2-CLEAR)/bH))*fc.lvl},
+      o2:{acrossW:Math.floor(rW/bW),acrossD:Math.floor(rD/bL),feasible:Math.floor(rW/bW)>0,
+          levels:bH>0?Math.max(0,Math.floor((shelfH2-CLEAR)/bH)):0,
+          locsPerBay:Math.floor(rW/bW)*Math.floor(rD/bL)*Math.max(0,Math.floor((shelfH2-CLEAR)/bH))*fc.lvl},
     });
   });
+
+  uCfgs.sort((a,b)=>(a.rack==='ground'?1:-1)-(b.rack==='ground'?1:-1));
   return {uCfgs,overflowBins};
 }
+
 
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function WarehouseDesignerTool() {
@@ -3375,6 +3478,8 @@ export default function WarehouseDesignerTool() {
   const [viewMode3D, setViewMode3D] = useState('3d'); // '2d' | '3d'
   const plan2DRef = useRef(null); // ref for 2D SVG download
   const [loading,   setLoading]   = useState(false);
+  const [progress,  setProgress]  = useState(0);   // 0-100
+  const [progressMsg,setProgressMsg]= useState('');
   const [error,     setError]     = useState('');
 
   const params = {
@@ -3447,62 +3552,122 @@ export default function WarehouseDesignerTool() {
     try{setFrDesign(calcWarehouseSize(analysis,params,null,cza));}catch(e){}
   },[forwardRacks,reserveRacks,forwardDays,analysis,storageMode]); // eslint-disable-line
 
-  const runAll = () => {
-    setError(''); setLoading(true);
-    setTimeout(() => {
-      try {
-        if (!masterText.trim()) throw new Error('Paste Master SKU data first.');
-        const masterRows = parseTSV(masterText);
-        const mData = isHeaderRow(masterRows[0]) ? masterRows.slice(1) : masterRows;
-        const orderRows  = orderText.trim()  ? parseTSV(orderText).filter(r=>r[2]||r[0])  : [];
-        const oData  = orderRows.length && isHeaderRow(orderRows[0]) ? orderRows.slice(1) : orderRows;
-        const invRows    = invText.trim()    ? parseTSV(invText).filter(r=>r[0])           : [];
-        const iData  = invRows.length && isHeaderRow(invRows[0]) ? invRows.slice(1) : invRows;
-        if (!mData.length) throw new Error('No valid SKU rows found in Master SKU data.');
-        const a = runAnalysis(mData, oData, iData, params, preferredBins);
-        const rc = generateRackConfig(a, params);
-        setAnalysis(a); setRackConfig(rc);
-        setDesign(null); setConfigConfirmed(false);
-        const d = calcWarehouseSize(a, params);
-        setDesign(d);
+  // Yield to browser — keeps UI responsive during heavy processing
+  const tick = () => new Promise(r => setTimeout(r, 0));
 
-        // If in FR mode, also run FR calc
-        if (storageMode === 'fr') {
-          const res=calcForwardReserve(a,forwardRacks,reserveRacks,forwardDays,params);
-          if(res){
-            setFrResult(res); setFrRackConfig(res.allCfgs); setFrOverflow(res.overflow);
-            const cza={};
-            res.allCfgs.forEach(cfg=>{cza[cfg.zone]=(cza[cfg.zone]||0)+(cfg.area||0);});
-            if(!Object.keys(cza).length) cza.golden=50;
-            try{setFrDesign(calcWarehouseSize(a,params,null,cza));}catch(e){}
-          }
+  const runAll = async () => {
+    setError(''); setLoading(true); setProgress(0); setProgressMsg('Preparing data…');
+    await tick();
+    try {
+      if (!masterText.trim()) throw new Error('Paste Master SKU data first.');
+
+      // ── Step 1: Parse master SKU data ────────────────────────────────────
+      setProgressMsg('Parsing SKU master data…'); setProgress(5); await tick();
+      const masterRows = parseTSV(masterText);
+      const mData = isHeaderRow(masterRows[0]) ? masterRows.slice(1) : masterRows;
+      if (!mData.length) throw new Error('No valid SKU rows found in Master SKU data.');
+
+      // ── Step 2: Parse order + inventory data ─────────────────────────────
+      setProgressMsg(`Parsing order & inventory data… (${mData.length.toLocaleString()} SKUs)`);
+      setProgress(15); await tick();
+      const orderRows = orderText.trim() ? parseTSV(orderText).filter(r=>r[2]||r[0]) : [];
+      const oData = orderRows.length && isHeaderRow(orderRows[0]) ? orderRows.slice(1) : orderRows;
+      const invRows = invText.trim() ? parseTSV(invText).filter(r=>r[0]) : [];
+      const iData = invRows.length && isHeaderRow(invRows[0]) ? invRows.slice(1) : invRows;
+
+      // ── Step 3: Run analysis in chunks for large datasets ─────────────────
+      setProgressMsg(`Classifying ${mData.length.toLocaleString()} SKUs by velocity & size…`);
+      setProgress(20); await tick();
+
+      let a;
+      if (mData.length <= 20000) {
+        // Small dataset — run synchronously
+        a = runAnalysis(mData, oData, iData, params, preferredBins);
+        setProgress(70);
+      } else {
+        // Large dataset — chunk processing with progress updates
+        // Build velocity + stock maps first (fast, needed by all chunks)
+        setProgressMsg('Building velocity maps…'); await tick();
+        const velMap = {}, stockMap = {};
+        oData.forEach(r => {
+          const sku = String(r[1]||r[0]||'').trim();
+          if (sku) velMap[sku] = (velMap[sku]||0) + (parseFloat(r[3]||r[2])||1);
+        });
+        iData.forEach(r => {
+          const sku = String(r[0]||'').trim();
+          if (sku) stockMap[sku] = parseFloat(r[2]||r[1])||0;
+        });
+        setProgress(30); await tick();
+
+        // Process SKUs in chunks of 10,000
+        const CHUNK = 10000;
+        const chunks = Math.ceil(mData.length / CHUNK);
+        const partials = [];
+        for (let ci = 0; ci < chunks; ci++) {
+          const slice = mData.slice(ci * CHUNK, (ci + 1) * CHUNK);
+          setProgressMsg(`Processing SKUs ${(ci*CHUNK+1).toLocaleString()}–${Math.min((ci+1)*CHUNK,mData.length).toLocaleString()} of ${mData.length.toLocaleString()}…`);
+          setProgress(30 + Math.round((ci/chunks)*40));
+          await tick();
+          // Run analysis on this chunk — pass pre-built maps to avoid re-scanning orders
+          partials.push(runAnalysis(slice, oData, iData, params, preferredBins, velMap, stockMap));
         }
-        // If in user defined mode, ALSO run user calc immediately
-        if (storageMode === 'user') {
-          const res=calcUserRackConfigFromSystemBins(a,userRacks,params);
-          if(res){
-            setUserRackConfig(res.uCfgs.length>0?res.uCfgs:null);
-            setUserOverflowBins(res.overflowBins||[]);
-            setUserResult({stored:[],overflow:res.overflowBins||[],
-              totLocs:res.uCfgs.reduce((s,x)=>s+x.locs,0),
-              totArea:res.uCfgs.reduce((s,x)=>s+(x.area||0),0),
-              totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
-            const ca2={},cza2={};
-            res.uCfgs.forEach(x=>{
-              ca2[x.rack]=(ca2[x.rack]||0)+(x.area||0);
-              cza2[x.zone]=(cza2[x.zone]||0)+(x.area||0);
-            });
-            if(!Object.keys(ca2).length) ca2.shelving=50;
-            setUserDesign(calcWarehouseSize(a,params,ca2,cza2));
-          } else {
-            // No valid user racks yet — clear user results
-            setUserResult({stored:[],overflow:[],totLocs:0,totArea:0,
-              totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
-          }
+        setProgress(70); await tick();
+
+        // Merge chunk results
+        setProgressMsg('Merging results…'); await tick();
+        a = mergeAnalysisChunks(partials);
+      }
+      setProgress(75); await tick();
+
+      // ── Step 4: Generate rack config ─────────────────────────────────────
+      setProgressMsg('Generating rack configuration…'); await tick();
+      const rc = generateRackConfig(a, params);
+      setAnalysis(a); setRackConfig(rc);
+      setDesign(null); setConfigConfirmed(false);
+      setProgress(82); await tick();
+
+      // ── Step 5: Size the warehouse ────────────────────────────────────────
+      setProgressMsg('Calculating warehouse dimensions…'); await tick();
+      const d = calcWarehouseSize(a, params);
+      setDesign(d);
+      setProgress(90); await tick();
+
+      // ── Step 6: Mode-specific calcs ───────────────────────────────────────
+      if (storageMode === 'fr') {
+        setProgressMsg('Calculating Forward Pick + Reserve…'); await tick();
+        const res=calcForwardReserve(a,forwardRacks,reserveRacks,forwardDays,params);
+        if(res){
+          setFrResult(res); setFrRackConfig(res.allCfgs); setFrOverflow(res.overflow);
+          const cza={};
+          res.allCfgs.forEach(cfg=>{cza[cfg.zone]=(cza[cfg.zone]||0)+(cfg.area||0);});
+          if(!Object.keys(cza).length) cza.golden=50;
+          try{setFrDesign(calcWarehouseSize(a,params,null,cza));}catch(e){}
         }
-      } catch(e) { setError(e.message); }
-      setLoading(false);
-    }, 100);
+      }
+      if (storageMode === 'user') {
+        setProgressMsg('Calculating user-defined rack config…'); await tick();
+        const res=calcUserRackConfigFromSystemBins(a,userRacks,params);
+        if(res){
+          setUserRackConfig(res.uCfgs.length>0?res.uCfgs:null);
+          setUserOverflowBins(res.overflowBins||[]);
+          setUserResult({stored:[],overflow:res.overflowBins||[],
+            totLocs:res.uCfgs.reduce((s,x)=>s+x.locs,0),
+            totArea:res.uCfgs.reduce((s,x)=>s+(x.area||0),0),
+            totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
+          const ca2={},cza2={};
+          res.uCfgs.forEach(x=>{ca2[x.rack]=(ca2[x.rack]||0)+(x.area||0);cza2[x.zone]=(cza2[x.zone]||0)+(x.area||0);});
+          if(!Object.keys(ca2).length) ca2.shelving=50;
+          setUserDesign(calcWarehouseSize(a,params,ca2,cza2));
+        } else {
+          setUserResult({stored:[],overflow:[],totLocs:0,totArea:0,totStock:0,totCap:0,overallUtil:0,binUtil:{},rackResults:[]});
+        }
+      }
+
+      setProgress(100);
+      setProgressMsg(`✓ ${mData.length.toLocaleString()} SKUs processed`);
+    } catch(e) { setError(e.message); console.error(e); }
+    setLoading(false);
+    setTimeout(() => { setProgress(0); setProgressMsg(''); }, 2000);
   };
 
   const confirmConfig = () => {
@@ -4267,6 +4432,24 @@ export default function WarehouseDesignerTool() {
               :storageMode==='user'?'🏭 Generate Warehouse Design (User Defined)'
               :'🏭 Generate Warehouse Design'}
           </button>
+          {/* Progress bar — visible during long analysis */}
+          {loading && (
+            <div style={{marginTop:'8px'}}>
+              <div style={{display:'flex',justifyContent:'space-between',
+                fontSize:'10px',color:'#6b7280',marginBottom:'3px'}}>
+                <span>{progressMsg||'Processing…'}</span>
+                <span>{progress}%</span>
+              </div>
+              <div style={{background:'#e2e8f0',borderRadius:'99px',height:'6px',overflow:'hidden'}}>
+                <div style={{
+                  height:'100%',borderRadius:'99px',
+                  background:'linear-gradient(90deg,#7c3aed,#a78bfa)',
+                  width:`${progress}%`,
+                  transition:'width 0.3s ease',
+                }}/> 
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── RIGHT PANEL ──────────────────────────────────────────────────── */}
@@ -4612,6 +4795,13 @@ export default function WarehouseDesignerTool() {
                         {(cfg.locs||0).toLocaleString()} locations
                       </span>
                     </div>
+                    {cfg.autoAssigned&&(
+                      <div style={{fontSize:'10px',color:'#7c3aed',fontWeight:'600',
+                        background:'#f5f3ff',padding:'4px 14px',
+                        borderBottom:'1px solid #ede9fe'}}>
+                        ⚡ {cfg.autoAssigned}
+                      </div>
+                    )}
                     <div style={{display:'grid',gridTemplateColumns:'240px 1fr',gap:'0'}}>
                       <div style={{padding:'10px',background:'#fafafa',borderRight:'1px solid #e2e8f0',
                         display:'flex',flexDirection:'column',alignItems:'center',gap:'4px'}}>
