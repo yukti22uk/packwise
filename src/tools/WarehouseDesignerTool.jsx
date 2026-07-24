@@ -781,18 +781,12 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params, preferredBins
     invMap[sku] = parseFloat(r[1])||0;
   });
 
-  // SKU universe for slotting:
-  // When inventory data is provided → ONLY slot SKUs that appear in inventory
-  //   (locations are meaningless for SKUs not currently in stock)
-  // When NO inventory data → use all master + order SKUs as fallback
-  const hasInv = Object.keys(invMap).length > 0;
-  const allSkus = hasInv
-    ? new Set(Object.keys(invMap))                                    // ← inventory SKUs only
-    : new Set([...Object.keys(master), ...Object.keys(pickMap)]);     // ← fallback: all
+  // SKU universe: all master + order SKUs (each SKU is processed exactly ONCE,
+  // even across chunks). Location calculation is inventory-gated via locsReq below.
+  const allSkus = new Set([...Object.keys(master), ...Object.keys(pickMap)]);
 
-  // Velocity classification uses ALL order data for accurate bands
-  // (even if a SKU isn't in inventory right now, its historical velocity is valid)
-  const allOrderSkus = new Set([...Object.keys(master), ...Object.keys(pickMap)]);
+  // Velocity classification uses the same full set
+  const allOrderSkus = allSkus;
   const items = [...allOrderSkus].map(sku => ({ sku, pickLines: pickMap[sku]||0 }));
   const velocityMap = classifyVelocity(items);
 
@@ -861,8 +855,11 @@ function runAnalysis(masterRows, orderRows, inventoryRows, params, preferredBins
   });
 
   // Headline metrics
-  const totSKUs    = slotted.length;                          // SKUs slotted (inventory only when inv data provided)
-  const totSKUsMaster = Object.keys(master).length;          // total master catalogue size
+  const hasInv         = Object.keys(invMap).length > 0;
+  const totSKUsMaster  = Object.keys(master).length;
+  const totSKUs        = hasInv
+    ? slotted.filter(r=>r.stock>0).length   // only inventory SKUs
+    : slotted.length;                        // no inventory → all master SKUs
   const totLocs    = slotted.reduce((s,r)=>s+r.locsReq,0);
   const totStock   = slotted.reduce((s,r)=>s+r.stock,0);
   const longCount  = slotted.filter(r=>r.isLong).length;
@@ -2781,13 +2778,16 @@ function exportExcel(analysis, design, params, rackConfig) {
       metrics.totLocs],
   ],[18,10,10,10,10,10,10]),'2. Velocity×Size Matrix');
 
-  // Sheet 3: SKU Slotting Detail
+  // Sheet 3: SKU Slotting Detail — only export SKUs with stock (inventory-provided)
+  // If no inventory pasted, export all master SKUs
+  const hasInventory = slotted.some(r=>r.stock>0);
+  const slottedForExport = hasInventory ? slotted.filter(r=>r.stock>0) : slotted;
   XLSX.utils.book_append_sheet(wb, ws([
     ['SKU SLOTTING DETAIL'],[],
     ['SKU Code','L (mm)','W (mm)','H (mm)','Vol (cm³)','Max Dim','Long?',
      'Pick Lines','Velocity Band','Size Band','Combined Band',
      'Bin/Container','Location Size (mm)','Rack Type','Storage Zone','Units/Bin','Stock','Locs Required'],
-    ...slotted.map(r=>[r.sku,r.L,r.W,r.H,r.volCm3.toFixed(0),r.maxDim,r.isLong?'YES':'',
+    ...slottedForExport.map(r=>[r.sku,r.L,r.W,r.H,r.volCm3.toFixed(0),r.maxDim,r.isLong?'YES':'',
       r.pickLines,r.vb,r.sb,`${r.vb}-${r.sb}`,r.binName,
       BIN_CATALOG[r.bin]?.dims||'—',
       r.rackName,r.zoneName,
