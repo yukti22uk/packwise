@@ -5202,7 +5202,7 @@ export default function WarehouseDesignerTool() {
                     <tr style={{background:'#f8fafc',fontWeight:'700'}}>
                       <td style={{padding:'7px 12px'}}>Total</td>
                       {['XS','S','M','L','XL'].map(s=>{
-                        const t=['VF','F','M','S','VS','NM'].reduce((sum,v)=>sum+((analysis?.matrix||{})[rix[`${v}-${s}`]||0),0);
+                        const t=['VF','F','M','S','VS','NM'].reduce((sum,v)=>sum+((analysis?.matrix||{})[`${v}-${s}`]||0),0);
                         return<td key={s} style={{padding:'7px 12px',textAlign:'center'}}>{t.toLocaleString()}</td>;
                       })}
                       <td style={{padding:'7px 12px',textAlign:'center',color:'#7c3aed'}}>
