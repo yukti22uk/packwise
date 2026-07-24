@@ -3454,25 +3454,54 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
     return best;
   };
 
-  // Bins flagged as LONG/odd in slotted data → auto-route to ground if available
+  // Bins flagged as LONG/odd in slotted data → auto-route to ground/cantilever if available
   const longBins=new Set((analysis.slotted||[]).filter(s=>s.isLong).map(s=>s.bin));
+
+  // For LONG bin type: compute representative cross-section dimensions from actual slotted items.
+  // BIN_CATALOG['LONG'] has no fixed phys — items vary. We use the average of the 2 smallest
+  // dimensions (cross-section footprint) and max of the largest (protrudes out of rack).
+  const longSlottedItems = (analysis.slotted||[]).filter(s=>s.bin==='LONG'&&s.L>0&&s.W>0&&s.H>0);
+  let longRepDims = [3000, 300, 200]; // safe default if no data
+  if (longSlottedItems.length > 0) {
+    const cross1 = Math.round(longSlottedItems.reduce((s,r)=>s+Math.min(r.L,r.W,r.H),0)/longSlottedItems.length);
+    const cross2 = Math.round(longSlottedItems.reduce((s,r)=>{
+      const sorted=[r.L,r.W,r.H].sort((a,b)=>a-b); return s+sorted[1];
+    },0)/longSlottedItems.length);
+    const length = Math.round(longSlottedItems.reduce((s,r)=>s+Math.max(r.L,r.W,r.H),0)/longSlottedItems.length);
+    longRepDims = [length, Math.max(cross1,cross2), Math.min(cross1,cross2)];
+  }
 
   const regularPass={}, groundPass={};
 
   Object.entries(analysis?.binSummary||{}).forEach(([binKey,binInfo])=>{
-    const bc=BIN_CATALOG[binKey]; if(!bc?.phys) return;
-    const [bL,bW,bH]=bc.phys;
+    // Resolve bin physical dimensions
+    let bL, bW, bH;
+    if (binKey === 'LONG') {
+      [bL, bW, bH] = longRepDims; // use computed representative dimensions
+    } else {
+      const bc = BIN_CATALOG[binKey];
+      if (!bc?.phys) return;
+      [bL, bW, bH] = bc.phys;
+    }
     const totalLocs=binInfo.locs||0; if(!totalLocs) return;
 
-    // isLong or LONG bin → send directly to ground (if ground rack available)
-    const forceGround=(longBins.has(binKey)||binKey==='LONG')&&groundRacks.length>0;
+    // LONG/isLong bins → always try ground first (if ground rack available)
+    // If no ground rack but cantilever is available, cantilever preferred
+    // If user hasn't selected cantilever but has ground → ground storage
+    const hasCantilever = regularRacks.some(r=>r.rackType==='cantilever');
+    const forceGround  = (longBins.has(binKey)||binKey==='LONG') && groundRacks.length>0 && !hasCantilever;
+    const forceGround2 = (longBins.has(binKey)||binKey==='LONG') && groundRacks.length>0;
 
     if(!forceGround&&regularRacks.length>0){
-      const fc=bestRegular(bL,bW,bH,binKey); // pass binKey for affinity lookup
+      const fc=bestRegular(bL,bW,bH,binKey);
       if(fc){ regularPass[binKey]={fc,bL,bW,bH,totalLocs,binInfo}; return; }
     }
-    // Overflow from regular (or forced to ground)
-    groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround};
+    // No regular rack fit (or forced) → try ground
+    if(forceGround2&&groundRacks.length>0){
+      groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround:true};
+    } else {
+      groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround:false};
+    }
   });
 
   const uCfgs=[], overflowBins=[];
@@ -3497,7 +3526,10 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
           acrossW:gc.aw,acrossD:gc.ad,stackH:gc.stack,
           locsPerBay:gc.lpb,locsPerBayTotal:gc.lpb,
           locs:totalLocs,baysNeeded:bays,area,feasible:true,zone:'bulk',
-          autoAssigned:forceGround?'Long/odd-shaped → auto-routed to ground':'Overflow from regular racks → ground',
+          autoAssigned:forceGround
+            ? (binKey==='LONG'?`Long goods → ground storage (avg cross-section ${gc.wDimMm}×${gc.dDimMm}mm, length ${gc.hDimMm}mm protrudes)`
+               :'Long/odd-shaped → auto-routed to ground')
+            :'Overflow from regular racks → ground',
           o1:{acrossW:gc.aw,acrossD:gc.ad,feasible:true,levels:gc.stack,locsPerBay:gc.lpb},
           o2:{acrossW:gc.aw,acrossD:gc.ad,feasible:true,levels:gc.stack,locsPerBay:gc.lpb},
         });
