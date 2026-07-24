@@ -3318,6 +3318,11 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
   // Exception: LONG/ground storage uses cross-section method (handled separately).
   const UPRIGHT_ORIENTS = [[0,1,2],[1,0,2]]; // [L-W-H] and [W-L-H]; H (index 2) always vertical
 
+  // Split user racks into ground vs regular
+  const groundRacks  = userRacks.filter(r=>r.rackType==='ground'&&parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
+  const regularRacks = userRacks.filter(r=>r.rackType!=='ground'&&parseFloat(r.bayW)>0&&parseFloat(r.bayD)>0);
+  if (!groundRacks.length && !regularRacks.length) return null;
+
   // ── Clearance per rack type ────────────────────────────────────────────────
   const RACK_BEAM_CLR = (rackType) => BEAM_CLR[rackType] ?? 75;
 
