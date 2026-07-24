@@ -4641,6 +4641,164 @@ export default function WarehouseDesignerTool() {
 
         {/* ══ RIGHT PANEL ═══════════════════════════════════════════════ */}
         <div>
+
+          {/* ── USER DEFINED RESULTS ──────────────────────────────────── */}
+          {storageMode==='user' && udStep===4 && (userResult||userDesign) && (<>
+
+            {/* Rack config cards */}
+            {userRackConfig?.length>0&&(<>
+              <div style={{...S.card,marginBottom:'12px'}}>
+                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'10px'}}>
+                  🗄 Rack Configuration — User Defined
+                </div>
+                {userRackConfig.map((cfg,ci)=>{
+                  const isShelving=['shelving','liveStorage','cantilever'].includes(cfg.rack);
+                  const RACK_ICONS={shelving:'📦',liveStorage:'🔄',selective:'🏗',
+                    doubleDeep:'🔩',driveIn:'🚗',cantilever:'🪵',ground:'🏔'};
+                  return(
+                    <div key={ci} style={{border:'1px solid #e2e8f0',borderRadius:'9px',
+                      overflow:'hidden',marginBottom:'10px'}}>
+                      <div style={{padding:'8px 14px',background:'#f8fafc',
+                        borderBottom:'1px solid #e2e8f0',
+                        display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+                          <span style={{fontSize:'16px'}}>{RACK_ICONS[cfg.rack]||'🏗'}</span>
+                          <div>
+                            <span style={{fontWeight:'700',fontSize:'12px',color:'#0f172a'}}>
+                              {cfg.rackName||cfg.rack}
+                            </span>
+                            <span style={{fontSize:'10px',color:'#9ca3af',marginLeft:'8px'}}>
+                              {cfg.binName} bins
+                            </span>
+                          </div>
+                        </div>
+                        <span style={{fontSize:'12px',fontWeight:'700',color:'#7c3aed'}}>
+                          {cfg.locs?.toLocaleString()} locs
+                        </span>
+                      </div>
+                      {cfg.autoAssigned&&(
+                        <div style={{fontSize:'10px',color:'#7c3aed',fontWeight:'600',
+                          background:'#f5f3ff',padding:'3px 14px',
+                          borderBottom:'1px solid #ede9fe'}}>
+                          ⚡ {cfg.autoAssigned}
+                        </div>
+                      )}
+                      <div style={{display:'grid',
+                        gridTemplateColumns:isShelving?'repeat(4,1fr)':'repeat(3,1fr)',
+                        gap:'0'}}>
+                        {[
+                          ['Bay W',cfg.bayW+'mm'],['Bay D',cfg.bayD+'mm'],
+                          ...(!isShelving?[['Levels',cfg.levels]]:[['Shelf H',Math.round(cfg.tierHeight||0)+'mm'],['Levels',cfg.levels]]),
+                          ['Locs/Bay',cfg.locsPerBay],['Bays',cfg.baysNeeded],
+                          ['Area',+(cfg.area||0).toFixed(0)+'m²'],
+                        ].map(([l,v])=>(
+                          <div key={l} style={{padding:'8px 12px',borderRight:'1px solid #f1f5f9',
+                            borderBottom:'1px solid #f1f5f9'}}>
+                            <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
+                              textTransform:'uppercase',marginBottom:'2px'}}>{l}</div>
+                            <div style={{fontSize:'12px',fontWeight:'700',color:'#0f172a'}}>{v}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>)}
+
+            {/* Overflow section */}
+            {(()=>{
+              const fittedBins=new Set((userRackConfig||[]).map(c=>c.bin));
+              const unfitted={};
+              (analysis?.slotted||[]).forEach(s=>{
+                if(fittedBins.has(s.bin)) return;
+                if(!unfitted[s.bin]) unfitted[s.bin]={
+                  binKey:s.bin,binName:s.binName||s.bin,
+                  skus:[],totalLocs:0,
+                };
+                unfitted[s.bin].skus.push(s);
+                unfitted[s.bin].totalLocs+=(s.locsReq||1);
+              });
+              const groups=Object.values(unfitted).sort((a,b)=>b.totalLocs-a.totalLocs);
+              if(!groups.length) return null;
+              return(
+                <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'12px',
+                  border:'1px solid #fecaca'}}>
+                  <div style={{padding:'10px 14px',background:'#fff1f2',
+                    borderBottom:'1px solid #fecaca',
+                    display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontWeight:'700',fontSize:'12px',color:'#991b1b'}}>
+                      ⚠ {groups.length} Bin Type{groups.length>1?'s':''} Don't Fit — Excluded
+                    </span>
+                    <span style={{fontSize:'11px',color:'#be185d',fontWeight:'600'}}>
+                      {groups.reduce((s,g)=>s+g.skus.length,0)} SKUs
+                      · {groups.reduce((s,g)=>s+g.totalLocs,0).toLocaleString()} locs
+                    </span>
+                  </div>
+                  {groups.map((grp,gi)=>(
+                    <div key={gi} style={{padding:'7px 14px',borderBottom:'1px solid #fee2e2',
+                      display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontWeight:'700',color:'#be185d',fontSize:'12px'}}>
+                        {grp.binKey} — {grp.binName}
+                      </span>
+                      <span style={{fontSize:'11px',color:'#be185d',fontWeight:'600'}}>
+                        {grp.skus.length} SKUs · {grp.totalLocs.toLocaleString()} locs
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* 3D / 2D Layout */}
+            {userDesign && (<>
+              <div style={{...S.card,padding:'10px',marginBottom:'12px'}}>
+                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'8px'}}>
+                  🏭 3D Layout
+                </div>
+                <Warehouse3DModel analysis={analysis} design={userDesign} params={params} rackConfig={userRackConfig||rackConfig}/>
+              </div>
+              <div style={{...S.card,padding:'10px',marginBottom:'12px'}}>
+                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'8px'}}>
+                  🗺 2D Floor Plan
+                </div>
+                <FloorPlanSVG analysis={analysis} design={userDesign} params={params} rackConfig={userRackConfig||rackConfig}/>
+              </div>
+              {/* Warehouse size summary */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'12px'}}>
+                {[
+                  ['Gross Area', `${(userDesign.wW*userDesign.wL).toLocaleString()}m²`, '#eff6ff','#1d4ed8'],
+                  ['Dimensions', `${userDesign.wW}×${userDesign.wL}m`, '#f0fdf4','#166534'],
+                  ['Rack Area', `${userDesign.netRackArea||0}m²`, '#f5f3ff','#7c3aed'],
+                ].map(([l,v,bg,col])=>(
+                  <div key={l} style={{background:bg,borderRadius:'10px',padding:'12px',
+                    textAlign:'center',border:`1px solid ${col}22`}}>
+                    <div style={{fontSize:'16px',fontWeight:'800',color:col}}>{v}</div>
+                    <div style={{fontSize:'10px',color:'#6b7280',marginTop:'3px',
+                      fontWeight:'600',textTransform:'uppercase'}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Download */}
+              <div style={{display:'flex',gap:'10px'}}>
+                <button onClick={()=>exportExcel(analysis,userDesign,params,userRackConfig)}
+                  style={{flex:1,padding:'11px',background:'linear-gradient(135deg,#059669,#047857)',
+                    color:'#fff',border:'none',borderRadius:'10px',fontWeight:'700',fontSize:'13px',
+                    cursor:'pointer',fontFamily:'inherit'}}>
+                  ⬇ Download Excel Report
+                </button>
+                <button onClick={()=>exportPPT(analysis,userDesign,params,userRackConfig)}
+                  style={{flex:1,padding:'11px',background:'linear-gradient(135deg,#7c3aed,#6d28d9)',
+                    color:'#fff',border:'none',borderRadius:'10px',fontWeight:'700',fontSize:'13px',
+                    cursor:'pointer',fontFamily:'inherit'}}>
+                  📊 Download PPT
+                </button>
+              </div>
+            </>)}
+
+          </>)}
+
+          {/* ── FR RESULTS PLACEHOLDER ─── */}
           {storageMode==='fr' && (<>
             {/* ── FORWARD DAYS ────────────────────────────────────────── */}
             <div style={S.card}>
