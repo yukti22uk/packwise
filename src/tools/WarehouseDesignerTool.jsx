@@ -3457,6 +3457,11 @@ export default function WarehouseDesignerTool() {
   const [userOverflowBins, setUserOverflowBins] = useState([]);
   const [userLoading, setUserLoading] = useState(false);
 
+  // User Defined 4-step wizard state
+  const [udStep,            setUdStep]            = useState(1);
+  const [selectedRackTypes, setSelectedRackTypes] = useState(new Set());
+  const [udRackDefs,        setUdRackDefs]        = useState({});
+
   // ── Forward Pick + Reserve mode state ──────────────────────────────────────
   const [forwardDays,  setForwardDays]  = useState('3');
   const [forwardRacks, setForwardRacks] = useState([
@@ -4201,963 +4206,330 @@ export default function WarehouseDesignerTool() {
 
           {/* ── USER DEFINED BIN & RACK INPUTS ──────────────────────── */}
           {storageMode==='user' && (<>
+            {/* ════════════════════════════════════════════════════════════
+                USER DEFINED — 4-STEP WIZARD
+                ════════════════════════════════════════════════════════════ */}
 
-            {/* System bins — read-only from analysis */}
-            <div style={S.card}>
-              <div style={S.cardTitle}>📦 Bin Types — from System Analysis</div>
-              <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'10px'}}>
-                Bin sizes are determined by the system analysis. Enter your rack sizes below
-                and the tool instantly calculates how many bins fit (including vertical stacking)
-                and flags bin types that don't fit.
+            {/* Step indicator */}
+            <div style={{display:'flex',gap:'0',marginBottom:'14px',
+              border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'hidden'}}>
+              {[['1','Bin Types'],['2','Rack Types'],['3','Rack Sizes'],['4','Layout']].map(([n,label],i)=>{
+                const stepN=parseInt(n);
+                const done=udStep>stepN, active=udStep===stepN;
+                return(
+                  <div key={n} style={{flex:1,padding:'8px 4px',textAlign:'center',
+                    background:done?'#f0fdf4':active?'#f5f3ff':'#f8fafc',
+                    borderRight:i<3?'1px solid #e2e8f0':'none',
+                    cursor:done&&stepN<udStep?'pointer':'default'}}
+                    onClick={()=>{ if(done||stepN<udStep) setUdStep(stepN); }}>
+                    <div style={{fontSize:'16px',fontWeight:'800',
+                      color:done?'#059669':active?'#7c3aed':'#d1d5db'}}>
+                      {done?'✓':n}
+                    </div>
+                    <div style={{fontSize:'9px',fontWeight:'700',
+                      color:done?'#059669':active?'#7c3aed':'#9ca3af',
+                      textTransform:'uppercase',letterSpacing:'0.04em'}}>
+                      {label}
+                    </div>
+                  </div>);
+              })}
+            </div>
+
+            {/* ── STEP 1: Calculate Bin Types ─────────────────────────── */}
+            {udStep===1&&(
+              <div style={S.card}>
+                <div style={S.cardTitle}>📦 Step 1 — Calculate Bin Types</div>
+                <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'12px'}}>
+                  The tool will analyse your SKU dimensions and determine which bin
+                  sizes are needed. Paste your SKU data in the Master SKU field below
+                  first, then click Calculate.
+                </div>
+                {analysis?.binSummary&&Object.keys(analysis.binSummary).length>0?(
+                  <div>
+                    <div style={{fontSize:'11px',fontWeight:'700',color:'#059669',marginBottom:'8px'}}>
+                      ✓ Bin types calculated from {(analysis.metrics?.totSKUs||0).toLocaleString()} SKUs
+                    </div>
+                    <div style={{display:'flex',flexWrap:'wrap',gap:'7px',marginBottom:'12px'}}>
+                      {Object.entries(analysis.binSummary)
+                        .sort((a,b)=>['XS','S','M','L','XL','LONG'].indexOf(a[0])-['XS','S','M','L','XL','LONG'].indexOf(b[0]))
+                        .map(([band,info])=>{
+                          const bc=BIN_CATALOG[band];
+                          const COLORS={XS:['#f1f5f9','#64748b'],S:['#eff6ff','#1d4ed8'],
+                            M:['#f5f3ff','#7c3aed'],L:['#f0fdf4','#166534'],
+                            XL:['#fef9c3','#854d0e'],LONG:['#fdf4ff','#9333ea']};
+                          const [bg,col]=COLORS[band]||['#f8fafc','#374151'];
+                          return(
+                            <div key={band} style={{background:bg,border:`1px solid ${col}33`,
+                              borderRadius:'8px',padding:'7px 10px',minWidth:'100px'}}>
+                              <div style={{fontWeight:'800',fontSize:'13px',color:col}}>{band}</div>
+                              <div style={{fontSize:'9px',color:col,opacity:0.8}}>{info.name}</div>
+                              {bc?.phys&&<div style={{fontSize:'9px',color:'#6b7280'}}>{bc.phys.join('×')}mm</div>}
+                              <div style={{fontSize:'11px',fontWeight:'700',color:'#0f172a',marginTop:'2px'}}>
+                                {(info.locs||0).toLocaleString()} locs
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                    <button onClick={()=>setUdStep(2)}
+                      style={{width:'100%',padding:'10px',borderRadius:'9px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'13px',fontWeight:'700',border:'none',
+                        background:'linear-gradient(135deg,#7c3aed,#6d28d9)',color:'#fff'}}>
+                      → Proceed to Select Rack Types
+                    </button>
+                  </div>
+                ):(
+                  <div style={{fontSize:'11px',color:'#9ca3af',padding:'10px',
+                    background:'#f8fafc',borderRadius:'6px',textAlign:'center',marginBottom:'10px'}}>
+                    Click "Generate Warehouse Design" below after pasting SKU data
+                  </div>
+                )}
               </div>
-              {analysis?.binSummary && Object.keys(analysis.binSummary).length>0 ? (
-                <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
-                  {Object.entries(analysis.binSummary)
+            )}
+
+            {/* ── STEP 2: Select Rack Types ───────────────────────────── */}
+            {udStep===2&&(
+              <div style={S.card}>
+                <div style={S.cardTitle}>🏗 Step 2 — Select Rack Types</div>
+                <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'12px'}}>
+                  Choose the rack types to include in your warehouse layout.
+                  The tool will automatically assign the right bin sizes to each rack.
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:'8px',marginBottom:'14px'}}>
+                  {[
+                    {key:'shelving',    icon:'📦', label:'Long Span Shelving',   desc:'XS/S/M bins, pick face, carton storage'},
+                    {key:'liveStorage', icon:'🔄', label:'Carton Live / Flow',    desc:'VF/F items, FIFO gravity flow'},
+                    {key:'selective',   icon:'🏗', label:'Selective Pallet Rack', desc:'Full pallets, all velocities'},
+                    {key:'doubleDeep',  icon:'🔩', label:'Double-Deep Rack',      desc:'High-density pallet storage, reach truck'},
+                    {key:'driveIn',     icon:'🚗', label:'Drive-In Rack',         desc:'High volume, same-SKU lanes'},
+                    {key:'cantilever',  icon:'🪵', label:'Cantilever Rack',       desc:'Long bars, pipes, timber'},
+                    {key:'ground',      icon:'🏔', label:'Ground Storage',         desc:'Odd-shaped, oversized, no rack needed'},
+                  ].map(({key,icon,label,desc})=>{
+                    const sel=selectedRackTypes.has(key);
+                    return(
+                      <div key={key}
+                        onClick={()=>setSelectedRackTypes(prev=>{
+                          const n=new Set(prev);
+                          if(n.has(key)) n.delete(key); else n.add(key);
+                          return n;
+                        })}
+                        style={{display:'flex',alignItems:'center',gap:'12px',padding:'10px 12px',
+                          borderRadius:'9px',cursor:'pointer',border:`2px solid ${sel?'#7c3aed':'#e2e8f0'}`,
+                          background:sel?'#f5f3ff':'#fff',transition:'all 0.15s'}}>
+                        <div style={{fontSize:'20px'}}>{icon}</div>
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight:'700',fontSize:'12px',
+                            color:sel?'#6d28d9':'#0f172a'}}>{label}</div>
+                          <div style={{fontSize:'10px',color:'#6b7280'}}>{desc}</div>
+                        </div>
+                        <div style={{width:'20px',height:'20px',borderRadius:'50%',
+                          background:sel?'#7c3aed':'#e2e8f0',display:'flex',
+                          alignItems:'center',justifyContent:'center',
+                          fontSize:'12px',color:'#fff',fontWeight:'800',flexShrink:0}}>
+                          {sel?'✓':''}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{display:'flex',gap:'8px'}}>
+                  <button onClick={()=>setUdStep(1)}
+                    style={{flex:1,padding:'9px',borderRadius:'9px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                      border:'1px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
+                    ← Back
+                  </button>
+                  <button onClick={()=>{
+                      if(selectedRackTypes.size===0){alert('Select at least one rack type.');return;}
+                      // Initialise udRackDefs with defaults for selected types
+                      const defaults={
+                        shelving:   {bayW:'900', bayD:'600', bayH:'2200',levels:'4'},
+                        liveStorage:{bayW:'900', bayD:'1500',bayH:'2200',levels:'4'},
+                        selective:  {bayW:'2700',bayD:'1100',bayH:'6000',levels:'4'},
+                        doubleDeep: {bayW:'2700',bayD:'2200',bayH:'6000',levels:'4'},
+                        driveIn:    {bayW:'2700',bayD:'6600',bayH:'6000',levels:'4'},
+                        cantilever: {bayW:'1500',bayD:'2500',bayH:'3000',levels:'6'},
+                        ground:     {bayW:'1500',bayD:'1200',bayH:'',   levels:'2'},
+                      };
+                      setUdRackDefs(prev=>{
+                        const next={...prev};
+                        selectedRackTypes.forEach(k=>{
+                          if(!next[k]) next[k]={...defaults[k]};
+                        });
+                        return next;
+                      });
+                      setUdStep(3);
+                    }}
+                    style={{flex:2,padding:'9px',borderRadius:'9px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'13px',fontWeight:'700',
+                      border:'none',background:'linear-gradient(135deg,#7c3aed,#6d28d9)',
+                      color:'#fff',opacity:selectedRackTypes.size>0?1:0.5}}>
+                    → Define Rack Sizes ({selectedRackTypes.size} selected)
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── STEP 3: Define Rack Sizes ───────────────────────────── */}
+            {udStep===3&&(
+              <div style={S.card}>
+                <div style={S.cardTitle}>📐 Step 3 — Define Rack Sizes</div>
+                <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'12px'}}>
+                  Enter bay dimensions for each rack type. Shelf Levels = number of
+                  shelves (shelving) or stack layers (ground).
+                </div>
+                {[...selectedRackTypes].map(key=>{
+                  const LABELS={shelving:'📦 Shelving',liveStorage:'🔄 Flow Rack',
+                    selective:'🏗 Selective Pallet',doubleDeep:'🔩 Double-Deep',
+                    driveIn:'🚗 Drive-In',cantilever:'🪵 Cantilever',ground:'🏔 Ground'};
+                  const d=udRackDefs[key]||{};
+                  const upd=(f,v)=>setUdRackDefs(prev=>({...prev,[key]:{...prev[key],[f]:v}}));
+                  return(
+                    <div key={key} style={{border:'1px solid #e2e8f0',borderRadius:'9px',
+                      overflow:'hidden',marginBottom:'10px'}}>
+                      <div style={{background:'#f8fafc',padding:'7px 12px',
+                        fontWeight:'700',fontSize:'12px',color:'#0f172a',
+                        borderBottom:'1px solid #e2e8f0'}}>
+                        {LABELS[key]||key}
+                      </div>
+                      <div style={{padding:'10px 12px',
+                        display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
+                        {[
+                          ['Bay Width (mm)','bayW'],
+                          ['Bay Depth (mm)','bayD'],
+                          key==='ground'?['Stack Layers','levels']:['Bay Height (mm)','bayH'],
+                          key==='ground'?['Bay H (mm) — optional','bayH']:['Shelf Levels','levels'],
+                        ].map(([label,field])=>(
+                          <div key={field}>
+                            <div style={{fontSize:'10px',color:'#6b7280',
+                              fontWeight:'600',marginBottom:'3px'}}>{label}</div>
+                            <input type="number" min="1" value={d[field]||''}
+                              onChange={e=>upd(field,e.target.value)}
+                              placeholder={field==='bayH'&&key==='ground'?'optional':'mm'}
+                              style={{...inp,marginBottom:0,width:'100%',
+                                fontSize:'12px',padding:'5px 8px',
+                                background:field==='levels'?'#fffbeb':'#fff',
+                                border:`1px solid ${field==='levels'?'#fcd34d':'#e2e8f0'}`}}/>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{display:'flex',gap:'8px'}}>
+                  <button onClick={()=>setUdStep(2)}
+                    style={{flex:1,padding:'9px',borderRadius:'9px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                      border:'1px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
+                    ← Back
+                  </button>
+                  <button onClick={()=>{
+                      // Convert udRackDefs → userRacks array format
+                      const newRacks=[...selectedRackTypes].map((key,i)=>({
+                        id:i+1, name:({shelving:'Shelving',liveStorage:'Flow Rack',
+                          selective:'Selective Pallet',doubleDeep:'Double-Deep',
+                          driveIn:'Drive-In',cantilever:'Cantilever',ground:'Ground Storage'}[key]||key),
+                        rackType:key,
+                        bayW:String(udRackDefs[key]?.bayW||''),
+                        bayD:String(udRackDefs[key]?.bayD||''),
+                        bayH:String(udRackDefs[key]?.bayH||''),
+                        levels:String(udRackDefs[key]?.levels||'1'),
+                      }));
+                      setUserRacks(newRacks);
+                      setUdStep(4);
+                    }}
+                    style={{flex:2,padding:'9px',borderRadius:'9px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'13px',fontWeight:'700',
+                      border:'none',background:'linear-gradient(135deg,#059669,#047857)',
+                      color:'#fff'}}>
+                    🏭 Create Layout
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── STEP 4: Layout created — show summary + edit options ─── */}
+            {udStep===4&&(
+              <div style={S.card}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}}>
+                  <div style={S.cardTitle}>✓ Layout Created</div>
+                  <button onClick={()=>setUdStep(3)}
+                    style={{fontSize:'11px',fontWeight:'700',color:'#7c3aed',
+                      background:'#f5f3ff',border:'1px solid #ede9fe',
+                      borderRadius:'7px',padding:'4px 10px',cursor:'pointer'}}>
+                    ✏ Edit Rack Sizes
+                  </button>
+                </div>
+                {/* Bin type summary (read-only) */}
+                <div style={{fontSize:'11px',fontWeight:'700',color:'#374151',marginBottom:'6px'}}>
+                  Bin Types (from system analysis):
+                </div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:'6px',marginBottom:'12px'}}>
+                  {Object.entries(analysis?.binSummary||{})
                     .sort((a,b)=>['XS','S','M','L','XL','LONG'].indexOf(a[0])-['XS','S','M','L','XL','LONG'].indexOf(b[0]))
                     .map(([band,info])=>{
-                      const bc=BIN_CATALOG[band];
-                      const overflow=userOverflowBins.find(o=>o.binKey===band);
-                      const COLORS={XS:['#f1f5f9','#64748b'],S:['#eff6ff','#1d4ed8'],
-                        M:['#f5f3ff','#7c3aed'],L:['#f0fdf4','#166534'],
-                        XL:['#fef9c3','#854d0e'],LONG:['#fdf4ff','#9333ea']};
-                      const [bg,col]=overflow?['#fff1f2','#be185d']:(COLORS[band]||['#f8fafc','#374151']);
+                      const overflow=userOverflowBins.find(o=>o.binKey===band)||
+                        !new Set((userRackConfig||[]).map(c=>c.bin)).has(band);
+                      const fitted=new Set((userRackConfig||[]).map(c=>c.bin)).has(band);
                       return(
-                        <div key={band} style={{background:bg,border:`1px solid ${col}33`,
-                          borderRadius:'8px',padding:'8px 12px',minWidth:'110px'}}>
-                          <div style={{fontWeight:'800',fontSize:'13px',color:col}}>
-                            {overflow?'⚠ ':''}{band}
-                          </div>
-                          <div style={{fontSize:'10px',color:col,opacity:0.8,marginBottom:'2px'}}>{info.name}</div>
-                          {bc?.phys&&<div style={{fontSize:'9px',color:'#6b7280'}}>{bc.phys[0]}×{bc.phys[1]}×{bc.phys[2]}mm</div>}
-                          <div style={{fontSize:'11px',fontWeight:'700',color:'#0f172a',marginTop:'2px'}}>
-                            {(info.locs||0).toLocaleString()} locs
-                          </div>
-                          {overflow&&<div style={{fontSize:'9px',color:'#be185d',marginTop:'2px',fontWeight:'600'}}>
-                            ✗ Doesn't fit in any rack
-                          </div>}
+                        <div key={band} style={{
+                          background:fitted?'#f0fdf4':'#fff1f2',
+                          border:`1px solid ${fitted?'#86efac':'#fecaca'}`,
+                          borderRadius:'7px',padding:'4px 8px',fontSize:'10px'}}>
+                          <span style={{fontWeight:'800',color:fitted?'#166534':'#be185d'}}>
+                            {fitted?'✓':'✗'} {band}
+                          </span>
+                          <span style={{color:'#6b7280',marginLeft:'4px'}}>{(info.locs||0).toLocaleString()} locs</span>
                         </div>
                       );
                     })}
                 </div>
-              ) : (
-                <div style={{fontSize:'12px',color:'#9ca3af',padding:'10px',
-                  background:'#f8fafc',borderRadius:'6px',textAlign:'center'}}>
-                  Run "Generate Warehouse Design" first to load bin types from system analysis
+                {/* Rack summary */}
+                <div style={{fontSize:'11px',fontWeight:'700',color:'#374151',marginBottom:'6px'}}>
+                  Racks ({selectedRackTypes.size} types selected):
                 </div>
-              )}
-            </div>
-
-            {/* Custom rack sizes */}
-            <div style={S.card}>
-              <div style={S.cardTitle}>🗄 Your Rack / Shelf Sizes</div>
-              <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'10px'}}>
-                Enter your rack bay dimensions. Tool calculates how many bins fit per bay
-                and how many bays are needed.
-              </div>
-              <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',
-                overflow:'auto',marginBottom:'8px'}}>
-                <table style={{width:'100%',minWidth:'520px',borderCollapse:'collapse',fontSize:'11px'}}>
-                  <thead><tr style={{background:'#f8fafc'}}>
-                    {['Name','Type','Bay W','Bay D','Bay H','Levels*',''].map(h=>(
-                      <th key={h} style={{padding:'5px 6px',textAlign:'left',fontWeight:'700',
-                        fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0',
-                        whiteSpace:'nowrap'}}>{h}</th>))}
-                  </tr></thead>
-                  <tbody>
-                    {userRacks.map((r,i)=>(
-                      <tr key={r.id} style={{background:i%2===0?'#fff':'#fafbfc'}}>
-                        <td style={{padding:'3px 5px'}}>
-                          <input value={r.name} onChange={e=>updateUserRack(r.id,'name',e.target.value)}
-                            style={{...inp,marginBottom:0,fontSize:'10px',padding:'2px 4px',width:'70px'}}/>
-                        </td>
-                        <td style={{padding:'3px 5px'}}>
-                          <select value={r.rackType||'shelving'}
-                            onChange={e=>updateUserRack(r.id,'rackType',e.target.value)}
-                            style={{...inp,marginBottom:0,fontSize:'10px',padding:'2px 3px',width:'80px'}}>
-                            <option value="shelving">Shelving</option>
-                            <option value="liveStorage">Carton Live</option>
-                            <option value="selective">Selective Pallet</option>
-                            <option value="doubleDeep">Double-Deep</option>
-                            <option value="driveIn">Drive-In</option>
-                            <option value="cantilever">Cantilever</option>
-                            <option value="ground">Ground</option>
-                          </select>
-                        </td>
-                        {['bayW','bayD','bayH'].map(f=>(
-                          <td key={f} style={{padding:'3px 5px'}}>
-                            <input type="number" min="1" value={r[f]}
-                              onChange={e=>updateUserRack(r.id,f,e.target.value)}
-                              placeholder="mm"
-                              style={{...inp,marginBottom:0,width:'56px',fontSize:'10px',padding:'2px 4px'}}/>
-                          </td>))}
-                        <td style={{padding:'3px 5px'}}>
-                          <input type="number" min="1" max="20" value={r.levels}
-                            onChange={e=>updateUserRack(r.id,'levels',e.target.value)}
-                            placeholder="1"
-                            title="Shelf Levels (for shelving) or Stack Layers (for ground)"
-                            style={{...inp,marginBottom:0,width:'44px',fontSize:'10px',padding:'2px 4px',
-                              background:'#fffbeb',border:'1px solid #fcd34d'}}/>
-                        </td>
-                        <td style={{padding:'3px 5px',textAlign:'center'}}>
-                          {userRacks.length>1&&<button onClick={()=>removeUserRack(r.id)}
-                            style={{background:'none',border:'none',color:'#be185d',cursor:'pointer',fontSize:'14px'}}>×</button>}
-                        </td>
-                      </tr>))}
-                  </tbody>
-                </table>
-                <div style={{fontSize:'9px',color:'#6b7280',padding:'4px 8px',
-                  borderTop:'1px solid #f1f5f9',background:'#fafafa'}}>
-                  * Levels = number of shelves (shelving/selective) or stack layers (ground)
-                </div>
-              </div>
-              {/* Live stacking preview */}
-              {analysis?.binSummary && userRacks.some(r=>parseFloat(r.bayW)>0) && (
-                <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'8px',
-                  padding:'8px 12px',marginBottom:'8px',fontSize:'11px',color:'#166534'}}>
-                  <strong>⚡ Auto-calculating instantly as you type</strong> — rack config and 3D layout update live.<br/>
-                  <span style={{color:'#6b7280'}}>Vertical stacking: if shelf height ÷ bin height &gt; 1, multiple bins stack per slot.</span>
-                </div>
-              )}
-              {userRacks.length<5&&<button onClick={addUserRack}
-                style={{fontSize:'11px',fontWeight:'600',color:'#7c3aed',background:'#f5f3ff',
-                  border:'1px dashed #c4b5fd',borderRadius:'6px',padding:'5px 12px',
-                  cursor:'pointer',width:'100%'}}>+ Add Rack Type</button>}
-            </div>
-
-            {/* Results update automatically via useEffect */}
-            {!analysis && (
-              <div style={{fontSize:'11px',color:'#9ca3af',textAlign:'center',
-                padding:'8px',background:'#f8fafc',borderRadius:'6px'}}>
-                Run "Generate Warehouse Design" first, then enter rack sizes above
-              </div>
-            )}
-          </>)}
-
-          {/* Step 2: Master SKU — with preferred bin selector */}
-          <div style={S.card}>
-            <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'12px'}}>
-              {stepCircle(2, !!masterText.trim())}
-              <div style={S.cardTitle}>Master SKU Data</div>
-            </div>
-            {colHint(['SKU Code','Length (mm)','Width (mm)','Height (mm)','Weight (kg)'])}
-
-            {/* Preferred bin types */}
-            <div style={{marginBottom:'10px'}}>
-              <div style={{fontSize:'11px',fontWeight:'700',color:'#7c3aed',
-                textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'6px'}}>
-                Preferred Bin Types
-              </div>
-              <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'6px'}}>
-                SKUs will be assigned to the smallest selected bin that physically fits.
-                Fewer types = simpler operations. De-select XS to avoid very small trays.
-              </div>
-              <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
-                {[
-                  ['XS','Compartment Tray\n300×200×100mm','#f1f5f9','#64748b'],
-                  ['S', 'Small Tote\n400×300×200mm',     '#eff6ff','#1d4ed8'],
-                  ['M', 'Shelf Bin\n600×400×300mm',      '#f5f3ff','#7c3aed'],
-                  ['L', 'Stack Crate\n800×600×400mm',    '#f0fdf4','#166534'],
-                  ['XL','Std Pallet\n1200×1000mm',       '#fef9c3','#854d0e'],
-                ].map(([band,label,bg,col])=>{
-                  const selected = preferredBins.includes(band);
-                  return (
-                    <button key={band}
-                      onClick={()=>{
-                        if(selected && preferredBins.length<=1) return; // min 1
-                        setPreferredBins(prev=>selected
-                          ? prev.filter(b=>b!==band)
-                          : [...prev,band].sort((a,b)=>['XS','S','M','L','XL'].indexOf(a)-['XS','S','M','L','XL'].indexOf(b)));
-                      }}
-                      style={{padding:'6px 12px',borderRadius:'8px',cursor:'pointer',
-                        border:`2px solid ${selected?col:'#e2e8f0'}`,
-                        background:selected?bg:'#fff',
-                        color:selected?col:'#9ca3af',
-                        fontSize:'11px',fontWeight:'700',textAlign:'left',minWidth:'120px'}}>
-                      <div>{selected?'✓ ':''}{band}</div>
-                      <div style={{fontSize:'9px',fontWeight:'400',whiteSpace:'pre-line',
-                        color:selected?col:'#9ca3af',marginTop:'2px'}}>{label}</div>
-                    </button>
-                  );
-                })}
-              </div>
-              {preferredBins.length > 0 && (
-                <div style={{fontSize:'10px',color:'#9ca3af',marginTop:'4px'}}>
-                  Using {preferredBins.length} bin type{preferredBins.length>1?'s':''}: {preferredBins.join(' → ')}
-                  {!preferredBins.includes('XS')&&' · XS excluded — tiny items upgrade to S automatically'}
-                </div>
-              )}
-            </div>
-            {textarea(masterText, setMasterText,
-              'Paste SKU master data (Ctrl+V)\n\nExample:\nSKU-001\t300\t200\t150\t2.5\nSKU-002\t650\t80\t80\t1.2')}
-          </div>
-
-          {/* Step 3: Order / Pick Data */}
-          <div style={S.card}>
-            <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'12px'}}>
-              {stepCircle(3, !!orderText.trim())}
-              <div>
-                <div style={S.cardTitle}>Order / Pick Data <span style={{fontSize:'12px',fontWeight:'400',color:'#059669'}}>(Optional)</span></div>
-                <div style={{fontSize:'12px',color:'#6b7280'}}>Used to classify SKU velocity bands</div>
-              </div>
-            </div>
-            {colHint(['Order No','Dispatch Location','SKU Code','Qty','Date'])}
-            {textarea(orderText, setOrderText,
-              'Paste order data here — SKU pick frequency drives zone assignment\n\nWithout this data, all SKUs will be treated as equal velocity')}
-          </div>
-
-          {/* Step 4: Inventory */}
-          <div style={S.card}>
-            <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'12px'}}>
-              {stepCircle(4, !!invText.trim())}
-              <div>
-                <div style={S.cardTitle}>Current Inventory <span style={{fontSize:'12px',fontWeight:'400',color:'#059669'}}>(Optional)</span></div>
-                <div style={{fontSize:'12px',color:'#6b7280'}}>Used to calculate storage locations needed</div>
-              </div>
-            </div>
-            {colHint(['SKU Code','Current Stock Qty','Warehouse Location (opt)'])}
-            {textarea(invText, setInvText,
-              'Paste current inventory\n\nExample:\nSKU-001\t2500\nSKU-002\t180')}
-          </div>
-
-          {error && <div style={{...S.error,marginBottom:'12px'}}>⚠ {error}</div>}
-
-          <button onClick={runAll} disabled={loading||!masterText.trim()}
-            style={{width:'100%',padding:'13px',
-              background:masterText.trim()&&!loading?'linear-gradient(135deg,#7c3aed,#6d28d9)':'#e2e8f0',
-              color:masterText.trim()&&!loading?'#fff':'#9ca3af',
-              border:'none',borderRadius:'10px',fontWeight:'700',fontSize:'15px',
-              cursor:masterText.trim()&&!loading?'pointer':'not-allowed',fontFamily:'inherit',
-              boxShadow:masterText.trim()?'0 4px 14px rgba(124,58,237,0.35)':'none'}}>
-            {loading?'⏳ Analysing...'
-              :storageMode==='user'?'🏭 Generate Warehouse Design (User Defined)'
-              :'🏭 Generate Warehouse Design'}
-          </button>
-          {/* Progress bar — visible during long analysis */}
-          {loading && (
-            <div style={{marginTop:'8px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',
-                fontSize:'10px',color:'#6b7280',marginBottom:'3px'}}>
-                <span>{progressMsg||'Processing…'}</span>
-                <span>{progress}%</span>
-              </div>
-              <div style={{background:'#e2e8f0',borderRadius:'99px',height:'6px',overflow:'hidden'}}>
-                <div style={{
-                  height:'100%',borderRadius:'99px',
-                  background:'linear-gradient(90deg,#7c3aed,#a78bfa)',
-                  width:`${progress}%`,
-                  transition:'width 0.3s ease',
-                }}/> 
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── RIGHT PANEL ──────────────────────────────────────────────────── */}
-        <div>
-          {!analysis && !loading && (
-            <div style={{...S.card,padding:'60px',textAlign:'center',color:'#9ca3af'}}>
-              <div style={{fontSize:'48px',marginBottom:'12px'}}>🏭</div>
-              <div style={{fontWeight:'600',fontSize:'15px',color:'#374151',marginBottom:'6px'}}>
-                Warehouse Storage Designer
-              </div>
-              <div style={{fontSize:'13px'}}>
-                Fill in parameters and paste your SKU data to generate a complete warehouse design
-              </div>
-            </div>
-          )}
-
-          {/* ── USER DEFINED RESULTS ──────────────────────────────────────────────── */}
-          {/* ── FORWARD PICK + RESERVE RESULTS ─────────────────────────────── */}
-          {storageMode==='fr' && frResult && (<>
-            {/* Summary metrics */}
-            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'14px'}}>
-              {[
-                ['Forward Locations',(frResult.totFwdLocs||0).toLocaleString(),'#f0fdf4','#059669'],
-                ['Reserve Locations',(frResult.totResLocs||0).toLocaleString(),'#f5f3ff','#7c3aed'],
-                ['Forward Area',`${(frResult.totFwdArea||0).toFixed(0)}m²`,'#eff6ff','#1d4ed8'],
-                ['Reserve Area',`${(frResult.totResArea||0).toFixed(0)}m²`,'#fdf4ff','#9333ea'],
-                ['Total Locations',((frResult.totFwdLocs||0)+(frResult.totResLocs||0)).toLocaleString(),'#fff7ed','#c2410c'],
-                ['Cover Days',`${frResult.fDays} days`,'#fef9c3','#854d0e'],
-              ].map(([l,v,bg,col])=>(
-                <div key={l} style={{background:bg,borderRadius:'9px',padding:'9px',
-                  textAlign:'center',border:`1px solid ${col}22`}}>
-                  <div style={{fontSize:'15px',fontWeight:'800',color:col}}>{v}</div>
-                  <div style={{fontSize:'9px',color:'#6b7280',marginTop:'1px',fontWeight:'600',
-                    textTransform:'uppercase'}}>{l}</div>
-                </div>))}
-            </div>
-
-            {/* Forward Pick rack config */}
-            {frResult.fwdCfgs.length>0&&(
-              <div style={{...S.card,marginBottom:'10px'}}>
-                <div style={{fontWeight:'700',fontSize:'13px',color:'#059669',marginBottom:'8px'}}>
-                  🟢 Forward Pick Configuration — {frResult.fDays} day cover
-                </div>
-                {frResult.fwdCfgs.map((cfg,i)=>(
-                  <div key={i} style={{border:'1px solid #d1fae5',borderRadius:'9px',overflow:'hidden',marginBottom:'8px'}}>
-                    <div style={{background:'#f0fdf4',padding:'8px 12px',borderBottom:'1px solid #d1fae5',
-                      display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <div>
-                        <span style={{fontWeight:'700',fontSize:'12px',color:'#059669'}}>{cfg.rackName}</span>
-                        <span style={{fontSize:'10px',color:'#6b7280',marginLeft:'8px'}}>{cfg.binName}
-                          {cfg.binDims?` (${cfg.binDims.join('×')}mm)`:''}</span>
-                      </div>
-                      <span style={{fontSize:'12px',fontWeight:'700',color:'#059669'}}>
-                        {(cfg.locs||0).toLocaleString()} locs
-                      </span>
-                    </div>
-                    <div style={{display:'grid',gridTemplateColumns:'240px 1fr'}}>
-                      <div style={{padding:'8px',background:'#fafffe',borderRight:'1px solid #d1fae5',
-                        display:'flex',flexDirection:'column',alignItems:'center'}}>
-                        <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
-                          textTransform:'uppercase',marginBottom:'3px'}}>Elevation</div>
-                        <RackElevationSVG cfg={cfg} W={220} H={140}/>
-                      </div>
-                      <div style={{padding:'10px',fontSize:'11px'}}>
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'5px',marginBottom:'7px'}}>
-                          {[['Bay W',`${cfg.bayW}mm`],['Bay D',`${cfg.bayD}mm`],
-                            ['Shelves',cfg.levels],['Stack/slot',cfg.stackH||1],
-                            ['Items/W',cfg.acrossW],['Items/D',cfg.acrossD]
-                          ].map(([l,v])=>(
-                            <div key={l}><span style={{color:'#6b7280'}}>{l}: </span><strong>{v}</strong></div>))}
-                        </div>
-                        <div style={{background:'#f0fdf4',borderRadius:'7px',padding:'7px 10px',
-                          fontSize:'11px',color:'#166534',fontWeight:'700'}}>
-                          ✓ {cfg.acrossW}W × {cfg.acrossD}D × {cfg.levels} shelves × {cfg.stackH||1} stacked
-                          = {cfg.locsPerBayTotal}/bay → {cfg.baysNeeded} bays → {cfg.area}m²
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Reserve rack config */}
-            {frResult.resCfgs.length>0&&(
-              <div style={{...S.card,marginBottom:'10px'}}>
-                <div style={{fontWeight:'700',fontSize:'13px',color:'#7c3aed',marginBottom:'8px'}}>
-                  🟣 Reserve Storage Configuration
-                </div>
-                {frResult.resCfgs.map((cfg,i)=>(
-                  <div key={i} style={{border:'1px solid #ede9fe',borderRadius:'9px',overflow:'hidden',marginBottom:'8px'}}>
-                    <div style={{background:'#f5f3ff',padding:'8px 12px',borderBottom:'1px solid #ede9fe',
-                      display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <div>
-                        <span style={{fontWeight:'700',fontSize:'12px',color:'#7c3aed'}}>{cfg.rackName}</span>
-                        <span style={{fontSize:'10px',color:'#6b7280',marginLeft:'8px'}}>{cfg.binName}
-                          {cfg.binDims?` (${cfg.binDims.join('×')}mm)`:''}</span>
-                      </div>
-                      <span style={{fontSize:'12px',fontWeight:'700',color:'#7c3aed'}}>
-                        {(cfg.locs||0).toLocaleString()} locs
-                      </span>
-                    </div>
-                    <div style={{display:'grid',gridTemplateColumns:'240px 1fr'}}>
-                      <div style={{padding:'8px',background:'#faf9ff',borderRight:'1px solid #ede9fe',
-                        display:'flex',flexDirection:'column',alignItems:'center'}}>
-                        <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
-                          textTransform:'uppercase',marginBottom:'3px'}}>Elevation</div>
-                        <RackElevationSVG cfg={cfg} W={220} H={140}/>
-                      </div>
-                      <div style={{padding:'10px',fontSize:'11px'}}>
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'5px',marginBottom:'7px'}}>
-                          {[['Bay W',`${cfg.bayW}mm`],['Bay D',`${cfg.bayD}mm`],
-                            ['Levels',cfg.levels],['Stack/slot',cfg.stackH||1],
-                            ['Items/W',cfg.acrossW],['Items/D',cfg.acrossD]
-                          ].map(([l,v])=>(
-                            <div key={l}><span style={{color:'#6b7280'}}>{l}: </span><strong>{v}</strong></div>))}
-                        </div>
-                        <div style={{background:'#f5f3ff',borderRadius:'7px',padding:'7px 10px',
-                          fontSize:'11px',color:'#4c1d95',fontWeight:'700'}}>
-                          ✓ {cfg.acrossW}W × {cfg.acrossD}D × {cfg.levels} levels × {cfg.stackH||1} stacked
-                          = {cfg.locsPerBayTotal}/bay → {cfg.baysNeeded} bays → {cfg.area}m²
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Overflow */}
-            {frOverflow.length>0&&(
-              <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
-                <div style={{padding:'9px 14px',background:'#fff1f2',borderBottom:'1px solid #fecaca',
-                  fontWeight:'700',fontSize:'12px',color:'#991b1b'}}>
-                  ⚠ {frOverflow.length} bin type(s) could not be accommodated
-                </div>
-                {frOverflow.map((o,i)=>{
-                  const skus=(analysis?.slotted||[]).filter(s=>s.bin===o.binKey);
-                  return(<div key={i} style={{padding:'8px 14px',borderBottom:'1px solid #fee2e2',fontSize:'11px'}}>
-                    <strong style={{color:'#be185d'}}>{o.binKey} — {o.binName}</strong>
-                    <span style={{color:'#9ca3af',marginLeft:'8px'}}>{o.dims}</span>
-                    <span style={{marginLeft:'8px',fontSize:'10px',color:'#ef4444',
-                      background:'#fff1f2',padding:'1px 6px',borderRadius:'4px'}}>
-                      {o.phase==='forward'?'No forward rack fits':'No reserve rack fits'}
+                {userRacks.map((r,i)=>(
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',
+                    padding:'5px 8px',borderRadius:'6px',marginBottom:'4px',
+                    background:'#f8fafc',border:'1px solid #e2e8f0',fontSize:'11px'}}>
+                    <span style={{fontWeight:'700',color:'#0f172a'}}>{r.name}</span>
+                    <span style={{color:'#6b7280'}}>
+                      {r.bayW}×{r.bayD}{r.bayH?`×${r.bayH}`:''}mm · {r.levels} levels
                     </span>
-                    {skus.length>0&&<div style={{fontSize:'10px',color:'#6b7280',marginTop:'3px'}}>
-                      {skus.length} SKUs: {skus.slice(0,5).map(s=>s.sku).join(', ')}
-                      {skus.length>5&&` +${skus.length-5} more`}
-                    </div>}
-                  </div>);
-                })}
-              </div>
-            )}
-
-            {/* 3D / 2D Layout */}
-            {frDesign&&(
-              <div style={{...S.card,marginBottom:'10px'}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}}>
-                  <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a'}}>
-                    {viewMode3D==='3d'?'🧊 3D Layout — Forward Pick + Reserve':'📐 Plan View — Forward Pick + Reserve'}
-                  </div>
-                  <div style={{display:'flex',gap:'6px'}}>
-                    {[['2d','📐 Plan'],['3d','🧊 3D']].map(([m,l])=>(
-                      <button key={m} onClick={()=>setViewMode3D(m)}
-                        style={{padding:'4px 12px',borderRadius:'7px',cursor:'pointer',
-                          fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
-                          border:`2px solid ${viewMode3D===m?'#7c3aed':'#e2e8f0'}`,
-                          background:viewMode3D===m?'#f5f3ff':'#fff',
-                          color:viewMode3D===m?'#7c3aed':'#6b7280'}}>{l}</button>))}
-                  </div>
-                </div>
-                {viewMode3D==='3d'
-                  ?<Warehouse3DModel analysis={analysis} design={frDesign}
-                      params={params} rackConfig={frRackConfig||[]}/>
-                  :(<div ref={plan2DRef}>
-                    <FloorPlanSVG analysis={analysis} design={frDesign}
-                      params={params} rackConfig={frRackConfig||[]}/>
-                    </div>)}
-                {viewMode3D==='2d'&&(
-                  <div style={{display:'flex',gap:'8px',marginTop:'10px',flexWrap:'wrap'}}>
-                    <button onClick={()=>downloadPlan2D('svg')}
-                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
-                        fontSize:'11px',fontWeight:'700',background:'#f0fdf4',border:'1px solid #86efac',color:'#166534'}}>
-                      ⬇ Download SVG
-                    </button>
-                    <button onClick={()=>downloadPlan2D('png')}
-                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
-                        fontSize:'11px',fontWeight:'700',background:'#eff6ff',border:'1px solid #93c5fd',color:'#1d4ed8'}}>
-                      ⬇ Download PNG (2×)
-                    </button>
-                    <button onClick={()=>exportDXF(analysis,frDesign,params,frRackConfig||[])}
-                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
-                        fontSize:'11px',fontWeight:'700',background:'#fef9c3',border:'1px solid #fde047',color:'#854d0e'}}>
-                      ⬇ Download DXF
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </>)}
-
-          {storageMode==='user' && (userResult||userDesign) && (<>
-
-            {/* Comparison table (when both results exist) */}
-            {analysis && configConfirmed && design && (<>
-              <div style={{...S.card,background:'linear-gradient(135deg,#f0f9ff,#f5f3ff)',
-                marginBottom:'12px'}}>
-                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'12px'}}>
-                  ⚖ System Defined vs User Defined — Comparison
-                </div>
-                <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
-                  <thead><tr>
-                    {['Metric','System Defined','User Defined','Difference'].map((h,i)=>(
-                      <th key={h} style={{padding:'8px 10px',background:'#0f172a',color:'#fff',
-                        textAlign:i===0?'left':'right',fontWeight:'700',fontSize:'11px'}}>{h}</th>))}
-                  </tr></thead>
-                  <tbody>
-                    {[
-                      ['Total Locations',
-                        (analysis.metrics?.totLocs||0).toLocaleString(),
-                        (userResult?.totLocs||0).toLocaleString(),
-                        userResult.totLocs - analysis.metrics.totLocs],
-                      ['Floor Area (m²)',
-                        (design.netRackArea||0).toFixed(0),
-                        userResult.totArea.toFixed(0),
-                        +(userResult.totArea - (design.netRackArea||0)).toFixed(0)],
-                      ['Bin Utilisation',
-                        (Object.values(analysis.binSummary||{}).reduce((s,b)=>s+b.utilPct,0)/Math.max(1,Object.keys(analysis.binSummary||{}).length)).toFixed(0)+'%',
-                        userResult.overallUtil+'%',
-                        userResult.overallUtil - (Object.values(analysis.binSummary||{}).reduce((s,b)=>s+b.utilPct,0)/Math.max(1,Object.keys(analysis.binSummary||{}).length))],
-                      ['Overflow SKUs', '0', (userResult?.overflow?.length||0).toLocaleString(), userResult.overflow.length],
-                      ['Bin Types Used',
-                        Object.keys(analysis.binSummary||{}).length,
-                        Object.keys(analysis.binSummary||{}).length,
-                        0],
-                    ].map(([label,sys,usr,diff],i)=>{
-                      const numDiff = typeof diff==='number' ? diff : parseFloat(diff)||0;
-                      const isGood = label.includes('Utilisation') ? numDiff>=0 : numDiff<=0;
-                      const diffColor = numDiff===0?'#6b7280' : isGood?'#166534':'#be185d';
-                      const diffLabel = numDiff===0?'=':(numDiff>0?'+':'')+String(typeof diff==='number'?diff.toLocaleString():diff);
-                      return(<tr key={i} style={{background:i%2===0?'#fff':'#f8fafc',borderBottom:'1px solid #e2e8f0'}}>
-                        <td style={{padding:'8px 10px',fontWeight:'600',color:'#0f172a'}}>{label}</td>
-                        <td style={{padding:'8px 10px',textAlign:'right',color:'#7c3aed',fontWeight:'700'}}>{sys}</td>
-                        <td style={{padding:'8px 10px',textAlign:'right',color:'#059669',fontWeight:'700'}}>{usr}</td>
-                        <td style={{padding:'8px 10px',textAlign:'right',fontWeight:'700',color:diffColor}}>{diffLabel}</td>
-                      </tr>);
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </>)}
-
-            {/* User result headline metrics */}
-            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'12px'}}>
-              {[
-                [(userResult?.stored?.length||0).toLocaleString(),'SKUs Stored','#f0fdf4','#166534'],
-                [(userResult?.totLocs||0).toLocaleString(),'Total Locations','#f5f3ff','#7c3aed'],
-                [userResult.overflow.length?(userResult?.overflow?.length||0).toLocaleString():'0','Overflow SKUs',
-                  userResult.overflow.length?'#fff1f2':'#f0fdf4',userResult.overflow.length?'#be185d':'#166534'],
-                [userResult.totArea.toFixed(0)+'m²','Floor Area','#fef9c3','#854d0e'],
-                [userResult.overallUtil+'%','Bin Utilisation',
-                  userResult.overallUtil>=80?'#f0fdf4':userResult.overallUtil>=50?'#fffbeb':'#fff1f2',
-                  userResult.overallUtil>=80?'#166534':userResult.overallUtil>=50?'#854d0e':'#be185d'],
-                [userRacks.filter(r=>parseFloat(r.bayW)>0).length,'Rack Types','#eff6ff','#1d4ed8'],
-              ].map(([v,l,bg,col])=>(
-                <div key={l} style={{background:bg,borderRadius:'9px',padding:'10px',
-                  textAlign:'center',border:`1px solid ${col}22`}}>
-                  <div style={{fontSize:'16px',fontWeight:'800',color:col}}>{v}</div>
-                  <div style={{fontSize:'9px',color:'#6b7280',marginTop:'2px',fontWeight:'600',
-                    textTransform:'uppercase'}}>{l}</div>
-                </div>))}
-            </div>
-
-            {/* Bin utilisation per user bin */}
-            <div style={{...S.card,padding:'12px',marginBottom:'10px'}}>
-              <div style={{fontWeight:'700',fontSize:'12px',marginBottom:'8px'}}>Bin Utilisation</div>
-              {Object.values(userResult.binUtil).map((b,i)=>(
-                <div key={i} style={{marginBottom:'8px'}}>
-                  <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',marginBottom:'2px'}}>
-                    <span style={{fontWeight:'600'}}>{b.name}</span>
-                    <span>{(b.locs||0).toLocaleString()} locs · {(b.stock||0).toLocaleString()} / {(b.cap||0).toLocaleString()} units</span>
-                    <span style={{fontWeight:'800',
-                      color:b.utilPct>=80?'#166534':b.utilPct>=50?'#d97706':'#be185d'}}>{b.utilPct}%</span>
-                  </div>
-                  <div style={{background:'#e2e8f0',borderRadius:'99px',height:'6px'}}>
-                    <div style={{height:'6px',borderRadius:'99px',
-                      background:b.utilPct>=80?'#16a34a':b.utilPct>=50?'#d97706':'#be185d',
-                      width:`${Math.min(b.utilPct,100)}%`}}/>
-                  </div>
-                </div>))}
-            </div>
-
-            {/* Rack results */}
-            {userResult.rackResults.length>0&&(
-              <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
-                <div style={{padding:'10px 14px',borderBottom:'1px solid #f1f5f9',fontWeight:'700',fontSize:'12px'}}>
-                  Rack Requirements
-                </div>
-                <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
-                  <thead><tr style={{background:'#f8fafc'}}>
-                    {['Rack','Bay W','Bay D','Bay H','Levels','Total Bays','Area (m²)'].map(h=>(
-                      <th key={h} style={{padding:'7px 10px',textAlign:'left',fontWeight:'700',
-                        fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0'}}>{h}</th>))}
-                  </tr></thead>
-                  <tbody>
-                    {userResult.rackResults.map((r,i)=>(
-                      <tr key={i} style={{background:i%2===0?'#fff':'#fafbfc'}}>
-                        <td style={{padding:'7px 10px',fontWeight:'600'}}>{r.name}</td>
-                        <td style={{padding:'7px 10px'}}>{r.bayW}mm</td>
-                        <td style={{padding:'7px 10px'}}>{r.bayD}mm</td>
-                        <td style={{padding:'7px 10px'}}>{r.bayH}mm</td>
-                        <td style={{padding:'7px 10px'}}>{r.levels}</td>
-                        <td style={{padding:'7px 10px',fontWeight:'700',color:'#7c3aed'}}>{r.totalBays}</td>
-                        <td style={{padding:'7px 10px',fontWeight:'700',color:'#059669'}}>{r.totalArea}m²</td>
-                      </tr>))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* ── USER DEFINED RACK CONFIGURATION (elevation views) ─── */}
-            {userRackConfig && userRackConfig.length>0 && (
-              <div style={{...S.card,marginBottom:'10px'}}>
-                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a',marginBottom:'10px'}}>
-                  🗄 Rack Configuration — User Defined
-                </div>
-                <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'10px'}}>
-                  Calculated from your custom bin and rack sizes. Elevation views show how bins fit in each bay.
-                </div>
-                {userRackConfig.map((cfg,i)=>(
-                  <div key={i} style={{border:'1px solid #e2e8f0',borderRadius:'10px',
-                    overflow:'hidden',marginBottom:'10px'}}>
-                    <div style={{background:'#f8fafc',padding:'9px 14px',borderBottom:'1px solid #e2e8f0',
-                      display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <div>
-                        <span style={{fontWeight:'700',fontSize:'13px'}}>{cfg.rackName}</span>
-                        <span style={{fontSize:'11px',color:'#6b7280',marginLeft:'8px'}}>
-                          {cfg.binName}
-                          {cfg.binDims?` (${cfg.binDims[0]}×${cfg.binDims[1]}×${cfg.binDims[2]}mm)`:''}
-                        </span>
-                      </div>
-                      <span style={{fontSize:'12px',fontWeight:'700',color:'#7c3aed'}}>
-                        {(cfg.locs||0).toLocaleString()} locations
-                      </span>
-                    </div>
-                    {cfg.autoAssigned&&(
-                      <div style={{fontSize:'10px',color:'#7c3aed',fontWeight:'600',
-                        background:'#f5f3ff',padding:'4px 14px',
-                        borderBottom:'1px solid #ede9fe'}}>
-                        ⚡ {cfg.autoAssigned}
-                      </div>
-                    )}
-                    <div style={{display:'grid',gridTemplateColumns:'240px 1fr',gap:'0'}}>
-                      <div style={{padding:'10px',background:'#fafafa',borderRight:'1px solid #e2e8f0',
-                        display:'flex',flexDirection:'column',alignItems:'center',gap:'4px'}}>
-                        <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
-                          textTransform:'uppercase',letterSpacing:'0.05em'}}>Elevation View</div>
-                        <RackElevationSVG cfg={cfg} W={220} H={160}/>
-                      </div>
-                      <div style={{padding:'12px'}}>
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',
-                          fontSize:'11px',marginBottom:'8px'}}>
-                          {[
-                            ['Bay Width',`${cfg.bayW}mm`],
-                            ['Bay Depth',`${cfg.bayD}mm`],
-                            cfg.rack==='ground'
-                              ? ['Item Length',`${cfg.shelfH||'—'}mm (protrudes)`]
-                              : ['Shelf Height',`${cfg.tierHeight}mm${cfg.levels>1?` (${cfg.shelfH}mm ÷ ${cfg.levels})`:''}`],
-                            cfg.rack==='ground'
-                              ? ['Stack Layers',cfg.stackH||1]
-                              : ['No. of Shelves',cfg.levels],
-                            ['Items/Width',cfg.acrossW],
-                            ['Items/Depth',cfg.acrossD],
-                            cfg.rack==='ground'
-                              ? ['Total Height',`${cfg.shelfH||'—'}mm (item length)`]
-                              : ['Bins stacked/slot',cfg.stackH||1],
-                            ['Locations/Bay',cfg.locsPerBayTotal],
-                          ].map(([l,v])=>(
-                            <div key={l}>
-                              <span style={{color:'#6b7280'}}>{l}: </span>
-                              <strong>{v}</strong>
-                            </div>))}
-                        </div>
-                        <div style={{background:cfg.feasible?'#f0fdf4':'#fff1f2',
-                          borderRadius:'8px',padding:'8px 12px',fontSize:'12px',
-                          color:cfg.feasible?'#166534':'#be185d',fontWeight:'700'}}>
-                          {cfg.feasible
-                            ? (cfg.rack==='ground'
-                                ? `✓ ${cfg.acrossW} across × ${cfg.acrossD} deep × ${cfg.stackH||1} stack layers = ${cfg.locsPerBayTotal}/bay → ${cfg.baysNeeded} bays → ${cfg.area}m²  (cross-section ${cfg.binDims?.[0]>cfg.binDims?.[1]?cfg.binDims?.[1]+'×'+cfg.binDims?.[2]:cfg.binDims?.[0]+'×'+cfg.binDims?.[2]}mm, length protrudes)`
-                                : `✓ ${cfg.acrossW} across × ${cfg.acrossD} deep × ${cfg.levels} shelves × ${cfg.stackH||1} stacked/slot = ${cfg.locsPerBayTotal}/bay → ${cfg.baysNeeded} bays → ${cfg.area}m²`)
-                            : '✗ Bin does not fit in rack — adjust dimensions'}
-                        </div>
-                        {cfg.feasible&&(
-                          <button onClick={()=>downloadRackLocations(cfg,analysis)}
-                            style={{marginTop:'8px',padding:'5px 14px',background:'#f0fdf4',
-                              border:'1px solid #86efac',borderRadius:'7px',
-                              fontSize:'11px',fontWeight:'700',color:'#166534',cursor:'pointer',
-                              fontFamily:'inherit'}}>
-                            ⬇ SKU Location List
-                          </button>
-                        )}
-                      </div>
-                    </div>
                   </div>
                 ))}
-              </div>
-            )}
-
-            {/* ── USER DEFINED 3D LAYOUT ────────────────────────────── */}
-            {userDesign && (
-              <div style={{...S.card,marginBottom:'10px'}}>
-                <div style={{display:'flex',justifyContent:'space-between',
-                  alignItems:'center',marginBottom:'10px'}}>
-                  <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a'}}>
-                    {viewMode3D==='3d'?'🧊 3D Layout — User Defined':'📐 Plan View — User Defined'}
-                  </div>
-                  <div style={{display:'flex',gap:'6px'}}>
-                    {[['2d','📐 Plan'],['3d','🧊 3D']].map(([m,l])=>(
-                      <button key={m} onClick={()=>setViewMode3D(m)}
-                        style={{padding:'4px 12px',borderRadius:'7px',cursor:'pointer',
-                          fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
-                          border:`2px solid ${viewMode3D===m?'#059669':'#e2e8f0'}`,
-                          background:viewMode3D===m?'#f0fdf4':'#fff',
-                          color:viewMode3D===m?'#059669':'#6b7280'}}>
-                        {l}
-                      </button>))}
-                  </div>
-                </div>
-                {viewMode3D==='3d'
-                  ? (() => {
-                      const overflowKeys=new Set((userOverflowBins||[]).map(o=>o.binKey));
-                      const uZoneMap={};
-                      (userRackConfig||[]).forEach(cfg=>{uZoneMap[cfg.bin]=cfg.zone;uZoneMap[cfg.bin+'_rack']=cfg.rack;});
-                      const filteredSlotted=(analysis?.slotted||[])
-                        .filter(s=>!overflowKeys.has(s.bin))
-                        .map(s=>({...s,zone:uZoneMap[s.bin]||s.zone,rack:uZoneMap[s.bin+'_rack']||s.rack}));
-                      const userAnalysis={...analysis,slotted:filteredSlotted};
-                      return <Warehouse3DModel analysis={userAnalysis} design={userDesign}
-                        params={params} rackConfig={userRackConfig||[]}/>;
-                    })()
-                  : (() => {
-                      const overflowKeys=new Set((userOverflowBins||[]).map(o=>o.binKey));
-                      const uZoneMap={};
-                      (userRackConfig||[]).forEach(cfg=>{uZoneMap[cfg.bin]=cfg.zone;uZoneMap[cfg.bin+'_rack']=cfg.rack;});
-                      const filteredSlotted=(analysis?.slotted||[])
-                        .filter(s=>!overflowKeys.has(s.bin))
-                        .map(s=>({...s,zone:uZoneMap[s.bin]||s.zone,rack:uZoneMap[s.bin+'_rack']||s.rack}));
-                      const userAnalysis={...analysis,slotted:filteredSlotted};
-                      return <div ref={plan2DRef}>
-                        <FloorPlanSVG analysis={userAnalysis} design={userDesign}
-                          params={params} rackConfig={userRackConfig||[]}/>
-                      </div>;
-                    })()}
-                {/* Download buttons — shown when in 2D plan view */}
-                {viewMode3D==='2d'&&(
-                  <div style={{display:'flex',gap:'8px',marginTop:'10px',flexWrap:'wrap'}}>
-                    <button onClick={()=>downloadPlan2D('svg')}
-                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',
-                        fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
-                        background:'#f0fdf4',border:'1px solid #86efac',color:'#166534'}}>
-                      ⬇ Download SVG
-                    </button>
-                    <button onClick={()=>downloadPlan2D('png')}
-                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',
-                        fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
-                        background:'#eff6ff',border:'1px solid #93c5fd',color:'#1d4ed8'}}>
-                      ⬇ Download PNG (2×)
-                    </button>
-                    <button onClick={()=>exportDXF(analysis,userDesign,params,userRackConfig||[])}
-                      style={{padding:'6px 14px',borderRadius:'8px',cursor:'pointer',
-                        fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
-                        background:'#fef9c3',border:'1px solid #fde047',color:'#854d0e'}}>
-                      ⬇ Download DXF (AutoCAD)
-                    </button>
-                  </div>
-                )}
-                <div style={{marginTop:'8px',fontSize:'11px',color:'#6b7280'}}>
-                  Layout based on your custom rack sizes.
-                  Footprint: <strong>{userDesign.wW}m × {userDesign.wL}m</strong>
-                  {' · '}<strong>{(userDesign.totalGrossArea||0).toLocaleString()}m²</strong> gross area
+                <div style={{display:'flex',gap:'6px',marginTop:'10px'}}>
+                  <button onClick={()=>{setUdStep(1);setSelectedRackTypes(new Set());setUdRackDefs({});setUserRacks([{id:1,name:'Custom Rack 1',rackType:'shelving',bayW:'',bayD:'',bayH:'',levels:''}]);}}
+                    style={{flex:1,padding:'7px',borderRadius:'8px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                      border:'1px solid #e2e8f0',background:'#fff',color:'#9ca3af'}}>
+                    ↺ Start Over
+                  </button>
+                  <button onClick={()=>setUdStep(2)}
+                    style={{flex:1,padding:'7px',borderRadius:'8px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                      border:'1px solid #ede9fe',background:'#f5f3ff',color:'#7c3aed'}}>
+                    Change Racks
+                  </button>
                 </div>
               </div>
             )}
 
-            {/* ── OVERFLOW SKUs — direct scan of slotted data ─────────────── */}
-            {(()=>{
-              // Scan ALL slotted SKUs — flag those whose bin is NOT in any user rack
-              const fittedBins=new Set((userRackConfig||[]).map(c=>c.bin));
-              const unfitted={};
-              (analysis?.slotted||[]).forEach(s=>{
-                if(fittedBins.has(s.bin)) return;
-                if(!unfitted[s.bin]) unfitted[s.bin]={
-                  binKey:s.bin,
-                  binName:s.binName||BIN_CATALOG[s.bin]?.name||s.bin,
-                  dims:(BIN_CATALOG[s.bin]?.phys||[]).join('×')+'mm',
-                  skus:[], totalLocs:0,
-                  reason:(userOverflowBins.find(o=>o.binKey===s.bin)?.reason)
-                    ||'No user rack can accommodate this bin size',
-                };
-                unfitted[s.bin].skus.push(s);
-                unfitted[s.bin].totalLocs+=(s.locsReq||1);
-              });
-              const groups=Object.values(unfitted).sort((a,b)=>b.totalLocs-a.totalLocs);
-              if(!groups.length) return null;
-              const totalSkus=groups.reduce((s,g)=>s+g.skus.length,0);
-              const totalLocs=groups.reduce((s,g)=>s+g.totalLocs,0);
-              return(
-                <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
-                  {/* Header */}
-                  <div style={{padding:'10px 14px',background:'#fff1f2',
-                    borderBottom:'1px solid #fecaca',
-                    display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'4px'}}>
-                    <span style={{fontWeight:'700',fontSize:'12px',color:'#991b1b'}}>
-                      ⚠ {groups.length} Bin Type{groups.length>1?'s':''} Don't Fit in Your Racks
-                      — Excluded from Layout
-                    </span>
-                    <div style={{fontSize:'11px',color:'#be185d',fontWeight:'600'}}>
-                      {totalSkus} SKUs · {totalLocs.toLocaleString()} locations
-                    </div>
-                  </div>
-
-                  {groups.map((grp,gi)=>(
-                    <div key={gi} style={{borderBottom:'1px solid #fee2e2'}}>
-                      {/* Bin type row */}
-                      <div style={{padding:'7px 14px',
-                        background:gi%2===0?'#fff8f8':'#fff',
-                        display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                        <div>
-                          <span style={{fontWeight:'700',color:'#be185d',fontSize:'12px'}}>
-                            {grp.binKey} — {grp.binName}
-                          </span>
-                          <span style={{fontSize:'9px',color:'#9ca3af',marginLeft:'8px'}}>
-                            {grp.dims}
-                          </span>
-                        </div>
-                        <span style={{fontSize:'11px',fontWeight:'700',color:'#be185d'}}>
-                          {grp.skus.length} SKUs · {grp.totalLocs} locs
-                        </span>
-                      </div>
-
-                      {/* Fix hint */}
-                      <div style={{padding:'3px 14px 6px',fontSize:'10px',color:'#dc2626',
-                        background:'#fff5f5',borderBottom:'1px solid #fecaca'}}>
-                        ✗ {grp.reason}
-                        {BIN_CATALOG[grp.binKey]?.phys&&(
-                          <span style={{color:'#9ca3af',marginLeft:'6px'}}>
-                            — add a rack with {grp.binKey==='LONG'?'Ground / Cantilever type, or ':''}
-                            Bay W/D &gt; {Math.min(...(BIN_CATALOG[grp.binKey]?.phys||[999]))}mm
-                          </span>
-                        )}
-                      </div>
-
-                      {/* SKU list */}
-                      <div style={{overflowX:'auto'}}>
-                        <table style={{width:'100%',minWidth:'400px',
-                          borderCollapse:'collapse',fontSize:'10px'}}>
-                          <thead>
-                            <tr style={{background:'#fef2f2'}}>
-                              {['SKU Code','Description','Velocity','Stock','Locs'].map(h=>(
-                                <th key={h} style={{padding:'4px 8px',textAlign:'left',
-                                  color:'#9ca3af',fontWeight:'700',
-                                  borderBottom:'1px solid #fee2e2',
-                                  whiteSpace:'nowrap'}}>{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {grp.skus.sort((a,b)=>b.stock-a.stock).slice(0,20).map((s,si)=>(
-                              <tr key={si} style={{background:si%2===0?'#fff':'#fff8f8'}}>
-                                <td style={{padding:'3px 8px',fontWeight:'700',
-                                  color:'#0f172a',whiteSpace:'nowrap'}}>{s.sku}</td>
-                                <td style={{padding:'3px 8px',color:'#374151',
-                                  maxWidth:'160px',overflow:'hidden',
-                                  textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                                  {s.desc||s.name||'—'}
-                                </td>
-                                <td style={{padding:'3px 8px'}}>
-                                  <span style={{
-                                    background:{VF:'#fef9c3',F:'#f0fdf4',M:'#eff6ff',
-                                      S:'#fdf4ff',VS:'#f1f5f9',NM:'#f8fafc'}[s.vb||s.velocity]||'#f8fafc',
-                                    color:{VF:'#854d0e',F:'#166534',M:'#1d4ed8',
-                                      S:'#7c3aed',VS:'#64748b',NM:'#9ca3af'}[s.vb||s.velocity]||'#374151',
-                                    padding:'1px 5px',borderRadius:'4px',
-                                    fontWeight:'700',fontSize:'9px'}}>
-                                    {s.vb||s.velocity||'?'}
-                                  </span>
-                                </td>
-                                <td style={{padding:'3px 8px',color:'#374151',
-                                  textAlign:'right'}}>{(s.stock||0).toLocaleString()}</td>
-                                <td style={{padding:'3px 8px',fontWeight:'700',
-                                  color:'#be185d',textAlign:'right'}}>{s.locsReq||1}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        {grp.skus.length>20&&(
-                          <div style={{padding:'3px 8px 5px',fontSize:'9px',
-                            color:'#9ca3af',fontStyle:'italic',
-                            borderTop:'1px solid #fee2e2'}}>
-                            ... and {grp.skus.length-20} more SKUs
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
-            {/* Legacy overflow list (from calcUserDefinedStorage) */}
-            {userResult?.overflow?.length>0&&(
-              <div style={{...S.card,padding:'0',overflow:'hidden',marginBottom:'10px'}}>
-                <div style={{padding:'10px 14px',borderBottom:'1px solid #fecaca',
-                  background:'#fff1f2',fontWeight:'700',fontSize:'12px',color:'#991b1b',
-                  display:'flex',justifyContent:'space-between'}}>
-                  <span>⚠ Overflow SKUs — Cannot fit in your bins ({userResult.overflow.length})</span>
-                </div>
-                <div style={{overflowY:'auto',maxHeight:'200px'}}>
-                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
-                    <thead><tr style={{background:'#fff8f8'}}>
-                      {['SKU','L','W','H','Stock Qty','Reason'].map(h=>(
-                        <th key={h} style={{padding:'6px 10px',textAlign:'left',fontWeight:'700',
-                          fontSize:'10px',color:'#6b7280',borderBottom:'1px solid #e2e8f0'}}>{h}</th>))}
-                    </tr></thead>
-                    <tbody>
-                      {userResult.overflow.map((s,i)=>(
-                        <tr key={i} style={{background:i%2===0?'#fff':'#fafbfc'}}>
-                          <td style={{padding:'6px 10px',fontWeight:'600',color:'#be185d'}}>{s.sku}</td>
-                          <td style={{padding:'6px 10px'}}>{s.L||'—'}</td>
-                          <td style={{padding:'6px 10px'}}>{s.W||'—'}</td>
-                          <td style={{padding:'6px 10px'}}>{s.H||'—'}</td>
-                          <td style={{padding:'6px 10px',fontWeight:'600'}}>{(s.stock||0).toLocaleString()}</td>
-                          <td style={{padding:'6px 10px',fontSize:'10px',color:'#6b7280'}}>{s.overflowReason}</td>
-                        </tr>))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+            {/* Copy from System button (always visible in user mode) */}
+            {analysis&&rackConfig&&udStep<=2&&(
+              <button onClick={()=>{copyFromSystem();setUdStep(3);}}
+                style={{width:'100%',padding:'9px',borderRadius:'9px',cursor:'pointer',
+                  fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                  border:'1px solid #c4b5fd',background:'#f5f3ff',color:'#7c3aed',
+                  marginBottom:'6px'}}>
+                ⚡ Copy Rack Sizes from System Recommendation
+              </button>
             )}
+
           </>)}
-
-          {analysis && (<>
-
-            {/* Headline metrics - only in system mode (needs design) */}
-            {storageMode==='system' && design && (<div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px',marginBottom:'16px'}}>
-              {[
-                ['Total SKUs', (analysis.metrics?.totSKUs||0).toLocaleString(), '#eff6ff','#1d4ed8'],
-                ['Locations Needed', (analysis.metrics?.totLocs||0).toLocaleString(), '#f5f3ff','#7c3aed'],
-                ['Recommended Size', `${design.wW}×${design.wL}m`, '#f0fdf4','#166534'],
-                ['Gross Area', `${(design.wW*design.wL).toLocaleString()}m²\n(${Math.round(design.wW*design.wL*10.7639).toLocaleString()} sq ft)`, '#fef9c3','#854d0e'],
-                ['Dock Doors (calc.)', `${design.inboundDocks} inb + ${design.outboundDocks} out = ${design.totalDocks}`, '#e0f2fe','#0369a1'],
-                ['No-Movement SKUs', analysis.metrics.nmCount, '#fff1f2','#be185d'],
-              ].map(([l,v,bg,col])=>(
-                <div key={l} style={{background:bg,borderRadius:'10px',padding:'12px',textAlign:'center',border:`1px solid ${col}22`}}>
-                  <div style={{fontSize:'16px',fontWeight:'800',color:col,lineHeight:1.2}}>{v}</div>
-                  <div style={{fontSize:'10px',color:'#6b7280',marginTop:'4px',fontWeight:'600',textTransform:'uppercase'}}>{l}</div>
-                </div>))}
-            </div>)}
-
-            {/* Staging breakdown */}
-            {design && design.staging && (
-              <div style={{...S.card,background:'#f0f9ff',border:'1px solid #bae6fd',marginBottom:'12px',padding:'14px 18px'}}>
-                <div style={{fontWeight:'700',fontSize:'13px',color:'#0369a1',marginBottom:'10px'}}>
-                  📦 Staging Area Breakdown
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',fontSize:'12px'}}>
-                  <div style={{background:'#fff',borderRadius:'8px',padding:'10px'}}>
-                    <div style={{fontWeight:'700',color:'#0284c7',marginBottom:'6px'}}>
-                      ⬅ Inbound / Receiving — {design.receivingArea}m²
-                    </div>
-                    <div style={{color:'#374151',lineHeight:1.8,fontSize:'12px'}}>
-                      <div>{design.staging.inbLabel==='boxes'?'Boxes':'Pallets'}/day: <strong>{design.staging.inbUnits?.toFixed(0)||0}</strong></div>
-                      <div>In dwell ({params.inboundDwellH}h): <strong>{design.staging.inbPalletsInDwell?.toFixed(0)||'—'} {design.staging.inbLabel}</strong></div>
-                      <div>Storage buffer: {design.staging.stagingBreakdown?.inbStorage}m²</div>
-                      <div>GRN apron: {design.staging.stagingBreakdown?.grnApron}m²</div>
-                      <div style={{marginTop:'4px',fontWeight:'700',color:'#0369a1'}}>Inbound docks: {design.inboundDocks}</div>
-                    </div>
-                  </div>
-                  <div style={{background:'#fff',borderRadius:'8px',padding:'10px'}}>
-                    <div style={{fontWeight:'700',color:'#d97706',marginBottom:'6px'}}>
-                      ➡ Outbound / Dispatch — {design.dispatchArea}m²
-                    </div>
-                    <div style={{color:'#374151',lineHeight:1.8,fontSize:'12px'}}>
-                      <div>{design.staging.outLabel==='boxes'?'Boxes':'Pallets'}/day: <strong>{design.staging.outUnits?.toFixed(0)||0}</strong>
-                        {design.staging.outDailyVolM3>0&&<span style={{color:'#9ca3af',fontSize:'10px'}}> ({design.staging.outDailyVolM3}m³)</span>}
-                      </div>
-                      <div>In dwell ({params.outboundDwellH}h): <strong>{design.staging.outPalletsInDwell?.toFixed(0)||'—'} {design.staging.outLabel}</strong></div>
-                      <div>Storage buffer: {design.staging.stagingBreakdown?.outStorage}m²</div>
-                      <div>Packing area: {design.staging.stagingBreakdown?.packingArea}m²</div>
-                      <div>Dispatch apron: {design.staging.stagingBreakdown?.dispatchApron}m²</div>
-                      {design.staging.trucksNeeded>0&&<div style={{color:'#d97706',fontWeight:'600'}}>Trucks needed: {design.staging.trucksNeeded}</div>}
-                      <div style={{marginTop:'4px',fontWeight:'700',color:'#d97706'}}>Outbound docks: {design.outboundDocks}</div>
-                    </div>
-                  </div>
-                </div>
-                <div style={{fontSize:'10px',color:'#0369a1',marginTop:'8px',fontStyle:'italic'}}>
-                  Sizing: pallets in dwell × 1.2m² footprint × 1.5 safety + dock apron ({params.dockPitch}m pitch × 2m depth × docks)
-                </div>
-                {design.mheArea > 0 && (
-                  <div style={{marginTop:'8px',background:'#fdf4ff',border:'1px solid #e9d5ff',
-                    borderRadius:'6px',padding:'8px 12px',fontSize:'12px',color:'#7c3aed',fontWeight:'600'}}>
-                    ⚡ MHE Charging Area: <strong>{design.mheArea}m²</strong>
-                    {' '}({design.nMHE} {params.forkType} truck{design.nMHE>1?'s':''} × {design.mheBayM2}m² × 1.3 circulation factor)
-                  </div>
-                )}
-              </div>
-            )}
 
           {/* ── USER DEFINED RESULTS ────────────────────────────────── */}
+
 
           {/* ── SYSTEM DEFINED RESULTS (shown when in system mode) ────── */}
           {storageMode==='fr' && (<>
@@ -5861,7 +5233,6 @@ export default function WarehouseDesignerTool() {
           {/* End configConfirmed block */}
           </>)}
           {/* End system mode */}
-          </>)}
         </div>
       </div>
     </div>
