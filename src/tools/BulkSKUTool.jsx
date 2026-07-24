@@ -312,17 +312,30 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
   // ── Excel export ───────────────────────────────────────────────────────────
   const exp = () => {
     const wb = XLSX.utils.book_new();
-    const h = ['SKU Name','Category','Max Qty (Volume)','Max Qty (Weight)','Effective Max Qty','Volume Used (%)','Weight Used (%)','L-axis (mm)','W-axis (mm)','H-axis / Stack (mm)','Stacking Layers','Constraint'];
-    const rows = results.map(r => r.error
-      ? [r.name,r.error,'','','','','','']
-      : [r.name,r.volQty,r.wtQty,r.effQty,(r.volUtil*100).toFixed(2)+'%',
-         r.wtUtil!=null?(r.wtUtil*100).toFixed(2)+'%':'',
-         ...(()=>{const p=(r.orient||'').split('×');return[p[0]||'',p[1]||'',p[2]||''];})(),
-         r.stackLayers||'',r.constraint]);
+    const h = ['SKU Name','Category','Max Qty (Volume)','Max Qty (Weight)',
+      'Effective Max Qty','Volume Used (%)','Weight Used (%)',
+      'L-axis (mm)','W-axis (mm)','H-axis / Stack (mm)',
+      'Stacking Layers','Height Locked','Constraint'];
+    const rows = results.map(r => {
+      const cat = r.category||'Uncategorised';
+      const [oL,oW,oH] = (r.orient||'').split('×');
+      return r.error
+        ? [r.name, cat, r.error, '', '', '', '', '', '', '', '', '', '']
+        : [r.name, cat,
+           r.volQty,
+           typeof r.wtQty==='number'?r.wtQty:'N/A',
+           r.effQty,
+           r.volUtil!=null?(r.volUtil*100).toFixed(2)+'%':'',
+           r.wtUtil!=null?(r.wtUtil*100).toFixed(2)+'%':'',
+           oL||'', oW||'', oH||'',
+           r.stackLayers||'',
+           r.heightLocked?'Locked':'',
+           r.constraint];
+    });
     const ws = XLSX.utils.aoa_to_sheet([
       ['CONTAINER SKU PACKING RESULTS'],[],
       ['Container',`${container.cL}×${container.cW}×${container.cH}`,'Max Weight',container.cMaxWt],[],h,...rows]);
-    ws['!cols']=[{wch:22},{wch:16},{wch:16},{wch:16},{wch:14},{wch:14},{wch:26},{wch:14}];
+    ws['!cols']=[{wch:22},{wch:16},{wch:16},{wch:16},{wch:16},{wch:14},{wch:14},{wch:12},{wch:12},{wch:16},{wch:12},{wch:12},{wch:12}];
     XLSX.utils.book_append_sheet(wb,ws,'Container Results');
 
     if (mixResult) {
