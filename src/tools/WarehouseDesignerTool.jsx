@@ -1140,6 +1140,23 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
 }
 
 // ─── SVG FLOOR PLAN ───────────────────────────────────────────────────────────
+// Module-level section layout calculator (outside FloorPlanSVG to avoid minifier TDZ)
+const CROSS_AISLE_W_M = 3.0; // cross aisle width in metres
+function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossIntervalM) {
+  const nCols = Math.max(3, Math.floor(sectionW / colSlot));
+  const baysPerCol = totalBays > 0 ? Math.ceil(totalBays / nCols) : 3;
+  let y = 0.3; let yStor = 0;
+  const cYs = [];
+  for(let b = 0; b < baysPerCol; b++){
+    y += bayHm; yStor += bayHm;
+    if(yStor >= crossIntervalM && b < baysPerCol - 1){
+      cYs.push(y); y += CROSS_AISLE_W_M; yStor = 0;
+    }
+  }
+  return { nCols, baysPerCol, height: Math.max(3, y+0.3),
+    area: +((y+0.3)*sectionW).toFixed(1), crossYPositions: cYs };
+}
+
 function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }) {
   const MFT  = 3.2808;
   const M2FT = 10.7639;
@@ -1251,26 +1268,6 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
     });
   }
   const storageHTotal=Object.values(rackTypeAreas).reduce((s,a)=>s+a,0)/wW||10;
-  // ── BAY-FIRST LAYOUT: compute section heights from actual bay arrangement ──
-  // Instead of area → height, we plot bays + cross aisles → derive actual height & area.
-  const CROSS_AISLE_W_CONST = 3.0;
-  const computeSectionLayout = (totalBays, sectionW, bayHm, colSlot, crossIntervalM) => {
-    const nCols = Math.max(3, Math.floor(sectionW / colSlot));
-    const baysPerCol = totalBays > 0 ? Math.ceil(totalBays / nCols) : 3;
-    // Simulate the actual bay + cross-aisle arrangement to get exact section height
-    let y = 0.3; let yStor = 0;
-    const cYs = [];
-    for(let b = 0; b < baysPerCol; b++){
-      y += bayHm; yStor += bayHm;
-      if(yStor >= crossIntervalM && b < baysPerCol - 1){
-        cYs.push(y); y += CROSS_AISLE_W_CONST; yStor = 0;
-      }
-    }
-    const height = Math.max(3, y + 0.3);
-    const area   = +(height * sectionW).toFixed(1);
-    return { nCols, baysPerCol, height, area, crossYPositions: cYs };
-  };
-
   // Build zone sections bay-first
   const sectionLayouts = {}; // rackType → { nCols, baysPerCol, height, area, crossYPositions }
   RACK_ORDER.forEach(rt => {
@@ -1363,7 +1360,6 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
     shelving:13, liveStorage:13,
     selective:27, doubleDeep:27, driveIn:27, cantilever:27, ground:27,
   };
-  const CROSS_AISLE_W=3.0;
 
   // Build rack section lookup: rackType → total bays from rackConfig
   const rackTypeBays={};
@@ -1386,8 +1382,8 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
 
     // Push cross aisles from pre-computed positions
     crossYs.forEach(y=>{
-      crossAisles.push({x:zone.x,y:zone.y+y-CROSS_AISLE_W/2,
-        w:zone.w,h:CROSS_AISLE_W,isCrossAisle:true});
+      crossAisles.push({x:zone.x,y:zone.y+y-CROSS_AISLE_W_M/2,
+        w:zone.w,h:CROSS_AISLE_W_M,isCrossAisle:true});
     });
 
     // Draw columns using pre-computed nCols and cross aisle positions
@@ -1397,8 +1393,8 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
       const rx=curX+i*colSlot+pa/2;
       if(rx+ri.depth>zone.x+zone.w-0.3) break;
       for(let j=0;j<breakYs.length-1;j++){
-        const sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W/2:0.3);
-        const ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W/2:0);
+        const sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W_M/2:0.3);
+        const ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W_M/2:0);
         if(ey-sy>0.5) rows.push({x:rx,y:sy,w:ri.depth,h:ey-sy,...ri,dom,bayHm});
       }
     }
