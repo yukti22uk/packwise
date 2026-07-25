@@ -1157,7 +1157,9 @@ function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossInterval
     area: +((y+0.3)*sectionW).toFixed(1), crossYPositions: cYs };
 }
 
-function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }) {
+// ── buildFloorPlanLayout: all computation extracted from FloorPlanSVG ──────────
+// Module-level = separate esbuild scope, no TDZ conflicts with rendering code.
+function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) {
   const MFT  = 3.2808;
   const M2FT = 10.7639;
   const ft   = m  => `${(m*MFT).toFixed(0)}'`;
@@ -1459,6 +1461,36 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
   stagingRects.filter(s=>s.key==='receiving').forEach(s=>{
     dimRight.push({y:dimCur,h:s.h,label:`Staging\n${receivingArea}m²`});dimCur+=s.h;
   });
+
+  // Return everything needed for rendering
+  return {
+    SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, wW,
+    X: m=>ML+m*sX, Y: m=>MT+m*sY, W: m=>m*sX, H: m=>m*sY,
+    dockSide, forkType, packingBenches: params.packingBenches,
+    nMHE: design.nMHE||0, inboundMode: params.inboundMode, outboundMode: params.outboundMode,
+    stagingH, isBoth, isOne, recH, disH, offH, mheH, supportH,
+    zoneRects, stagingRects, supportRects, dockDoors,
+    allRackRows, allCrossAisles, recPallets, disPallets,
+    packTables, mheBays, dimRight, sectionLayouts,
+    doorW: 3.5,
+  };
+}
+
+function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }) {
+  const fp = buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen);
+  const {
+    SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, wW,
+    X, Y, W, H,
+    dockSide, forkType, packingBenches, nMHE, inboundMode, outboundMode,
+    stagingH, isBoth, isOne, recH, disH, offH, mheH, supportH,
+    zoneRects, stagingRects, supportRects, dockDoors,
+    allRackRows, allCrossAisles, recPallets, disPallets,
+    packTables, mheBays, dimRight, sectionLayouts, doorW,
+  } = fp;
+  const MFT=3.2808, M2FT=10.7639;
+  const ft = m => `${(m*MFT).toFixed(0)}'`;
+  const sqft = m2 => `${Math.round(m2*M2FT).toLocaleString()} sq ft`;
+  const aisleM = parseFloat(params.aisleW)||3.0;
 
   return (
     <svg width={fullscreen?'100%':SVG_W} height={fullscreen?'100%':SVG_H}
