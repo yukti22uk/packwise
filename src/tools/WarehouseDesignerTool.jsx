@@ -3392,29 +3392,27 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
 
       if(rk.rackType === 'cantilever'){
         // Cantilever: item's LONG dimension goes ALONG the arm (depth direction).
-        // Items sit side-by-side ACROSS the frame width by their cross-section.
-        // Sort dims: d1=smallest (cross-section), d2=middle (cross-section), d3=largest (= arm direction)
-        const [d1,d2,d3] = [bL,bW,bH].slice().sort((a,b)=>a-b);
-        // Must fit cross-section across frame width and arm depth ≥ item length
-        if(rD < d3) return; // arm too short for this item — doesn't fit
-        // Items side-by-side across frame width: try d1 or d2 as cross-width
-        const oA = Math.floor(rW/d1); // narrow side across width
-        const oB = Math.floor(rW/d2); // wider side across width
-        const aw  = Math.max(oA, oB); // pick orientation that fits more
-        if(!aw) return;
-        // ad = how many deep along arm: floor(armLength / itemLength) → usually 1
-        const ad = Math.floor(rD / d3) || 1; // at least 1 (item rests on arm, may overhang)
-        const { levels, stack, levelToLevel, firstLevelH, calcNote } = calcLevels(rk.rackType, clearH, d2>d1?d2:d1);
-        if(levels<1) return;
-        const lpb = aw * ad * stack * levels;
-        if(lpb > bestLPB){
-          bestLPB = lpb;
+        // Use c-prefixed names to avoid TDZ conflict with outer-block const declarations
+        const cSorted = [bL,bW,bH].slice().sort((a,b)=>a-b);
+        const cd1=cSorted[0], cd2=cSorted[1], cd3=cSorted[2];
+        if(rD < cd3) return; // arm too short — item doesn't fit
+        const coA = Math.floor(rW/cd1);
+        const coB = Math.floor(rW/cd2);
+        const caw = Math.max(coA, coB);
+        if(!caw) return;
+        const cad = Math.floor(rD/cd3)||1;
+        const cLvlResult = calcLevels(rk.rackType, clearH, cd2>cd1?cd2:cd1);
+        if(cLvlResult.levels<1) return;
+        const clpb = caw * cad * cLvlResult.stack * cLvlResult.levels;
+        if(clpb > bestLPB){
+          bestLPB = clpb;
           best = {
-            rk, aw, ad, stack, lvl:levels, lpb,
-            totalH:clearH, levelH:levelToLevel, usableH:d2, beamClr:0,
-            levels, levelToLevel, firstLevelH, calcNote,
-            orientDesc:`Frame W: ${aw} items × ${aw===oA?d1:d2}mm side | Arm: ${d3}mm (item length) along arm depth (${rD}mm)`,
-            wDimMm:aw===oA?d1:d2, dDimMm:d3, hDimMm:d2>d1?d2:d1,
+            rk, aw:caw, ad:cad, stack:cLvlResult.stack, lvl:cLvlResult.levels, lpb:clpb,
+            totalH:clearH, levelH:cLvlResult.levelToLevel, usableH:cd2, beamClr:0,
+            levels:cLvlResult.levels, levelToLevel:cLvlResult.levelToLevel,
+            firstLevelH:cLvlResult.firstLevelH, calcNote:cLvlResult.calcNote,
+            orientDesc:`Frame W: ${caw} items × ${caw===coA?cd1:cd2}mm | Arm: ${cd3}mm along depth (${rD}mm arm)`,
+            wDimMm:caw===coA?cd1:cd2, dDimMm:cd3, hDimMm:cd2>cd1?cd2:cd1,
             orient:'cantilever',
           };
         }
