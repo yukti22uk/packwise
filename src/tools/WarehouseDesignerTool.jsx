@@ -1154,12 +1154,15 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
   const pitch   = parseFloat(dockPitch)||4.5;
   const aisleM  = parseFloat(aisleWParam)||3.0;
 
-  // Canvas — larger in fullscreen
+  // ── USE LAYOUT-DERIVED DIMENSIONS ────────────────────────────────────────
+  // Warehouse length comes FROM the bay layout, not from pre-calculated areas.
+  // This ensures the plan always accurately represents the physical bay count.
+  const actualWL = Math.max(wL, layoutWL);  // use at least design wL, or layout-derived
   const SVG_W = fullscreen ? 1800 : 960;
-  const SVG_H = fullscreen ? Math.round(1800 * (wL/wW) * 0.8 + 120) : 720;
+  const SVG_H = fullscreen ? Math.round(1800 * (actualWL/wW) * 0.8 + 120) : 720;
   const ML=62, MR=70, MT=50, MB=70;
   const DW=SVG_W-ML-MR, DH=SVG_H-MT-MB;
-  const sX=DW/wW, sY=DH/wL;
+  const sX=DW/wW, sY=DH/actualWL;
   const X=m=>ML+m*sX, Y=m=>MT+m*sY, W=m=>m*sX, H=m=>m*sY;
 
   // ── AREA HEIGHTS ────────────────────────────────────────────────────────────
@@ -1218,6 +1221,22 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
     cantilever: {label:'Cantilever Rack', color:'#fff7ed', border:'#fdba74', text:'#c2410c'},
     ground:     {label:'Ground Storage', color:'#fef3c7', border:'#fbbf24', text:'#92400e'},
   };
+  // Bay height in plan = actual bayW from rackConfig (converted from mm to m)
+  // Fallback to standard dimensions if rackConfig not available
+  const BAY_HEIGHT_M_LOOKUP={shelving:0.9,liveStorage:1.5,selective:2.7,
+    doubleDeep:2.7,driveIn:2.7,cantilever:1.5,ground:1.2};
+
+  // Build rack-type → bayW (m) map from actual rackConfig data
+  const rackBayWidthM={};
+  (rackConfig||[]).forEach(cfg=>{
+    if(cfg.rack && cfg.bayW && !rackBayWidthM[cfg.rack]){
+      rackBayWidthM[cfg.rack]=parseFloat(cfg.bayW)/1000; // mm → m
+    }
+  });
+  const RACK_INFO_2D_LOOKUP={
+    shelving:   {depth:1.0},liveStorage:{depth:1.2},selective:{depth:2.2},
+    doubleDeep: {depth:4.4},driveIn:    {depth:5.5},cantilever:{depth:2.0},ground:{depth:2.4},
+  };
   // Order rack types sensibly: manual pick first (near dispatch), then pallet, then bulk
   const RACK_ORDER=['shelving','liveStorage','selective','doubleDeep','driveIn','cantilever','ground'];
   // Group rackConfig by rack type
@@ -1232,15 +1251,50 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
     });
   }
   const storageHTotal=Object.values(rackTypeAreas).reduce((s,a)=>s+a,0)/wW||10;
-  RACK_ORDER.forEach(rt=>{
-    const area=rackTypeAreas[rt]||0; if(!area) return;
-    const zh=Math.max(3, area/wW);
-    const style=RACK_TYPE_STYLE[rt]||{label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
-    zoneRects.push({key:rt, x:0, y:cur, w:wW, h:zh,
+  // ── BAY-FIRST LAYOUT: compute section heights from actual bay arrangement ──
+  // Instead of area → height, we plot bays + cross aisles → derive actual height & area.
+  const CROSS_AISLE_W_CONST = 3.0;
+  const computeSectionLayout = (totalBays, sectionW, bayHm, colSlot, crossIntervalM) => {
+    const nCols = Math.max(3, Math.floor(sectionW / colSlot));
+    const baysPerCol = totalBays > 0 ? Math.ceil(totalBays / nCols) : 3;
+    // Simulate the actual bay + cross-aisle arrangement to get exact section height
+    let y = 0.3; let yStor = 0;
+    const cYs = [];
+    for(let b = 0; b < baysPerCol; b++){
+      y += bayHm; yStor += bayHm;
+      if(yStor >= crossIntervalM && b < baysPerCol - 1){
+        cYs.push(y); y += CROSS_AISLE_W_CONST; yStor = 0;
+      }
+    }
+    const height = Math.max(3, y + 0.3);
+    const area   = +(height * sectionW).toFixed(1);
+    return { nCols, baysPerCol, height, area, crossYPositions: cYs };
+  };
+
+  // Build zone sections bay-first
+  const sectionLayouts = {}; // rackType → { nCols, baysPerCol, height, area, crossYPositions }
+  RACK_ORDER.forEach(rt => {
+    const totalBaysRt = (rackConfig||[]).filter(c=>c.rack===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
+    if(!totalBaysRt && !rackTypeAreas[rt]) return;
+    const ri    = RACK_INFO_2D_LOOKUP[rt] || {depth:2.2};
+    const pa    = rt==='shelving'||rt==='liveStorage' ? 1.2 : aisleM;
+    const colSlot = ri.depth + pa;
+    const bayHm   = rackBayWidthM[rt] || BAY_HEIGHT_M_LOOKUP[rt] || 0.9;
+    const crossInt = ({shelving:13,liveStorage:13,selective:27,
+      doubleDeep:27,driveIn:27,cantilever:27,ground:27})[rt] || 13;
+    // Use bay count if available, else estimate from area
+    const baysForLayout = totalBaysRt || Math.ceil((rackTypeAreas[rt]||0) / (bayHm * wW));
+    const layout = computeSectionLayout(baysForLayout, wW, bayHm, colSlot, crossInt);
+    sectionLayouts[rt] = {...layout, totalBays: baysForLayout};
+
+    const style = RACK_TYPE_STYLE[rt] || {label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
+    zoneRects.push({key:rt, x:0, y:cur, w:wW, h:layout.height,
       label:style.label, color:style.color, border:style.border, text:style.text,
-      area:area, rackType:rt});
-    cur+=zh;
+      area:layout.area, rackType:rt, sectionLayout:layout});
+    cur += layout.height;
   });
+  // Actual warehouse length derived from layout (not from pre-calculated area)
+  const layoutWL = cur + stagingH + (isOne?0:0); // cur already includes all rack sections
 
   // Staging at south
   if (isOne) {
@@ -1291,6 +1345,9 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
     if(z.rackType) zone2RackTypes[z.key]=[{rack:z.rackType,cfg:null}];
   });
 
+  // Bay heights in the N-S direction (vertical in plan) per rack type
+  // BAY_HEIGHT_M now sourced from rackBayWidthM (actual from rackConfig)
+
   const RACK_INFO_2D={
     shelving:   {depth:1.0, color:'#dbeafe', stroke:'#3b82f6'},
     liveStorage:{depth:1.2, color:'#bfdbfe', stroke:'#60a5fa'},
@@ -1301,56 +1358,51 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
     ground:     {depth:2.4, color:'#d97706', stroke:'#92400e'},
   };
 
-  // Racks run N-S (vertical columns in plan view).
-  // Picking aisles run N-S between rack pairs.
-  // Cross aisles run E-W (horizontal bands) perpendicular to picking aisles.
+  // Cross aisle spacing (along zone height = N-S)
   const CROSS_AISLE_INTERVAL={
     shelving:13, liveStorage:13,
     selective:27, doubleDeep:27, driveIn:27, cantilever:27, ground:27,
   };
   const CROSS_AISLE_W=3.0;
 
+  // Build rack section lookup: rackType → total bays from rackConfig
+  const rackTypeBays={};
+  (rackConfig||[]).forEach(cfg=>{
+    rackTypeBays[cfg.rack]=(rackTypeBays[cfg.rack]||0)+(cfg.baysNeeded||0);
+  });
+
   const rackRowsForZone=(zone)=>{
     const rows=[], crossAisles=[];
-    const zRacks=zone2RackTypes[zone.key]||[{rack:'shelving',cfg:null}];
-    const dom0=zRacks[0]?.rack||'shelving';
-    const crossInterval=CROSS_AISLE_INTERVAL[dom0]||13;
+    const dom=zone.rackType||(zone2RackTypes[zone.key]?.[0]?.rack)||'shelving';
+    const ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
+    const pa=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
+    const colSlot=ri.depth+pa;
+    const bayHm=rackBayWidthM[dom]||BAY_HEIGHT_M_LOOKUP[dom]||0.9;
 
-    // Horizontal cross aisle bands at regular Y intervals within zone
-    const crossYs=[];
-    for(let y=crossInterval; y<zone.h-2; y+=crossInterval) crossYs.push(y);
+    // Use pre-computed layout (bay-first) from zone definition
+    const sl=zone.sectionLayout||sectionLayouts[dom]||{nCols:3,baysPerCol:5,crossYPositions:[]};
+    const nCols=sl.nCols, totalBays=sl.totalBays||0;
+    const crossYs=sl.crossYPositions||[];
+
+    // Push cross aisles from pre-computed positions
     crossYs.forEach(y=>{
-      crossAisles.push({x:zone.x,y:zone.y+y-CROSS_AISLE_W/2,w:zone.w,h:CROSS_AISLE_W,isCrossAisle:true});
+      crossAisles.push({x:zone.x,y:zone.y+y-CROSS_AISLE_W/2,
+        w:zone.w,h:CROSS_AISLE_W,isCrossAisle:true});
     });
 
-    // Proportional width per rack type
-    const totalSlot=zRacks.reduce((s,{rack:dom})=>{
-      const ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
-      const pa=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
-      return s+ri.depth+pa;
-    },0)||1;
-
+    // Draw columns using pre-computed nCols and cross aisle positions
     let curX=zone.x+0.3;
-    zRacks.forEach(({rack:dom})=>{
-      const ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
-      const pa=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
-      const colSlot=ri.depth+pa;
-      const allocW=(colSlot/totalSlot)*zone.w;
-      const nCols=Math.max(3,Math.floor(allocW/colSlot)); // min 3 columns per rack type
-      for(let i=0;i<nCols;i++){
-        const rx=curX+i*colSlot+pa/2;
-        if(rx+ri.depth>zone.x+zone.w-0.3) break;
-        // Split rack column at each cross aisle
-        const breakYs=[0,...crossYs,zone.h];
-        for(let j=0;j<breakYs.length-1;j++){
-          const sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W/2:0.3);
-          const ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W/2:0.3);
-          if(ey-sy>0.5) rows.push({x:rx,y:sy,w:ri.depth,h:ey-sy,...ri,dom});
-        }
+    const breakYs=[0,...crossYs,zone.h-0.3];
+    for(let i=0;i<nCols;i++){
+      const rx=curX+i*colSlot+pa/2;
+      if(rx+ri.depth>zone.x+zone.w-0.3) break;
+      for(let j=0;j<breakYs.length-1;j++){
+        const sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W/2:0.3);
+        const ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W/2:0);
+        if(ey-sy>0.5) rows.push({x:rx,y:sy,w:ri.depth,h:ey-sy,...ri,dom,bayHm});
       }
-      curX+=nCols*colSlot;
-    });
-    return {rows, crossAisles};
+    }
+    return {rows, crossAisles, nCols, baysPerCol:sl.baysPerCol, totalBays};
   };
 
   // Pallet symbols in staging area
@@ -1605,28 +1657,31 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
           );
         }
 
-        // ── SHELVING / LIVE STORAGE (default) ────────────────────────────
-        const bayW = W(r.dom==='liveStorage'?1.5:0.9);
-        const nBays= Math.max(1,Math.floor(r.w/(r.dom==='liveStorage'?1.5:0.9)));
-        return(
-          <g key={`rr-${i}`}>
-            {/* Two faces of back-to-back shelving — front face */}
-            <rect x={px} y={py} width={Math.max(2,pw)} height={Math.max(2,ph)} fill={r.color} stroke={r.stroke} strokeWidth="0.8" rx="1"/>
-            {/* Bay dividers (horizontal lines across column height) */}
-            {Array.from({length:nBays-1},(_,b)=>(
-              <line key={b}
-                x1={px+(b+1)*bayW} y1={py}
-                x2={px+(b+1)*bayW} y2={py+ph}
-                stroke={r.stroke} strokeWidth="0.4" strokeOpacity="0.5"/>
-            ))}
-            {/* ── BACK-TO-BACK PARTITION — vertical centre line through column ── */}
-            {/* Represents the back panel where two shelf rows meet */}
-            <line
-              x1={px+Math.max(2,pw)/2} y1={py}
-              x2={px+Math.max(2,pw)/2} y2={py+ph}
-              stroke={r.stroke} strokeWidth="1.2" strokeOpacity="0.85"/>
-          </g>
-        );
+        // ── SHELVING / LIVE STORAGE ────────────────────────────────────────
+        {
+          // Bay dividers run HORIZONTALLY at regular height intervals (every 0.9m for shelving)
+          const bayHpx = H(r.bayHm||0.9); // bay height in pixels
+          const nBayDividers = Math.max(0, Math.floor(r.h/(r.bayHm||0.9))-1);
+          return(
+            <g key={`rr-${i}`}>
+              {/* Column fill */}
+              <rect x={px} y={py} width={Math.max(3,pw)} height={Math.max(2,ph)}
+                fill={r.color} stroke={r.stroke} strokeWidth="0.8" rx="0.5"/>
+              {/* Bay dividers — horizontal lines at regular height intervals */}
+              {Array.from({length:nBayDividers},(_,b)=>(
+                <line key={b}
+                  x1={px} y1={py+(b+1)*bayHpx}
+                  x2={px+pw} y2={py+(b+1)*bayHpx}
+                  stroke={r.stroke} strokeWidth="0.5" strokeOpacity="0.5"/>
+              ))}
+              {/* ── BACK-TO-BACK PARTITION ── vertical centre line (two shelving faces) */}
+              <line
+                x1={px+Math.max(3,pw)/2} y1={py}
+                x2={px+Math.max(3,pw)/2} y2={py+ph}
+                stroke={r.stroke} strokeWidth="1.4" strokeOpacity="0.9"/>
+            </g>
+          );
+        }
       })}
 
       {/* ── STAGING AREAS ─── */}
@@ -1796,7 +1851,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
 
       {/* ── TOTAL AREA FOOTER ─── */}
       <text x={X(wW/2)} y={SVG_H-4} textAnchor="middle" fontSize="10" fontWeight="700" fill="#374151">
-        {`Total gross area: ${(wW*wL).toLocaleString()}m²  (${Math.round(wW*wL*10.7639).toLocaleString()} sq ft)  ·  ${dockSide==='one'?'One-side':'Opposite-side'} docks`}
+        {`Total gross area: ${(wW*actualWL).toLocaleString()}m²  (${Math.round(wW*actualWL*10.7639).toLocaleString()} sq ft)  ·  ${wW}×${Math.round(actualWL)}m  ·  ${dockSide==='one'?'One-side':'Opposite-side'} docks  ·  Derived from ${Object.keys(sectionLayouts).length} rack type sections`}
       </text>
     </svg>
   );
