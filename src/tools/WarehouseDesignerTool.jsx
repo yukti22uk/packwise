@@ -1280,63 +1280,63 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
   });
 
   const RACK_INFO_2D={
-    shelving:   {depth:0.5, color:'#e2e8f0', stroke:'#94a3b8'},
-    liveStorage:{depth:0.6, color:'#bfdbfe', stroke:'#60a5fa'},
-    selective:  {depth:1.1, color:'#fde68a', stroke:'#d97706'},
-    doubleDeep: {depth:2.4, color:'#c7d2fe', stroke:'#818cf8'},
+    shelving:   {depth:1.0, color:'#dbeafe', stroke:'#3b82f6'},
+    liveStorage:{depth:1.2, color:'#bfdbfe', stroke:'#60a5fa'},
+    selective:  {depth:2.2, color:'#fde68a', stroke:'#d97706'},
+    doubleDeep: {depth:4.4, color:'#c7d2fe', stroke:'#818cf8'},
     driveIn:    {depth:5.5, color:'#334155', stroke:'#1e293b'},
     cantilever: {depth:2.0, color:'#fde8d8', stroke:'#f97316'},
-    ground:     {depth:1.2, color:'#78350f', stroke:'#92400e'},
+    ground:     {depth:2.4, color:'#d97706', stroke:'#92400e'},
   };
 
-  // Draw rack rows within a zone — distance-based cross aisles
-  // Shelving: cross aisle every 12-15m (use 13m)
-  // Selective/DoubleDeep/Cantilever/DriveIn: cross aisle every 25-30m (use 27m)
-  const CROSS_AISLE_INTERVAL = {
-    shelving:    13, // m between cross aisles
-    liveStorage: 13,
-    selective:   27,
-    doubleDeep:  27,
-    driveIn:     27,
-    cantilever:  27,
-    ground:      27,
+  // Racks run N-S (vertical columns in plan view).
+  // Picking aisles run N-S between rack pairs.
+  // Cross aisles run E-W (horizontal bands) perpendicular to picking aisles.
+  const CROSS_AISLE_INTERVAL={
+    shelving:13, liveStorage:13,
+    selective:27, doubleDeep:27, driveIn:27, cantilever:27, ground:27,
   };
-  const CROSS_AISLE_W = 3.0; // m — width of cross aisle
+  const CROSS_AISLE_W=3.0;
 
   const rackRowsForZone=(zone)=>{
     const rows=[], crossAisles=[];
     const zRacks=zone2RackTypes[zone.key]||[{rack:'shelving',cfg:null}];
-    const totalSlotW=zRacks.reduce((s,{rack:dom})=>{
+    const dom0=zRacks[0]?.rack||'shelving';
+    const crossInterval=CROSS_AISLE_INTERVAL[dom0]||13;
+
+    // Horizontal cross aisle bands at regular Y intervals within zone
+    const crossYs=[];
+    for(let y=crossInterval; y<zone.h-2; y+=crossInterval) crossYs.push(y);
+    crossYs.forEach(y=>{
+      crossAisles.push({x:zone.x,y:zone.y+y-CROSS_AISLE_W/2,w:zone.w,h:CROSS_AISLE_W,isCrossAisle:true});
+    });
+
+    // Proportional width per rack type
+    const totalSlot=zRacks.reduce((s,{rack:dom})=>{
       const ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
-      const aisle=dom==='shelving'||dom==='liveStorage' ? 1.2 : aisleM;
-      return s+ri.depth+aisle;
+      const pa=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
+      return s+ri.depth+pa;
     },0)||1;
 
-    let subY=zone.y;
+    let curX=zone.x+0.3;
     zRacks.forEach(({rack:dom})=>{
       const ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
-      const pickAisle=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
-      const slot=ri.depth+pickAisle; // one rack row + its aisle
-      const subH=Math.max(slot,(slot/totalSlotW)*zone.h);
-      const nRows=Math.max(1,Math.floor(subH/slot));
-      const crossInterval=CROSS_AISLE_INTERVAL[dom]||13; // metres between cross aisles
-
-      let curY=subY;
-      let distSinceLastCross=0;
-      for(let i=0;i<nRows;i++){
-        // Insert cross aisle when accumulated row distance hits the interval
-        if(i>0 && distSinceLastCross>=crossInterval){
-          crossAisles.push({x:zone.x,y:curY,w:zone.w,h:CROSS_AISLE_W});
-          curY+=CROSS_AISLE_W;
-          distSinceLastCross=0;
+      const pa=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
+      const colSlot=ri.depth+pa;
+      const allocW=(colSlot/totalSlot)*zone.w;
+      const nCols=Math.max(1,Math.floor(allocW/colSlot));
+      for(let i=0;i<nCols;i++){
+        const rx=curX+i*colSlot+pa/2;
+        if(rx+ri.depth>zone.x+zone.w-0.3) break;
+        // Split rack column at each cross aisle
+        const breakYs=[0,...crossYs,zone.h];
+        for(let j=0;j<breakYs.length-1;j++){
+          const sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W/2:0.3);
+          const ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W/2:0.3);
+          if(ey-sy>0.5) rows.push({x:rx,y:sy,w:ri.depth,h:ey-sy,...ri,dom});
         }
-        const ry=curY+pickAisle/2;
-        if(ry+ri.depth>zone.y+zone.h-0.1) break;
-        rows.push({x:zone.x+0.4,y:ry,w:zone.w-0.8,h:ri.depth,...ri,dom});
-        curY+=slot;
-        distSinceLastCross+=slot;
       }
-      subY+=subH;
+      curX+=nCols*colSlot;
     });
     return {rows, crossAisles};
   };
