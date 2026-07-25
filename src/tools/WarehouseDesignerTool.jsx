@@ -1160,54 +1160,54 @@ function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossInterval
 // ── buildFloorPlanLayout: all computation extracted from FloorPlanSVG ──────────
 // Module-level = separate esbuild scope, no TDZ conflicts with rendering code.
 function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) {
-  const MFT  = 3.2808;
-  const M2FT = 10.7639;
-  const ft   = m  => `${(m*MFT).toFixed(0)}'`;
-  const sqft = m2 => `${Math.round(m2*M2FT).toLocaleString()} sq ft`;
-  const m2lbl= (m2,label) => label ? `${label}\n${m2}m²\n(${sqft(m2)})` : `${m2}m²\n(${sqft(m2)})`;
+  var MFT  = 3.2808;
+  var M2FT = 10.7639;
+  var ft   = m  => `${(m*MFT).toFixed(0)}'`;
+  var sqft = m2 => `${Math.round(m2*M2FT).toLocaleString()} sq ft`;
+  var m2lbl= (m2,label) => label ? `${label}\n${m2}m²\n(${sqft(m2)})` : `${m2}m²\n(${sqft(m2)})`;
 
-  const { wW, wL, zoneAreas, receivingArea, dispatchArea, mheArea, officeArea,
+  var { wW, wL, zoneAreas, receivingArea, dispatchArea, mheArea, officeArea,
     totalDocks, inboundDocks, outboundDocks, staging, netRackArea } = design;
-  const { dockSide, aisleW:aisleWParam, dockPitch, forkType,
+  var { dockSide, aisleW:aisleWParam, dockPitch, forkType,
     packingBenches, inboundMode, outboundMode } = params;
-  const pitch   = parseFloat(dockPitch)||4.5;
-  const aisleM  = parseFloat(aisleWParam)||3.0;
+  var pitch   = parseFloat(dockPitch)||4.5;
+  var aisleM  = parseFloat(aisleWParam)||3.0;
 
   // ── USE LAYOUT-DERIVED DIMENSIONS ────────────────────────────────────────
   // Warehouse length comes FROM the bay layout, not from pre-calculated areas.
   // This ensures the plan always accurately represents the physical bay count.
-  const actualWL = Math.max(wL, layoutWL);  // use at least design wL, or layout-derived
-  const SVG_W = fullscreen ? 1800 : 960;
-  const SVG_H = fullscreen ? Math.round(1800 * (actualWL/wW) * 0.8 + 120) : 720;
-  const ML=62, MR=70, MT=50, MB=70;
-  const DW=SVG_W-ML-MR, DH=SVG_H-MT-MB;
-  const sX=DW/wW, sY=DH/actualWL;
-  const X=m=>ML+m*sX, Y=m=>MT+m*sY, W=m=>m*sX, H=m=>m*sY;
+  var actualWL = Math.max(wL, layoutWL);  // use at least design wL, or layout-derived
+  var SVG_W = fullscreen ? 1800 : 960;
+  var SVG_H = fullscreen ? Math.round(1800 * (actualWL/wW) * 0.8 + 120) : 720;
+  var ML=62, MR=70, MT=50, MB=70;
+  var DW=SVG_W-ML-MR, DH=SVG_H-MT-MB;
+  var sX=DW/wW, sY=DH/actualWL;
+  var X=m=>ML+m*sX, Y=m=>MT+m*sY, W=m=>m*sX, H=m=>m*sY;
 
   // ── AREA HEIGHTS ────────────────────────────────────────────────────────────
-  const recH    = Math.max(4,(receivingArea||0)/wW);
-  const disH    = Math.max(4,(dispatchArea||0)/wW);
-  const stagingH= Math.max(recH,disH);
-  const offH    = Math.max(3,(officeArea||50)/wW);
-  const mheH    = mheArea>0 ? Math.max(2,mheArea/wW) : 0;
-  const supportH= offH + mheH;
+  var recH    = Math.max(4,(receivingArea||0)/wW);
+  var disH    = Math.max(4,(dispatchArea||0)/wW);
+  var stagingH= Math.max(recH,disH);
+  var offH    = Math.max(3,(officeArea||50)/wW);
+  var mheH    = mheArea>0 ? Math.max(2,mheArea/wW) : 0;
+  var supportH= offH + mheH;
 
-  const isOne   = dockSide==='one';
-  const isBoth  = dockSide==='both';
-  const isCorner= dockSide==='corner';
+  var isOne   = dockSide==='one';
+  var isBoth  = dockSide==='both';
+  var isCorner= dockSide==='corner';
 
-  const zonesH  = isOne
+  var zonesH  = isOne
     ? Math.max(0,wL-stagingH-supportH)
     : Math.max(0,wL-recH-disH-supportH);
 
   // Zone vertical allocation
-  const zoneOrder=['golden','mid','reserve','bulk','long'];
-  const totZA = zoneOrder.reduce((s,z)=>s+(zoneAreas[z]||0),0)||1;
-  const zH    = {};
+  var zoneOrder=['golden','mid','reserve','bulk','long'];
+  var totZA = zoneOrder.reduce((s,z)=>s+(zoneAreas[z]||0),0)||1;
+  var zH    = {};
   zoneOrder.forEach(z=>{ zH[z]=((zoneAreas[z]||0)/totZA)*zonesH; });
 
   // Build zone rects (from north going south)
-  const zoneRects=[], stagingRects=[], supportRects=[];
+  var zoneRects=[], stagingRects=[], supportRects=[];
 
   // Support area at NORTH (top)
   let cur=0;
@@ -1231,7 +1231,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
 
   // Rack-type sections — each rack type gets its own dedicated band
   // (replaces velocity zones in the physical 2D layout)
-  const RACK_TYPE_STYLE={
+  var RACK_TYPE_STYLE={
     shelving:   {label:'Shelving', color:'#eff6ff', border:'#93c5fd', text:'#1d4ed8'},
     liveStorage:{label:'Flow / Live Storage', color:'#f0fdf4', border:'#86efac', text:'#166534'},
     selective:  {label:'Selective Pallet Rack', color:'#fefce8', border:'#fde047', text:'#854d0e'},
@@ -1242,24 +1242,24 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   };
   // Bay height in plan = actual bayW from rackConfig (converted from mm to m)
   // Fallback to standard dimensions if rackConfig not available
-  const BAY_HEIGHT_M_LOOKUP={shelving:0.9,liveStorage:1.5,selective:2.7,
+  var BAY_HEIGHT_M_LOOKUP={shelving:0.9,liveStorage:1.5,selective:2.7,
     doubleDeep:2.7,driveIn:2.7,cantilever:1.5,ground:1.2};
 
   // Build rack-type → bayW (m) map from actual rackConfig data
-  const rackBayWidthM={};
+  var rackBayWidthM={};
   (rackConfig||[]).forEach(cfg=>{
     if(cfg.rack && cfg.bayW && !rackBayWidthM[cfg.rack]){
       rackBayWidthM[cfg.rack]=parseFloat(cfg.bayW)/1000; // mm → m
     }
   });
-  const RACK_INFO_2D_LOOKUP={
+  var RACK_INFO_2D_LOOKUP={
     shelving:   {depth:1.0},liveStorage:{depth:1.2},selective:{depth:2.2},
     doubleDeep: {depth:4.4},driveIn:    {depth:5.5},cantilever:{depth:2.0},ground:{depth:2.4},
   };
   // Order rack types sensibly: manual pick first (near dispatch), then pallet, then bulk
-  const RACK_ORDER=['shelving','liveStorage','selective','doubleDeep','driveIn','cantilever','ground'];
+  var RACK_ORDER=['shelving','liveStorage','selective','doubleDeep','driveIn','cantilever','ground'];
   // Group rackConfig by rack type
-  const rackTypeAreas={};
+  var rackTypeAreas={};
   (rackConfig||[]).forEach(cfg=>{
     rackTypeAreas[cfg.rack]=(rackTypeAreas[cfg.rack]||0)+(cfg.area||0);
   });
@@ -1269,30 +1269,30 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       rackTypeAreas[s.rack]=(rackTypeAreas[s.rack]||0)+0.5;
     });
   }
-  const storageHTotal=Object.values(rackTypeAreas).reduce((s,a)=>s+a,0)/wW||10;
+  var storageHTotal=Object.values(rackTypeAreas).reduce((s,a)=>s+a,0)/wW||10;
   // Build zone sections bay-first
-  const sectionLayouts = {}; // rackType → { nCols, baysPerCol, height, area, crossYPositions }
+  var sectionLayouts = {}; // rackType → { nCols, baysPerCol, height, area, crossYPositions }
   RACK_ORDER.forEach(rt => {
-    const totalBaysRt = (rackConfig||[]).filter(c=>c.rack===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
+    var totalBaysRt = (rackConfig||[]).filter(c=>c.rack===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
     if(!totalBaysRt && !rackTypeAreas[rt]) return;
-    const rtRi    = RACK_INFO_2D_LOOKUP[rt] || {depth:2.2};
-    const rtPa    = rt==='shelving'||rt==='liveStorage' ? 1.2 : aisleM;
-    const rtSlot  = rtRi.depth + rtPa;
-    const rtBayH  = rackBayWidthM[rt] || BAY_HEIGHT_M_LOOKUP[rt] || 0.9;
-    const rtCross = ({shelving:13,liveStorage:13,selective:27,
+    var rtRi    = RACK_INFO_2D_LOOKUP[rt] || {depth:2.2};
+    var rtPa    = rt==='shelving'||rt==='liveStorage' ? 1.2 : aisleM;
+    var rtSlot  = rtRi.depth + rtPa;
+    var rtBayH  = rackBayWidthM[rt] || BAY_HEIGHT_M_LOOKUP[rt] || 0.9;
+    var rtCross = ({shelving:13,liveStorage:13,selective:27,
       doubleDeep:27,driveIn:27,cantilever:27,ground:27})[rt] || 13;
-    const rtBays  = totalBaysRt || Math.ceil((rackTypeAreas[rt]||0) / (rtBayH * wW));
-    const rtLayout= computeSectionLayout(rtBays, wW, rtBayH, rtSlot, rtCross);
+    var rtBays  = totalBaysRt || Math.ceil((rackTypeAreas[rt]||0) / (rtBayH * wW));
+    var rtLayout= computeSectionLayout(rtBays, wW, rtBayH, rtSlot, rtCross);
     sectionLayouts[rt] = {...rtLayout, totalBays: rtBays};
 
-    const rtStyle = RACK_TYPE_STYLE[rt] || {label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
+    var rtStyle = RACK_TYPE_STYLE[rt] || {label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
     zoneRects.push({key:rt, x:0, y:cur, w:wW, h:rtLayout.height,
       label:rtStyle.label, color:rtStyle.color, border:rtStyle.border, text:rtStyle.text,
       area:rtLayout.area, rackType:rt, sectionLayout:rtLayout});
     cur += rtLayout.height;
   });
   // Actual warehouse length derived from layout (not from pre-calculated area)
-  const layoutWL = cur + stagingH + (isOne?0:0); // cur already includes all rack sections
+  var layoutWL = cur + stagingH + (isOne?0:0); // cur already includes all rack sections
 
   // Staging at south
   if (isOne) {
@@ -1307,7 +1307,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       label:'RECEIVING / GRN', subLabel:`${receivingArea}m² (${sqft(receivingArea)})`,
       color:'#e0f2fe', border:'#0284c7', text:'#0369a1' });
   } else {
-    const eastW2=Math.min(wW*0.3,14);
+    var eastW2=Math.min(wW*0.3,14);
     stagingRects.push({ key:'receiving', x:0, y:cur, w:wW-eastW2, h:stagingH,
       label:'RECEIVING / GRN', subLabel:`${receivingArea}m² (${sqft(receivingArea)})`,
       color:'#e0f2fe', border:'#0284c7', text:'#0369a1' });
@@ -1317,28 +1317,28 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   }
 
   // Dock doors
-  const dockDoors=[];
-  const doorW=3.5;
+  var dockDoors=[];
+  var doorW=3.5;
   if (isOne) {
-    const sp=wW/(totalDocks+1);
+    var sp=wW/(totalDocks+1);
     for(let i=1;i<=totalDocks;i++) dockDoors.push({x:sp*i-doorW/2,y:wL,side:'south',label:`D${i}`});
   } else if (isBoth) {
-    const ssp=wW/(inboundDocks+1);
+    var ssp=wW/(inboundDocks+1);
     for(let i=1;i<=inboundDocks;i++) dockDoors.push({x:ssp*i-doorW/2,y:wL,side:'south',label:`D${i}`});
-    const nsp=wW/(outboundDocks+1);
+    var nsp=wW/(outboundDocks+1);
     for(let i=1;i<=outboundDocks;i++) dockDoors.push({x:nsp*i-doorW/2,y:0,side:'north',label:`D${inboundDocks+i}`});
   } else {
-    const eastW=Math.min(wW*0.3,14);
-    const southN=inboundDocks, eastN=outboundDocks;
-    const ssp2=(wW-eastW)/(southN+1);
+    var eastW=Math.min(wW*0.3,14);
+    var southN=inboundDocks, eastN=outboundDocks;
+    var ssp2=(wW-eastW)/(southN+1);
     for(let i=1;i<=southN;i++) dockDoors.push({x:ssp2*i-doorW/2,y:wL,side:'south',label:`D${i}`});
-    const esp=wL/(eastN+1);
+    var esp=wL/(eastN+1);
     for(let i=1;i<=eastN;i++) dockDoors.push({x:wW,y:esp*i,side:'east',label:`D${southN+i}`});
   }  // end dock config
 
   // ── RACK ROW HELPER ─────────────────────────────────────────────────────────
   // Each zone section = one rack type only (1:1 mapping)
-  const zone2RackTypes={};
+  var zone2RackTypes={};
   zoneRects.forEach(z=>{
     if(z.rackType) zone2RackTypes[z.key]=[{rack:z.rackType,cfg:null}];
   });
@@ -1346,7 +1346,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   // Bay heights in the N-S direction (vertical in plan) per rack type
   // BAY_HEIGHT_M now sourced from rackBayWidthM (actual from rackConfig)
 
-  const RACK_INFO_2D={
+  var RACK_INFO_2D={
     shelving:   {depth:1.0, color:'#dbeafe', stroke:'#3b82f6'},
     liveStorage:{depth:1.2, color:'#bfdbfe', stroke:'#60a5fa'},
     selective:  {depth:2.2, color:'#fde68a', stroke:'#d97706'},
@@ -1357,29 +1357,29 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   };
 
   // Cross aisle spacing (along zone height = N-S)
-  const CROSS_AISLE_INTERVAL={
+  var CROSS_AISLE_INTERVAL={
     shelving:13, liveStorage:13,
     selective:27, doubleDeep:27, driveIn:27, cantilever:27, ground:27,
   };
 
   // Build rack section lookup: rackType → total bays from rackConfig
-  const rackTypeBays={};
+  var rackTypeBays={};
   (rackConfig||[]).forEach(cfg=>{
     rackTypeBays[cfg.rack]=(rackTypeBays[cfg.rack]||0)+(cfg.baysNeeded||0);
   });
 
-  const rackRowsForZone=(zone)=>{
-    const rows=[], crossAisles=[];
-    const dom=zone.rackType||(zone2RackTypes[zone.key]?.[0]?.rack)||'shelving';
-    const ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
-    const pa=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
-    const colSlot=ri.depth+pa;
-    const bayHm=rackBayWidthM[dom]||BAY_HEIGHT_M_LOOKUP[dom]||0.9;
+  var rackRowsForZone=(zone)=>{
+    var rows=[], crossAisles=[];
+    var dom=zone.rackType||(zone2RackTypes[zone.key]?.[0]?.rack)||'shelving';
+    var ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
+    var pa=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
+    var colSlot=ri.depth+pa;
+    var bayHm=rackBayWidthM[dom]||BAY_HEIGHT_M_LOOKUP[dom]||0.9;
 
     // Use pre-computed layout (bay-first) from zone definition
-    const sl=zone.sectionLayout||sectionLayouts[dom]||{nCols:3,baysPerCol:5,crossYPositions:[]};
-    const nCols=sl.nCols, totalBays=sl.totalBays||0;
-    const crossYs=sl.crossYPositions||[];
+    var sl=zone.sectionLayout||sectionLayouts[dom]||{nCols:3,baysPerCol:5,crossYPositions:[]};
+    var nCols=sl.nCols, totalBays=sl.totalBays||0;
+    var crossYs=sl.crossYPositions||[];
 
     // Push cross aisles from pre-computed positions
     crossYs.forEach(y=>{
@@ -1389,13 +1389,13 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
 
     // Draw columns using pre-computed nCols and cross aisle positions
     let curX=zone.x+0.3;
-    const breakYs=[0,...crossYs,zone.h-0.3];
+    var breakYs=[0,...crossYs,zone.h-0.3];
     for(let i=0;i<nCols;i++){
-      const rx=curX+i*colSlot+pa/2;
+      var rx=curX+i*colSlot+pa/2;
       if(rx+ri.depth>zone.x+zone.w-0.3) break;
       for(let j=0;j<breakYs.length-1;j++){
-        const sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W_M/2:0.3);
-        const ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W_M/2:0);
+        var sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W_M/2:0.3);
+        var ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W_M/2:0);
         if(ey-sy>0.5) rows.push({x:rx,y:sy,w:ri.depth,h:ey-sy,...ri,dom,bayHm});
       }
     }
@@ -1403,11 +1403,11 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   };
 
   // Pallet symbols in staging area
-  const palletSymbols=(rect,mode)=>{
-    const palW=1.2, palH=1.2;
-    const cols=Math.floor((rect.w-0.8)/palW);
-    const rowsN=Math.floor((rect.h-0.8)/palH);
-    const syms=[];
+  var palletSymbols=(rect,mode)=>{
+    var palW=1.2, palH=1.2;
+    var cols=Math.floor((rect.w-0.8)/palW);
+    var rowsN=Math.floor((rect.h-0.8)/palH);
+    var syms=[];
     for(let r=0;r<Math.min(rowsN,4);r++)
       for(let cl=0;cl<Math.min(cols,12);cl++)
         syms.push({x:rect.x+0.4+cl*palW,y:rect.y+0.4+r*palH,w:palW-0.1,h:palH-0.1,mode});
@@ -1415,9 +1415,9 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   };
 
   // Packing table symbols (2.4×0.8m each)
-  const nBenches=Math.min(parseInt(packingBenches)||0,8);
-  const packTables=[];
-  const dispRect=stagingRects.find(s=>s.key==='dispatch');
+  var nBenches=Math.min(parseInt(packingBenches)||0,8);
+  var packTables=[];
+  var dispRect=stagingRects.find(s=>s.key==='dispatch');
   if(dispRect && nBenches>0){
     for(let i=0;i<nBenches;i++){
       packTables.push({x:dispRect.x+0.4+i*2.8,y:dispRect.y+dispRect.h-1.4,w:2.4,h:0.8});
@@ -1425,7 +1425,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   }
 
   // Collect all rack rows and cross aisles
-  const allRackRows=[], allCrossAisles=[];
+  var allRackRows=[], allCrossAisles=[];
   zoneRects.forEach(zone=>{
     const{rows,crossAisles}=rackRowsForZone(zone);
     allRackRows.push(...rows);
@@ -1433,15 +1433,15 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   });
 
   // Staging pallets
-  const recRect=stagingRects.find(s=>s.key==='receiving');
-  const recPallets=recRect ? palletSymbols(recRect,'inbound') : [];
-  const disPallets=dispRect ? palletSymbols(dispRect,'outbound') : [];
+  var recRect=stagingRects.find(s=>s.key==='receiving');
+  var recPallets=recRect ? palletSymbols(recRect,'inbound') : [];
+  var disPallets=dispRect ? palletSymbols(dispRect,'outbound') : [];
 
   // MHE charging bays
-  const MHE_BAY={counterbalance:{w:4,h:3.5},reach:{w:3.5,h:2.5},vna:{w:3,h:2}};
-  const mheBay=MHE_BAY[forkType]||{w:3.5,h:2.5};
-  const mheRect=supportRects.find(s=>s.key==='mhe');
-  const mheBays=[];
+  var MHE_BAY={counterbalance:{w:4,h:3.5},reach:{w:3.5,h:2.5},vna:{w:3,h:2}};
+  var mheBay=MHE_BAY[forkType]||{w:3.5,h:2.5};
+  var mheRect=supportRects.find(s=>s.key==='mhe');
+  var mheBays=[];
   if(mheRect && design.nMHE>0){
     for(let i=0;i<Math.min(design.nMHE,6);i++){
       mheBays.push({x:mheRect.x+0.4+i*(mheBay.w+0.4),y:mheRect.y+0.4,w:mheBay.w,h:mheBay.h});
@@ -1449,7 +1449,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   }
 
   // Right-side zone dimension arrows (y positions)
-  const dimRight=[];
+  var dimRight=[];
   let dimCur=0;
   supportRects.length && dimRight.push({y:dimCur,h:supportH,label:`Support\n${officeArea+mheArea}m²`});
   dimCur+=supportH;
