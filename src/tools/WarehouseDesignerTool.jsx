@@ -1207,14 +1207,38 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
     cur+=disH;
   }
 
-  // Zones (bulk→golden south)
-  const zonesTopToBottom=['bulk','long','reserve','mid','golden'];
-  zonesTopToBottom.forEach(z=>{
-    const zh=zH[z]||0; if(zh<0.5) return;
-    zoneRects.push({ key:z, x:0, y:cur, w:wW, h:zh,
-      label:ZONE_DEFS[z].label, color:ZONE_DEFS[z].color,
-      border:ZONE_DEFS[z].border, text:ZONE_DEFS[z].textColor,
-      area:zoneAreas[z]||0 });
+  // Rack-type sections — each rack type gets its own dedicated band
+  // (replaces velocity zones in the physical 2D layout)
+  const RACK_TYPE_STYLE={
+    shelving:   {label:'Shelving', color:'#eff6ff', border:'#93c5fd', text:'#1d4ed8'},
+    liveStorage:{label:'Flow / Live Storage', color:'#f0fdf4', border:'#86efac', text:'#166534'},
+    selective:  {label:'Selective Pallet Rack', color:'#fefce8', border:'#fde047', text:'#854d0e'},
+    doubleDeep: {label:'Double-Deep Rack', color:'#f5f3ff', border:'#c4b5fd', text:'#6d28d9'},
+    driveIn:    {label:'Drive-In Rack', color:'#1e293b', border:'#334155', text:'#f1f5f9'},
+    cantilever: {label:'Cantilever Rack', color:'#fff7ed', border:'#fdba74', text:'#c2410c'},
+    ground:     {label:'Ground Storage', color:'#fef3c7', border:'#fbbf24', text:'#92400e'},
+  };
+  // Order rack types sensibly: manual pick first (near dispatch), then pallet, then bulk
+  const RACK_ORDER=['shelving','liveStorage','selective','doubleDeep','driveIn','cantilever','ground'];
+  // Group rackConfig by rack type
+  const rackTypeAreas={};
+  (rackConfig||[]).forEach(cfg=>{
+    rackTypeAreas[cfg.rack]=(rackTypeAreas[cfg.rack]||0)+(cfg.area||0);
+  });
+  // Fallback from slotted data
+  if(!Object.keys(rackTypeAreas).length){
+    (analysis?.slotted||[]).forEach(s=>{
+      rackTypeAreas[s.rack]=(rackTypeAreas[s.rack]||0)+0.5;
+    });
+  }
+  const storageHTotal=Object.values(rackTypeAreas).reduce((s,a)=>s+a,0)/wW||10;
+  RACK_ORDER.forEach(rt=>{
+    const area=rackTypeAreas[rt]||0; if(!area) return;
+    const zh=Math.max(3, area/wW);
+    const style=RACK_TYPE_STYLE[rt]||{label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
+    zoneRects.push({key:rt, x:0, y:cur, w:wW, h:zh,
+      label:style.label, color:style.color, border:style.border, text:style.text,
+      area:area, rackType:rt});
     cur+=zh;
   });
 
@@ -1261,22 +1285,10 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
   }
 
   // ── RACK ROW HELPER ─────────────────────────────────────────────────────────
-  // Build zone→[rackTypes] from rackConfig (mirrors 3D logic)
-  const RACK_DEFAULT_ZONE_2D={shelving:'golden',liveStorage:'golden',
-    selective:'reserve',doubleDeep:'reserve',driveIn:'bulk',cantilever:'long',ground:'bulk'};
-  const zone2RackTypes={}; // zone → [{rack, cfg}]
-  (rackConfig||[]).forEach(cfg=>{
-    const slottedZone=(analysis?.slotted||[]).find(s=>s.rack===cfg.rack)?.zone
-      || RACK_DEFAULT_ZONE_2D[cfg.rack]||'golden';
-    if(!zone2RackTypes[slottedZone]) zone2RackTypes[slottedZone]=[];
-    if(!zone2RackTypes[slottedZone].find(r=>r.rack===cfg.rack))
-      zone2RackTypes[slottedZone].push({rack:cfg.rack,cfg});
-  });
-  // Fallback from slotted data for zones not in rackConfig
-  (analysis?.slotted||[]).forEach(r=>{
-    if(!zone2RackTypes[r.zone]){
-      zone2RackTypes[r.zone]=[{rack:r.rack,cfg:null}];
-    }
+  // Each zone section = one rack type only (1:1 mapping)
+  const zone2RackTypes={};
+  zoneRects.forEach(z=>{
+    if(z.rackType) zone2RackTypes[z.key]=[{rack:z.rackType,cfg:null}];
   });
 
   const RACK_INFO_2D={
@@ -1324,7 +1336,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
       const pa=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
       const colSlot=ri.depth+pa;
       const allocW=(colSlot/totalSlot)*zone.w;
-      const nCols=Math.max(1,Math.floor(allocW/colSlot));
+      const nCols=Math.max(3,Math.floor(allocW/colSlot)); // min 3 columns per rack type
       for(let i=0;i<nCols;i++){
         const rx=curX+i*colSlot+pa/2;
         if(rx+ri.depth>zone.x+zone.w-0.3) break;
@@ -1514,10 +1526,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
                   )}
                 </g>
               ))}
-              {/* Label */}
-              {pw>40&&ph>10&&<text x={px+pw/2} y={py-3} textAnchor="middle" fontSize="7" fontWeight="700" fill="#374151">
-                {dom==='doubleDeep'?'DBL DEEP':'SEL PALLET RACK'}
-              </text>}
+              {/* No per-column labels — section background label is sufficient */}
             </g>
           );
         }
@@ -1646,19 +1655,24 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
         </g>
       ))}
 
-      {/* ── ZONE LABELS ─── */}
+      {/* ── SECTION LABELS (rack type name at left margin of each section) ─── */}
       {zoneRects.map(z=>{
-        const px=X(z.x), py=Y(z.y), pw=W(z.w), ph=H(z.h);
-        if(ph<16) return null;
-        const lines=[z.label, `${(z.area||0).toFixed(0)}m² · ${sqft(z.area||0)}`];
+        const py=Y(z.y), ph=H(z.h);
+        if(ph<14) return null;
         return(
           <g key={`zl-${z.key}`}>
-            {lines.map((ln,li)=>(
-              <text key={li} x={px+pw/2} y={py+ph/2+(li-0.5)*12}
-                textAnchor="middle" dominantBaseline="middle"
-                fontSize={li===0?11:9} fontWeight={li===0?'700':'400'} fill={z.text}>
-                {ln}
-              </text>))}
+            {/* Section name — left-aligned, not in center so it doesn't overlap racks */}
+            <text x={X(z.x)+6} y={py+Math.min(ph/2,20)}
+              dominantBaseline="middle"
+              fontSize={Math.min(11, ph*sY*0.3)} fontWeight="700" fill={z.text}
+              opacity="0.85">
+              {z.label}
+            </text>
+            {ph>30&&<text x={X(z.x)+6} y={py+Math.min(ph/2,20)+13}
+              dominantBaseline="middle"
+              fontSize="8" fontWeight="400" fill={z.text} opacity="0.7">
+              {(z.area||0).toFixed(0)}m²
+            </text>}
           </g>
         );
       })}
