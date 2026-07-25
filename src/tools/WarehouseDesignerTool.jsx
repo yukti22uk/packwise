@@ -3388,17 +3388,47 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
     racks.forEach(rk=>{
       const rW    = parseFloat(rk.bayW);
       const rD    = parseFloat(rk.bayD);
-      const clearH = parseFloat(rk.bayH) || 2200;  // user enters clear height
-      // Levels auto-calculated from bin height (H always vertical — upright)
+      const clearH = parseFloat(rk.bayH) || 2200;
+
+      if(rk.rackType === 'cantilever'){
+        // Cantilever: item's LONG dimension goes ALONG the arm (depth direction).
+        // Items sit side-by-side ACROSS the frame width by their cross-section.
+        // Sort dims: d1=smallest (cross-section), d2=middle (cross-section), d3=largest (= arm direction)
+        const [d1,d2,d3] = [bL,bW,bH].slice().sort((a,b)=>a-b);
+        // Must fit cross-section across frame width and arm depth ≥ item length
+        if(rD < d3) return; // arm too short for this item — doesn't fit
+        // Items side-by-side across frame width: try d1 or d2 as cross-width
+        const oA = Math.floor(rW/d1); // narrow side across width
+        const oB = Math.floor(rW/d2); // wider side across width
+        const aw  = Math.max(oA, oB); // pick orientation that fits more
+        if(!aw) return;
+        // ad = how many deep along arm: floor(armLength / itemLength) → usually 1
+        const ad = Math.floor(rD / d3) || 1; // at least 1 (item rests on arm, may overhang)
+        const { levels, stack, levelToLevel, firstLevelH, calcNote } = calcLevels(rk.rackType, clearH, d2>d1?d2:d1);
+        if(levels<1) return;
+        const lpb = aw * ad * stack * levels;
+        if(lpb > bestLPB){
+          bestLPB = lpb;
+          best = {
+            rk, aw, ad, stack, lvl:levels, lpb,
+            totalH:clearH, levelH:levelToLevel, usableH:d2, beamClr:0,
+            levels, levelToLevel, firstLevelH, calcNote,
+            orientDesc:`Frame W: ${aw} items × ${aw===oA?d1:d2}mm side | Arm: ${d3}mm (item length) along arm depth (${rD}mm)`,
+            wDimMm:aw===oA?d1:d2, dDimMm:d3, hDimMm:d2>d1?d2:d1,
+            orient:'cantilever',
+          };
+        }
+        return;
+      }
+
+      // All other racks — upright orientation only (H always vertical)
       const { levels, stack, levelToLevel, firstLevelH, calcNote } = calcLevels(rk.rackType, clearH, bH);
       if (levels < 1) return;
-      // Only try L↔W swap — H always vertical
       UPRIGHT_ORIENTS.forEach(([x,y,z])=>{
         const dim = [bL, bW, bH];
         const aw  = Math.floor(rW / dim[x]);
         const ad  = Math.floor(rD / dim[y]);
         if (!aw || !ad) return;
-        // stack = 1 always (no bin stacking — one bin/pallet high per level)
         const lpb = aw * ad * stack * levels;
         if (lpb > bestLPB) {
           bestLPB = lpb;
@@ -3472,21 +3502,35 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
     }
     const totalLocs=binInfo.locs||0; if(!totalLocs) return;
 
-    const hasCantilever = regularRacks.some(r=>r.rackType==='cantilever');
     const isLongBin = longBins.has(binKey) || binKey==='LONG';
 
-    // LONG/isLong → skip regular rack assignment, go straight to ground
-    if(isLongBin && groundRacks.length>0){
-      groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround:true,perSku:isLongBin};
-      return;
-    }
-    // LONG without ground → try cantilever or overflow
     if(isLongBin){
-      if(regularRacks.length>0){
-        const fc=bestRegular(bL||3000,bW||300,bH||200,binKey);
-        if(fc){ regularPass[binKey]={fc,bL:bL||3000,bW:bW||300,bH:bH||200,totalLocs,binInfo}; return; }
+      // ── Priority for LONG goods: ──────────────────────────────────────
+      // 1. Cantilever — purpose-built for long items, try first
+      // 2. Ground storage — fallback (per-SKU fitting)
+      // 3. Overflow — if neither selected or neither fits
+      const cantileverRacks = regularRacks.filter(r=>r.rackType==='cantilever');
+      const repL=bL||3000, repW=bW||300, repH=bH||200;
+
+      if(cantileverRacks.length>0){
+        const fc=bestFitInRacks(cantileverRacks, repL, repW, repH);
+        if(fc){
+          // Cantilever fits ✓
+          regularPass[binKey]={fc,bL:repL,bW:repW,bH:repH,totalLocs,binInfo};
+          return;
+        }
+        // Cantilever selected but item doesn't fit → fall through to ground
       }
-      groundPass[binKey]={bL:bL||3000,bW:bW||300,bH:bH||200,totalLocs,binInfo,forceGround:false,perSku:true};
+
+      if(groundRacks.length>0){
+        // Ground storage — per-SKU cross-section fitting
+        groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround:true,perSku:true};
+        return;
+      }
+
+      // Neither cantilever nor ground → overflow
+      overflowBins.push({binKey,binName:binInfo.name||binKey,totalLocs,dims:'per item',
+        reason:'No cantilever or ground storage rack selected. Add Cantilever or Ground Storage.'});
       return;
     }
 
@@ -4646,24 +4690,58 @@ export default function WarehouseDesignerTool() {
                         borderBottom:'1px solid #e2e8f0'}}>
                         {LABELS[key]||key}
                       </div>
-                      <div style={{padding:'10px 12px',
-                        display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
-                        {[
-                          ['Bay Width (mm)','bayW'],
-                          ['Bay Depth (mm)','bayD'],
-                          key==='ground'?['Stack Layers','levels']:['Clear Height (mm)','bayH'],
-                          key==='ground'?['Stacked H (mm) — optional','bayH']:null,
-                        ].filter(Boolean).map(([label,field])=>(
-                          <div key={field}>
-                            <div style={{fontSize:'10px',color:'#6b7280',
-                              fontWeight:'600',marginBottom:'3px'}}>{label}</div>
-                            <input type="number" min="1" value={d[field]||''}
-                              onChange={e=>upd(field,e.target.value)}
-                              placeholder={field==='bayH'&&key==='ground'?'optional':'mm'}
-                              style={{...inp,marginBottom:0,width:'100%',
-                                fontSize:'12px',padding:'5px 8px'}}/>
+                        {/* Rack-specific dimension hints */}
+                        {key==='cantilever'&&(
+                          <div style={{background:'#fffbeb',border:'1px solid #fcd34d',
+                            borderRadius:'7px',padding:'8px 10px',marginBottom:'8px',
+                            fontSize:'10px',color:'#78350f',lineHeight:'1.7'}}>
+                            <div style={{fontWeight:'700',marginBottom:'4px'}}>
+                              📐 Cantilever Rack Dimensions (Top View):
+                            </div>
+                            <pre style={{fontFamily:'monospace',fontSize:'9px',
+                              color:'#92400e',margin:'0 0 5px',lineHeight:'1.4',
+                              background:'#fef3c7',padding:'6px',borderRadius:'5px',
+                              overflowX:'auto'}}>
+{`AISLE ─────────────────────────── (you walk along here)
+  ║══ upright face ════════════║
+  ║ →→ item →→→→→→→→→→→→→→ ║
+  ║ →→ item →→→→→→→→→→→→→→ ║  ↕ Arm Length
+  ║ →→ item →→→→→→→→→→→→→→ ║  ↕ (bayD)
+  ║════════════════════════════║
+  ←── Frame Width (bayW) ─────→`}
+                            </pre>
+                            <div style={{color:'#78350f'}}>
+                              • <strong>Frame Width (bayW)</strong> = items <strong>side-by-side</strong> as seen from the aisle<br/>
+                              • <strong>Arm Length (bayD)</strong> = items extend <strong>away from aisle</strong> — must be ≥ longest item<br/>
+                              • <strong>Clear Height</strong> = total rack height → arm levels auto-calculated
+                            </div>
                           </div>
-                        ))}
+                        )}
+                        {key==='driveIn'&&(
+                          <div style={{background:'#f0fdf4',border:'1px solid #86efac',
+                            borderRadius:'7px',padding:'7px 10px',marginBottom:'8px',
+                            fontSize:'10px',color:'#14532d',lineHeight:'1.5'}}>
+                            <strong>Drive-In rack:</strong> Bay Depth = lane depth (multiple pallets deep). Bay Width = lane width (one pallet wide per lane).
+                          </div>
+                        )}
+                        <div style={{padding:'0 0 2px',
+                          display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
+                          {[
+                            [key==='cantilever'?'Frame Width (mm)':'Bay Width (mm)','bayW'],
+                            [key==='cantilever'?'Arm Length / Depth (mm)':key==='driveIn'?'Lane Depth (mm)':'Bay Depth (mm)','bayD'],
+                            key==='ground'?['Stack Layers','levels']:['Clear Height (mm)','bayH'],
+                            key==='ground'?['Stacked H (mm) — optional','bayH']:null,
+                          ].filter(Boolean).map(([label,field])=>(
+                            <div key={field}>
+                              <div style={{fontSize:'10px',color:'#6b7280',
+                                fontWeight:'600',marginBottom:'3px'}}>{label}</div>
+                              <input type="number" min="1" value={d[field]||''}
+                                onChange={e=>upd(field,e.target.value)}
+                                placeholder={field==='bayH'&&key==='ground'?'optional':'mm'}
+                                style={{...inp,marginBottom:0,width:'100%',
+                                  fontSize:'12px',padding:'5px 8px'}}/>
+                            </div>
+                          ))}
                       </div>
                       {/* Auto-level hint */}
                       {(isShelving||isPallet)&&d.bayH&&(
