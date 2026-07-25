@@ -1494,39 +1494,43 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
         const dom=r.dom;
 
         // ── SELECTIVE PALLET RACK ─────────────────────────────────────────
+        // Vertical column: bays stack along column HEIGHT, back-to-back partition at center WIDTH
         if(dom==='selective'||dom==='doubleDeep'){
-          const bayPx = W(2.7); // bay width in pixels
-          const nBays = Math.max(1,Math.floor(r.w/2.7));
-          const palW  = Math.max(3, (bayPx-4)/2-1); // 2 pallets per bay
+          const bayH  = H(2.7);  // one bay height in pixels (N-S direction)
+          const nBays = Math.max(1,Math.floor(r.h/2.7));
+          const halfW = Math.max(2,(pw-3)/2); // width of each pallet face
           return(
             <g key={`rr-${i}`}>
-              {/* Bay backgrounds alternating */}
-              {Array.from({length:nBays},(_,b)=>(
-                <rect key={b} x={px+b*bayPx} y={py} width={bayPx} height={ph}
-                  fill={b%2===0?'#e2e8f0':'#cbd5e1'} stroke="none"/>
-              ))}
-              {/* Upright frames (bold vertical lines) */}
-              {Array.from({length:nBays+1},(_,b)=>(
-                <rect key={b} x={px+b*bayPx-1} y={py} width={3} height={ph}
-                  fill="#374151"/>
-              ))}
-              {/* Pallet positions (2 per bay, amber outlines) */}
-              {Array.from({length:nBays},(_,b)=>(
-                <g key={b}>
-                  <rect x={px+b*bayPx+3}      y={py+2} width={palW} height={ph-4} fill="#fde68a" stroke="#d97706" strokeWidth="0.8" rx="1"/>
-                  <rect x={px+b*bayPx+3+palW+2} y={py+2} width={palW} height={ph-4} fill="#fde68a" stroke="#d97706" strokeWidth="0.8" rx="1"/>
-                  {/* Pallet cross marks */}
-                  {[[px+b*bayPx+3+palW/2, px+b*bayPx+3+palW+2+palW/2]].map((xs,xi)=>
-                    xs.map((bx,bi)=>(
+              {/* Column background */}
+              <rect x={px} y={py} width={Math.max(3,pw)} height={ph}
+                fill={r.color} stroke={r.stroke} strokeWidth="1" rx="1"/>
+              {/* Bay rows — each 2.7m tall */}
+              {Array.from({length:nBays},(_,b)=>{
+                const by=py+b*bayH;
+                if(by+bayH>py+ph) return null;
+                return(
+                  <g key={b}>
+                    {/* Front face pallet (left half of column) */}
+                    <rect x={px+1} y={by+1} width={halfW} height={bayH-2}
+                      fill="#fde68a" stroke="#d97706" strokeWidth="0.6" rx="0.5"/>
+                    {/* Back face pallet (right half of column) */}
+                    <rect x={px+halfW+2} y={by+1} width={halfW} height={bayH-2}
+                      fill="#fde68a" stroke="#d97706" strokeWidth="0.6" rx="0.5"/>
+                    {/* Pallet cross marks */}
+                    {[px+1+halfW/2, px+halfW+2+halfW/2].map((bx,bi)=>(
                       <g key={bi}>
-                        <line x1={bx} y1={py+2+0.3*(ph-4)} x2={bx} y2={py+2+0.7*(ph-4)} stroke="#d97706" strokeWidth="0.5"/>
-                        <line x1={bx-palW*0.3} y1={py+ph/2} x2={bx+palW*0.3} y2={py+ph/2} stroke="#d97706" strokeWidth="0.5"/>
+                        <line x1={bx} y1={by+bayH*0.3} x2={bx} y2={by+bayH*0.7} stroke="#d97706" strokeWidth="0.5"/>
+                        <line x1={bx-halfW*0.3} y1={by+bayH/2} x2={bx+halfW*0.3} y2={by+bayH/2} stroke="#d97706" strokeWidth="0.5"/>
                       </g>
-                    ))
-                  )}
-                </g>
-              ))}
-              {/* No per-column labels — section background label is sufficient */}
+                    ))}
+                    {/* Bay beam (horizontal line at top of each bay) */}
+                    {b>0&&<line x1={px} y1={by} x2={px+pw} y2={by} stroke="#374151" strokeWidth="1.5"/>}
+                  </g>
+                );
+              })}
+              {/* ── BACK-TO-BACK PARTITION — vertical centre line through full column height ── */}
+              <line x1={px+pw/2} y1={py} x2={px+pw/2} y2={py+ph}
+                stroke="#1e293b" strokeWidth="1.8"/>
             </g>
           );
         }
@@ -1606,13 +1610,21 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
         const nBays= Math.max(1,Math.floor(r.w/(r.dom==='liveStorage'?1.5:0.9)));
         return(
           <g key={`rr-${i}`}>
-            <rect x={px} y={py} width={pw} height={Math.max(2,ph)} fill={r.color} stroke={r.stroke} strokeWidth="0.8" rx="1"/>
-            {/* Bay dividers */}
+            {/* Two faces of back-to-back shelving — front face */}
+            <rect x={px} y={py} width={Math.max(2,pw)} height={Math.max(2,ph)} fill={r.color} stroke={r.stroke} strokeWidth="0.8" rx="1"/>
+            {/* Bay dividers (horizontal lines across column height) */}
             {Array.from({length:nBays-1},(_,b)=>(
-              <line key={b} x1={px+(b+1)*bayW} y1={py} x2={px+(b+1)*bayW} y2={py+ph} stroke={r.stroke} strokeWidth="0.4" strokeOpacity="0.5"/>
+              <line key={b}
+                x1={px+(b+1)*bayW} y1={py}
+                x2={px+(b+1)*bayW} y2={py+ph}
+                stroke={r.stroke} strokeWidth="0.4" strokeOpacity="0.5"/>
             ))}
-            {/* Shelf depth line (shows it's a shelf not a solid wall) */}
-            <line x1={px} y1={py+ph/2} x2={px+pw} y2={py+ph/2} stroke={r.stroke} strokeWidth="0.3" strokeDasharray="2,3" strokeOpacity="0.4"/>
+            {/* ── BACK-TO-BACK PARTITION — vertical centre line through column ── */}
+            {/* Represents the back panel where two shelf rows meet */}
+            <line
+              x1={px+Math.max(2,pw)/2} y1={py}
+              x2={px+Math.max(2,pw)/2} y2={py+ph}
+              stroke={r.stroke} strokeWidth="1.2" strokeOpacity="0.85"/>
           </g>
         );
       })}
@@ -6378,13 +6390,18 @@ export default function WarehouseDesignerTool() {
             <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
               {/* Download in fullscreen */}
               <button onClick={()=>{
-                  const svgEl=document.querySelector('#fs-plan-svg');
+                  // Find the actual <svg> element (not the wrapper div)
+                  const svgEl=document.querySelector('#fs-plan-container svg');
                   if(!svgEl) return;
-                  const blob=new Blob([svgEl.outerHTML],{type:'image/svg+xml'});
+                  // Add XML declaration + proper SVG namespace for standalone file
+                  const svgStr='<?xml version="1.0" encoding="UTF-8"?>\n'
+                    + svgEl.outerHTML.replace('<svg ','<svg xmlns="http://www.w3.org/2000/svg" ');
+                  const blob=new Blob([svgStr],{type:'image/svg+xml;charset=utf-8'});
                   const a=document.createElement('a');
                   a.href=URL.createObjectURL(blob);
                   a.download='warehouse-floorplan.svg';
                   a.click();
+                  URL.revokeObjectURL(a.href);
                 }}
                 style={{padding:'7px 16px',background:'#7c3aed',color:'#fff',border:'none',
                   borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
@@ -6401,7 +6418,7 @@ export default function WarehouseDesignerTool() {
           </div>
           {/* Full-screen plan */}
           <div style={{flex:1,overflow:'auto',padding:'0'}}>
-            <div id="fs-plan-svg" style={{width:'100%',height:'100%'}}>
+            <div id="fs-plan-container" style={{width:'100%',height:'100%'}}>
               <FloorPlanSVG
                 analysis={analysis}
                 design={userDesign||design}
