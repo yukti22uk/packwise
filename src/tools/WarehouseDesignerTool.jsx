@@ -3488,6 +3488,9 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
   // Bins flagged as LONG/odd in slotted data → auto-route to ground/cantilever if available
   const longBins=new Set((analysis.slotted||[]).filter(s=>s.isLong).map(s=>s.bin));
 
+  // Declare before ALL forEach loops that use these arrays
+  const uCfgs=[], overflowBins=[];
+
   const regularPass={}, groundPass={};
 
   Object.entries(analysis?.binSummary||{}).forEach(([binKey,binInfo])=>{
@@ -3514,10 +3517,10 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
       const repL=bL||3000, repW=bW||300, repH=bH||200;
 
       if(cantileverRacks.length>0){
-        const fc=bestFitInRacks(cantileverRacks, repL, repW, repH);
-        if(fc){
+        const cantFit=bestFitInRacks(cantileverRacks, repL, repW, repH);
+        if(cantFit){
           // Cantilever fits ✓
-          regularPass[binKey]={fc,bL:repL,bW:repW,bH:repH,totalLocs,binInfo};
+          regularPass[binKey]={fc:cantFit,bL:repL,bW:repW,bH:repH,totalLocs,binInfo};
           return;
         }
         // Cantilever selected but item doesn't fit → fall through to ground
@@ -3536,13 +3539,11 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
     }
 
     if(regularRacks.length>0){
-      const fc=bestRegular(bL,bW,bH,binKey);
-      if(fc){ regularPass[binKey]={fc,bL,bW,bH,totalLocs,binInfo}; return; }
+      const regFit=bestRegular(bL,bW,bH,binKey);
+      if(regFit){ regularPass[binKey]={fc:regFit,bL,bW,bH,totalLocs,binInfo}; return; }
     }
     groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround:false,perSku:false};
   });
-
-  const uCfgs=[], overflowBins=[];
 
   // Pass 2: assign ground-pass bins to ground racks
   Object.entries(groundPass).forEach(([binKey,{bL,bW,bH,totalLocs,binInfo,forceGround,perSku}])=>{
