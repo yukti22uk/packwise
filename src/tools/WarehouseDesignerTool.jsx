@@ -3420,22 +3420,25 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
       }
 
       // All other racks — upright orientation only (H always vertical)
-      const { levels, stack, levelToLevel, firstLevelH, calcNote } = calcLevels(rk.rackType, clearH, bH);
-      if (levels < 1) return;
+      // Use single named object (not destructuring) to avoid esbuild TDZ when
+      // same names appear in the cantilever block above.
+      const rl = calcLevels(rk.rackType, clearH, bH);
+      if (rl.levels < 1) return;
       UPRIGHT_ORIENTS.forEach(([x,y,z])=>{
         const dim = [bL, bW, bH];
         const aw  = Math.floor(rW / dim[x]);
         const ad  = Math.floor(rD / dim[y]);
         if (!aw || !ad) return;
-        const lpb = aw * ad * stack * levels;
+        const lpb = aw * ad * rl.stack * rl.levels;
         if (lpb > bestLPB) {
           bestLPB = lpb;
           const AXIS=['L','W','H'];
           const wDim=AXIS[x], dDim=AXIS[y];
           best = {
-            rk, aw, ad, stack, lvl:levels, lpb,
-            totalH:clearH, levelH:levelToLevel, usableH:bH, beamClr:0,
-            levels, levelToLevel, firstLevelH, calcNote,
+            rk, aw, ad, stack:rl.stack, lvl:rl.levels, lpb,
+            totalH:clearH, levelH:rl.levelToLevel, usableH:bH, beamClr:0,
+            levels:rl.levels, levelToLevel:rl.levelToLevel,
+            firstLevelH:rl.firstLevelH, calcNote:rl.calcNote,
             orientDesc:`Bin ${wDim}(${dim[x]}mm)→width, ${dDim}(${dim[y]}mm)→depth, H(${bH}mm) vertical`,
             wDimMm:dim[x], dDimMm:dim[y], hDimMm:bH,
             orient: x===0&&y===1?'LW':'WL',
