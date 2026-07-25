@@ -3292,9 +3292,11 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
   const PALLET_RACK_TYPES = new Set(['selective','doubleDeep','driveIn']);
 
   // Bin → preferred rack category
+  // L (Stack Crate/Half-Pallet 800×600×400mm) → manual/shelving, not forklift pallet rack
+  // XL (Standard Pallet 1200×1000×1200mm) → pallet rack (forklift required)
   const BIN_PREFERRED_CATEGORY = {
-    XS:'manual', S:'manual', M:'manual',
-    L:'pallet',  XL:'pallet',
+    XS:'manual', S:'manual', M:'manual', L:'manual',
+    XL:'pallet',
     LONG:'ground',
   };
 
@@ -3540,7 +3542,41 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
 
     if(regularRacks.length>0){
       const regFit=bestRegular(bL,bW,bH,binKey);
-      if(regFit){ regularPass[binKey]={fc:regFit,bL,bW,bH,totalLocs,binInfo}; return; }
+      if(regFit){
+        const fittedRackType = regFit.rk.rackType;
+        const binPref = BIN_PREFERRED_CATEGORY[binKey];
+
+        // ── Pallet-ization: manual bin (XS/S/M/L) falling back to pallet rack ──
+        // When no shelving is selected, bins are grouped onto pallets.
+        // 1 pallet = 1 SKU, bins stacked on a standard 1200×1000mm pallet.
+        if(binPref==='manual' && PALLET_RACK_TYPES.has(fittedRackType)){
+          const PALLET_L=1200, PALLET_W=1000, PALLET_LOAD_H=1200; // standard pallet
+          // Bins per pallet — try both L↔W orientations, H always up
+          const o1=Math.floor(PALLET_L/bL)*Math.floor(PALLET_W/bW)*Math.floor(PALLET_LOAD_H/bH);
+          const o2=Math.floor(PALLET_L/bW)*Math.floor(PALLET_W/bL)*Math.floor(PALLET_LOAD_H/bH);
+          const binsPerPallet=Math.max(1,Math.max(o1,o2));
+          // Per-SKU pallet positions: 1 pallet per SKU, ceil(sku_locs / binsPerPallet)
+          const skusForBin=(analysis.slotted||[]).filter(s=>s.bin===binKey&&(s.stock||0)>0);
+          const totalPalletPositions=skusForBin.reduce((sum,s)=>
+            sum+Math.max(1,Math.ceil((s.locsReq||1)/binsPerPallet)),0);
+          // Re-fit using pallet footprint dimensions in the rack bay
+          const palletRacks=regularRacks.filter(r=>PALLET_RACK_TYPES.has(r.rackType));
+          const palletRackFit=bestFitInRacks(palletRacks, PALLET_L, PALLET_W, PALLET_LOAD_H);
+          if(palletRackFit&&totalPalletPositions>0){
+            regularPass[binKey]={
+              fc:palletRackFit, bL, bW, bH,
+              totalLocs:totalPalletPositions, binInfo,
+              isPalletized:true, binsPerPallet,
+              palletL:PALLET_L, palletW:PALLET_W, palletLoadH:PALLET_LOAD_H,
+              skuCount:skusForBin.length,
+              originalBinLocs:totalLocs,
+            };
+            return;
+          }
+        }
+
+        regularPass[binKey]={fc:regFit,bL,bW,bH,totalLocs,binInfo}; return;
+      }
     }
     groundPass[binKey]={bL,bW,bH,totalLocs,binInfo,forceGround:false,perSku:false};
   });
@@ -3663,7 +3699,9 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
   });
 
   // Finalise regular rack assignments
-  Object.entries(regularPass).forEach(([binKey,{fc,bL,bW,bH,totalLocs,binInfo}])=>{
+  Object.entries(regularPass).forEach(([binKey,entry])=>{
+    const {fc,bL,bW,bH,totalLocs,binInfo,
+      isPalletized,binsPerPallet,palletL,palletW,palletLoadH,skuCount,originalBinLocs}=entry;
     const rt=fc.rk.rackType||'shelving';
     const rW=parseFloat(fc.rk.bayW),rD=parseFloat(fc.rk.bayD);
     const bays=Math.ceil(totalLocs/fc.lpb);
@@ -3684,13 +3722,20 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
       acrossW:fc.aw,acrossD:fc.ad,stackH:fc.stack,
       locsPerBay:fc.lpb,locsPerBayTotal:fc.lpb,
       locs:totalLocs,baysNeeded:bays,area,feasible:true,zone:ZONE_MAP[binKey]||'golden',
-      // LW and WL orientations for display
+      // Pallet-ization metadata (when manual bins fall back to pallet rack)
+      isPalletized:!!isPalletized,
+      binsPerPallet:binsPerPallet||null,
+      palletL:palletL||null, palletW:palletW||null, palletLoadH:palletLoadH||null,
+      skuCount:skuCount||null, originalBinLocs:originalBinLocs||null,
+      // LW and WL orientations for display (based on pallet dims if palletized, bin dims otherwise)
       o1:{acrossW:o1aw,acrossD:o1ad,feasible:o1aw>0&&o1ad>0&&o1st>0,
           levels:o1st,locsPerBay:o1aw*o1ad*o1st*fc.lvl,
-          desc:`${bL}mm wide × ${bW}mm deep × ${bH}mm tall`},
+          desc:isPalletized?`${palletL}mm wide × ${palletW}mm deep × ${palletLoadH}mm tall (pallet)`
+               :`${bL}mm wide × ${bW}mm deep × ${bH}mm tall`},
       o2:{acrossW:o2aw,acrossD:o2ad,feasible:o2aw>0&&o2ad>0&&o2st>0,
           levels:o2st,locsPerBay:o2aw*o2ad*o2st*fc.lvl,
-          desc:`${bW}mm wide × ${bL}mm deep × ${bH}mm tall`},
+          desc:isPalletized?`${palletW}mm wide × ${palletL}mm deep × ${palletLoadH}mm tall (pallet)`
+               :`${bW}mm wide × ${bL}mm deep × ${bH}mm tall`},
     });
   });
 
@@ -5052,6 +5097,35 @@ export default function WarehouseDesignerTool() {
                           background:'#f5f3ff',padding:'3px 16px',
                           borderTop:'1px solid #ede9fe'}}>
                           ⚡ {cfg.autoAssigned}
+                        </div>
+                      )}
+
+                      {/* Pallet-ization notice */}
+                      {cfg.isPalletized&&(
+                        <div style={{background:'#fef9c3',borderBottom:'1px solid #fcd34d',
+                          padding:'8px 14px',fontSize:'11px',color:'#78350f',
+                          borderTop:'1px solid #fcd34d'}}>
+                          <div style={{fontWeight:'700',marginBottom:'5px'}}>
+                            📦 Bins loaded onto pallets → placed in pallet rack
+                          </div>
+                          <div style={{display:'flex',gap:'12px',flexWrap:'wrap',fontSize:'10px'}}>
+                            <span>
+                              Pallet: <strong>{cfg.palletL}×{cfg.palletW}mm</strong>
+                            </span>
+                            <span>
+                              <strong>{cfg.binsPerPallet}</strong> {cfg.bin} bins per pallet
+                            </span>
+                            <span style={{fontWeight:'700',color:'#92400e'}}>
+                              1 pallet = 1 SKU only
+                            </span>
+                            <span>
+                              <strong>{(cfg.locs||0).toLocaleString()}</strong> pallet positions
+                              ({cfg.skuCount?.toLocaleString()} SKUs)
+                            </span>
+                            <span style={{color:'#a16207'}}>
+                              ↑ from {(cfg.originalBinLocs||0).toLocaleString()} bin locations
+                            </span>
+                          </div>
                         </div>
                       )}
 
