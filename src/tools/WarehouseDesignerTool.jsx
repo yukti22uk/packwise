@@ -1140,7 +1140,7 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
 }
 
 // ─── SVG FLOOR PLAN ───────────────────────────────────────────────────────────
-function FloorPlanSVG({ analysis, design, params, rackConfig }) {
+function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }) {
   const MFT  = 3.2808;
   const M2FT = 10.7639;
   const ft   = m  => `${(m*MFT).toFixed(0)}'`;
@@ -1154,9 +1154,10 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
   const pitch   = parseFloat(dockPitch)||4.5;
   const aisleM  = parseFloat(aisleWParam)||3.0;
 
-  // Canvas
-  const SVG_W=960, SVG_H=720;
-  const ML=62, MR=70, MT=50, MB=70; // margins for labels
+  // Canvas — larger in fullscreen
+  const SVG_W = fullscreen ? 1800 : 960;
+  const SVG_H = fullscreen ? Math.round(1800 * (wL/wW) * 0.8 + 120) : 720;
+  const ML=62, MR=70, MT=50, MB=70;
   const DW=SVG_W-ML-MR, DH=SVG_H-MT-MB;
   const sX=DW/wW, sY=DH/wL;
   const X=m=>ML+m*sX, Y=m=>MT+m*sY, W=m=>m*sX, H=m=>m*sY;
@@ -1288,7 +1289,20 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
     ground:     {depth:1.2, color:'#78350f', stroke:'#92400e'},
   };
 
-  // Draw rack rows within a zone — one sub-band per rack type, with cross-aisle
+  // Draw rack rows within a zone — distance-based cross aisles
+  // Shelving: cross aisle every 12-15m (use 13m)
+  // Selective/DoubleDeep/Cantilever/DriveIn: cross aisle every 25-30m (use 27m)
+  const CROSS_AISLE_INTERVAL = {
+    shelving:    13, // m between cross aisles
+    liveStorage: 13,
+    selective:   27,
+    doubleDeep:  27,
+    driveIn:     27,
+    cantilever:  27,
+    ground:      27,
+  };
+  const CROSS_AISLE_W = 3.0; // m — width of cross aisle
+
   const rackRowsForZone=(zone)=>{
     const rows=[], crossAisles=[];
     const zRacks=zone2RackTypes[zone.key]||[{rack:'shelving',cfg:null}];
@@ -1301,23 +1315,26 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
     let subY=zone.y;
     zRacks.forEach(({rack:dom})=>{
       const ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
-      const aisle=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
-      const slot=ri.depth+aisle;
+      const pickAisle=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
+      const slot=ri.depth+pickAisle; // one rack row + its aisle
       const subH=Math.max(slot,(slot/totalSlotW)*zone.h);
       const nRows=Math.max(1,Math.floor(subH/slot));
-      const crossAfter=Math.floor(nRows/2);
+      const crossInterval=CROSS_AISLE_INTERVAL[dom]||13; // metres between cross aisles
 
-      let rowCount=0;
+      let curY=subY;
+      let distSinceLastCross=0;
       for(let i=0;i<nRows;i++){
-        // Add cross-aisle gap in middle of zone (if >2 rows)
-        const extra=(nRows>2&&i>=crossAfter)?aisleM:0;
-        const ry=subY+i*slot+extra+aisle/2;
-        if(ry+ri.depth>subY+subH-0.2) break;
+        // Insert cross aisle when accumulated row distance hits the interval
+        if(i>0 && distSinceLastCross>=crossInterval){
+          crossAisles.push({x:zone.x,y:curY,w:zone.w,h:CROSS_AISLE_W});
+          curY+=CROSS_AISLE_W;
+          distSinceLastCross=0;
+        }
+        const ry=curY+pickAisle/2;
+        if(ry+ri.depth>zone.y+zone.h-0.1) break;
         rows.push({x:zone.x+0.4,y:ry,w:zone.w-0.8,h:ri.depth,...ri,dom});
-        rowCount++;
-        // Record cross-aisle position
-        if(nRows>2&&i===crossAfter-1)
-          crossAisles.push({x:zone.x,y:ry+ri.depth,w:zone.w,h:aisleM});
+        curY+=slot;
+        distSinceLastCross+=slot;
       }
       subY+=subH;
     });
@@ -1385,7 +1402,9 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
   });
 
   return (
-    <svg width={SVG_W} height={SVG_H} viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+    <svg width={fullscreen?'100%':SVG_W} height={fullscreen?'100%':SVG_H}
+      viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+      id={fullscreen?'fs-plan-svg':undefined}
       style={{border:'1px solid #e2e8f0',borderRadius:'10px',background:'#ffffff',
                width:'100%',height:'auto',display:'block'}}>
 
@@ -1658,9 +1677,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig }) {
         );
       })}
 
-      {/* ── DIVIDER LINE (one-side: between receiving & dispatch) ─── */}
-      {isOne&&(<line x1={X(wW/2)} y1={Y(wL-stagingH)} x2={X(wW/2)} y2={Y(wL)}
-        stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="4,3"/>)}
+      {/* center divider line removed — unnecessary aisle */}
 
       {/* ── DOCK DOORS ─── */}
       {dockDoors.filter(d=>d.side==='south').map((d,i)=>(
@@ -3824,6 +3841,7 @@ export default function WarehouseDesignerTool() {
   const [configConfirmed,setConfigConfirmed]=useState(false);
   const [viewMode3D, setViewMode3D] = useState('3d'); // '2d' | '3d'
   const [udViewMode,  setUdViewMode]  = useState('2d'); // user defined — default 2D (no WebGL risk)
+  const [floorPlanFS, setFloorPlanFS] = useState(false); // fullscreen 2D plan
   const plan2DRef = useRef(null); // ref for 2D SVG download
   const [loading,   setLoading]   = useState(false);
   const [progress,  setProgress]  = useState(0);   // 0-100
@@ -5553,6 +5571,14 @@ export default function WarehouseDesignerTool() {
                       color:udViewMode===m?'#7c3aed':'#6b7280'}}>
                     {label}
                   </button>))}
+                {udViewMode==='2d'&&(
+                  <button onClick={()=>setFloorPlanFS(true)}
+                    style={{padding:'8px 12px',borderRadius:'8px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                      border:'2px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
+                    ⛶
+                  </button>
+                )}
               </div>
               <div style={{...S.card,padding:'10px',marginBottom:'12px'}}>
                 {udViewMode==='3d'
@@ -6136,6 +6162,15 @@ export default function WarehouseDesignerTool() {
                         color:viewMode3D===m?'#7c3aed':'#6b7280'}}>
                       {l}
                     </button>))}
+                  {viewMode3D==='2d'&&(
+                    <button onClick={()=>setFloorPlanFS(true)}
+                      title="View full screen"
+                      style={{padding:'5px 12px',borderRadius:'7px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                        border:'2px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
+                      ⛶ Full Screen
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -6313,6 +6348,56 @@ export default function WarehouseDesignerTool() {
           {/* End system mode */}
         </div>
       </div>
+
+      {/* ── FULLSCREEN FLOOR PLAN OVERLAY ──────────────────────────── */}
+      {floorPlanFS&&(
+        <div style={{position:'fixed',inset:0,background:'#fff',zIndex:9999,
+          display:'flex',flexDirection:'column'}}>
+          {/* Toolbar */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+            padding:'10px 20px',background:'#0f172a',flexShrink:0}}>
+            <div style={{color:'#fff',fontWeight:'700',fontSize:'15px'}}>
+              🗺 Warehouse Floor Plan — Full Screen
+              {design&&<span style={{fontSize:'12px',fontWeight:'400',color:'#94a3b8',
+                marginLeft:'12px'}}>{design.wW}m × {design.wL}m · {(design.wW*design.wL).toLocaleString()}m²</span>}
+            </div>
+            <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+              {/* Download in fullscreen */}
+              <button onClick={()=>{
+                  const svgEl=document.querySelector('#fs-plan-svg');
+                  if(!svgEl) return;
+                  const blob=new Blob([svgEl.outerHTML],{type:'image/svg+xml'});
+                  const a=document.createElement('a');
+                  a.href=URL.createObjectURL(blob);
+                  a.download='warehouse-floorplan.svg';
+                  a.click();
+                }}
+                style={{padding:'7px 16px',background:'#7c3aed',color:'#fff',border:'none',
+                  borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
+                  fontSize:'13px',fontWeight:'700'}}>
+                ⬇ Download SVG
+              </button>
+              <button onClick={()=>setFloorPlanFS(false)}
+                style={{padding:'7px 16px',background:'#be185d',color:'#fff',border:'none',
+                  borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
+                  fontSize:'13px',fontWeight:'700'}}>
+                ✕ Close
+              </button>
+            </div>
+          </div>
+          {/* Full-screen plan */}
+          <div style={{flex:1,overflow:'auto',padding:'0'}}>
+            <div id="fs-plan-svg" style={{width:'100%',height:'100%'}}>
+              <FloorPlanSVG
+                analysis={analysis}
+                design={userDesign||design}
+                params={params}
+                rackConfig={userRackConfig||rackConfig}
+                fullscreen={true}/>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
