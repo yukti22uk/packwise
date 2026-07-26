@@ -1274,18 +1274,18 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var sectionLayouts = {}; // rackType → { nCols, baysPerCol, height, area, crossYPositions }
   RACK_ORDER.forEach(rt => {
     var totalBaysRt = (rackConfig||[]).filter(c=>c.rack===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
-    if(!totalBaysRt && !rackTypeAreas[rt]) return;
-    var rtRi    = RACK_INFO_2D_LOOKUP[rt] || {depth:2.2};
-    var rtPa    = rackAisleM[rt]||aisleM||DEFAULT_AISLE_M[rt]||1.2;
+    if(!totalBaysRt && !(rackTypeAreas?.[rt])) return;
+    var rtRi    = (RACK_INFO_2D_LOOKUP?.[rt]) || {depth:2.2};
+    var rtPa    = (rackAisleM?.[rt])||aisleM||(DEFAULT_AISLE_M?.[rt])||1.2;
     var rtSlot  = rtRi.depth + rtPa;
-    var rtBayH  = rackBayWidthM[rt] || BAY_HEIGHT_M_LOOKUP[rt] || 0.9;
+    var rtBayH  = (rackBayWidthM?.[rt])||(BAY_HEIGHT_M_LOOKUP?.[rt])||0.9;
     var rtCross = ({shelving:13,liveStorage:13,selective:27,
       doubleDeep:27,driveIn:27,cantilever:27,ground:27})[rt] || 13;
-    var rtBays  = totalBaysRt || Math.ceil((rackTypeAreas[rt]||0) / (rtBayH * wW));
+    var rtBays  = totalBaysRt || Math.ceil(((rackTypeAreas?.[rt])||0) / (rtBayH * wW));
     var rtLayout= computeSectionLayout(rtBays, wW, rtBayH, rtSlot, rtCross);
     sectionLayouts[rt] = {...rtLayout, totalBays: rtBays};
 
-    var rtStyle = RACK_TYPE_STYLE[rt] || {label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
+    var rtStyle = (RACK_TYPE_STYLE?.[rt]) || {label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
     zoneRects.push({key:rt, x:0, y:cur, w:wW, h:rtLayout.height,
       label:rtStyle.label, color:rtStyle.color, border:rtStyle.border, text:rtStyle.text,
       area:rtLayout.area, rackType:rt, sectionLayout:rtLayout});
@@ -1396,11 +1396,11 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var rackRowsForZone=(zone)=>{
     var rows=[], crossAisles=[], dimAnnotations=[];
     var dom=zone.rackType||(zone2RackTypes[zone.key]?.[0]?.rack)||'shelving';
-    var ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
+    var ri=(RACK_INFO_2D?.[dom])||(RACK_INFO_2D?.shelving)||{depth:1.0,color:'#dbeafe',stroke:'#3b82f6'}||{depth:1.0,color:"#dbeafe",stroke:"#3b82f6"};
     // Picking aisle: user-entered per rack type, else global aisleM, else default
-    var pa=rackAisleM[dom]||aisleM||DEFAULT_AISLE_M[dom]||1.2;
+    var pa=(rackAisleM?.[dom])||aisleM||(DEFAULT_AISLE_M?.[dom])||1.2;
     var colSlot=ri.depth+pa;
-    var bayHm=rackBayWidthM[dom]||BAY_HEIGHT_M_LOOKUP[dom]||0.9;
+    var bayHm=(rackBayWidthM?.[dom])||(BAY_HEIGHT_M_LOOKUP?.[dom])||0.9;
 
     // Column label: A,B,...,Z,AA,AB,...
     var colLabel=(i)=>i<26?String.fromCharCode(65+i)
@@ -1420,7 +1420,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var globalBayNum=1;
 
     // Single face depth from rackConfig (user entered) or defaults
-    var faceDepth=rackBayDepthM[dom]||DEFAULT_FACE_DEPTH[dom]||0.6;
+    var faceDepth=(rackBayDepthM?.[dom])||(DEFAULT_FACE_DEPTH?.[dom])||0.6;
     // Back-to-back gap: 50mm for shelving/live, 100mm beam for pallet racks
     var backGap=(dom==='shelving'||dom==='liveStorage')?0.05:0.10;
     // Total column depth (two faces + gap)
