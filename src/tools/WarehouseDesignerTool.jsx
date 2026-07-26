@@ -1377,37 +1377,52 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   });
 
   var rackRowsForZone=(zone)=>{
-    var rows=[], crossAisles=[];
+    var rows=[], crossAisles=[], dimAnnotations=[];
     var dom=zone.rackType||(zone2RackTypes[zone.key]?.[0]?.rack)||'shelving';
     var ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
     var pa=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
     var colSlot=ri.depth+pa;
     var bayHm=rackBayWidthM[dom]||BAY_HEIGHT_M_LOOKUP[dom]||0.9;
 
-    // Use pre-computed layout (bay-first) from zone definition
+    // Column label: A,B,...,Z,AA,AB,...
+    var colLabel=(i)=>i<26?String.fromCharCode(65+i)
+      :String.fromCharCode(64+Math.floor(i/26))+String.fromCharCode(65+(i%26));
+
     var sl=zone.sectionLayout||sectionLayouts[dom]||{nCols:3,baysPerCol:5,crossYPositions:[]};
     var nCols=sl.nCols, totalBays=sl.totalBays||0;
     var crossYs=sl.crossYPositions||[];
 
-    // Push cross aisles from pre-computed positions
     crossYs.forEach(y=>{
       crossAisles.push({x:zone.x,y:zone.y+y-CROSS_AISLE_W_M/2,
         w:zone.w,h:CROSS_AISLE_W_M,isCrossAisle:true});
     });
 
-    // Draw columns using pre-computed nCols and cross aisle positions
-    let curX=zone.x+0.3;
     var breakYs=[0,...crossYs,zone.h-0.3];
+    let curX=zone.x+0.3;
     for(let i=0;i<nCols;i++){
       var rx=curX+i*colSlot+pa/2;
       if(rx+ri.depth>zone.x+zone.w-0.3) break;
+      var label=colLabel(i);
+      var bayNum=1;  // running bay number within column
       for(let j=0;j<breakYs.length-1;j++){
         var sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W_M/2:0.3);
         var ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W_M/2:0);
-        if(ey-sy>0.5) rows.push({x:rx,y:sy,w:ri.depth,h:ey-sy,...ri,dom,bayHm});
+        if(ey-sy>0.5){
+          rows.push({x:rx,y:sy,w:ri.depth,h:ey-sy,...ri,dom,bayHm,
+            colIdx:i, colLabel:label, segIdx:j, bayStart:bayNum});
+          bayNum+=Math.max(1,Math.floor((ey-sy)/bayHm));
+        }
+      }
+      // Dimension annotation at first column only
+      if(i===0){
+        dimAnnotations.push({
+          x:rx, y:zone.y+0.3,
+          bayDepth:ri.depth, aisle:pa, bayWidthM:bayHm,
+          dom, label: colLabel(0),
+        });
       }
     }
-    return {rows, crossAisles, nCols, baysPerCol:sl.baysPerCol, totalBays};
+    return {rows, crossAisles, nCols, baysPerCol:sl.baysPerCol, totalBays, dimAnnotations};
   };
 
   // Pallet symbols in staging area
@@ -1433,11 +1448,12 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   }
 
   // Collect all rack rows and cross aisles
-  var allRackRows=[], allCrossAisles=[];
+  var allRackRows=[], allCrossAisles=[], allDimAnnotations=[];
   zoneRects.forEach(zone=>{
-    const{rows,crossAisles}=rackRowsForZone(zone);
+    const{rows,crossAisles,dimAnnotations}=rackRowsForZone(zone);
     allRackRows.push(...rows);
     allCrossAisles.push(...crossAisles);
+    if(dimAnnotations) allDimAnnotations.push(...dimAnnotations);
   });
 
   // Staging pallets
@@ -1478,7 +1494,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     nMHE: design.nMHE||0, inboundMode: params.inboundMode, outboundMode: params.outboundMode,
     stagingH, isBoth, isOne, recH, disH, offH, mheH, supportH,
     zoneRects, stagingRects, supportRects, dockDoors,
-    allRackRows, allCrossAisles, recPallets, disPallets,
+    allRackRows, allCrossAisles, allDimAnnotations, recPallets, disPallets,
     packTables, mheBays, dimRight, sectionLayouts,
     doorW: 3.5,
     // Design values needed in render
@@ -1507,7 +1523,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
     dockSide, forkType, packingBenches, nMHE, inboundMode, outboundMode,
     stagingH, isBoth, isOne, recH, disH, offH, mheH, supportH,
     zoneRects, stagingRects, supportRects, dockDoors,
-    allRackRows, allCrossAisles, recPallets, disPallets,
+    allRackRows, allCrossAisles, allDimAnnotations, recPallets, disPallets,
     packTables, mheBays, dimRight, sectionLayouts, doorW,
     zoneAreas, receivingArea, dispatchArea, mheArea, officeArea, netRackArea,
     totalDocks, inboundDocks, outboundDocks, staging,
@@ -1734,6 +1750,80 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
             </g>
           );
         }
+      })}
+
+      {/* ── BAY NUMBERING — location codes on each rack bay ────────────────── */}
+      {allRackRows.map((r,i)=>{
+        const px=X(r.x), py=Y(r.y), pw=W(r.w), ph=H(r.h);
+        const bayHpx=H(r.bayHm||0.9);
+        // Only show numbers if bay is large enough to read
+        if(pw<8||bayHpx<6) return null;
+        const nBays=Math.max(1,Math.floor(r.h/(r.bayHm||0.9)));
+        return(
+          <g key={`lbl-${i}`}>
+            {/* Column letter at very top of column */}
+            {r.segIdx===0&&<text
+              x={px+pw/2} y={py-2}
+              textAnchor="middle" fontSize={Math.min(7,pw*0.55)}
+              fontWeight="800" fill={r.stroke} opacity="0.9">
+              {r.colLabel}
+            </text>}
+            {/* Bay numbers within segment */}
+            {Array.from({length:nBays},(_,b)=>{
+              const by=py+b*bayHpx;
+              if(by+bayHpx>py+ph+1) return null;
+              return(
+                <text key={b}
+                  x={px+pw/2} y={by+bayHpx/2}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fontSize={Math.min(6,pw*0.5,bayHpx*0.55)}
+                  fontWeight="600" fill={r.stroke} opacity="0.75">
+                  {r.colLabel}{String(((r.bayStart||1)+b)).padStart(2,'0')}
+                </text>
+              );
+            })}
+          </g>
+        );
+      })}
+
+      {/* ── DIMENSION ANNOTATIONS — one per rack type ─────────────────────── */}
+      {allDimAnnotations.map((d,i)=>{
+        const px=X(d.x), py=Y(d.y);
+        const pw=W(d.bayDepth);  // column width in px
+        const pa=W(d.aisle);     // aisle width in px
+        const bayHpx=H(d.bayWidthM);
+        const arrowLen=5;
+        // Only draw if there's enough space
+        if(pw<6) return null;
+        return(
+          <g key={`dim-${i}`} opacity="0.85">
+            {/* Bay depth dimension (horizontal — across column width) */}
+            <line x1={px} y1={py+2} x2={px+pw} y2={py+2} stroke="#374151" strokeWidth="0.8"/>
+            <line x1={px} y1={py} x2={px} y2={py+5} stroke="#374151" strokeWidth="0.8"/>
+            <line x1={px+pw} y1={py} x2={px+pw} y2={py+5} stroke="#374151" strokeWidth="0.8"/>
+            <text x={px+pw/2} y={py+9} textAnchor="middle" fontSize="5.5" fill="#374151" fontWeight="700">
+              {(d.bayDepth*1000).toFixed(0)}mm
+            </text>
+            {/* Aisle width dimension */}
+            {pa>4&&<>
+              <line x1={px-pa} y1={py+2} x2={px} y2={py+2} stroke="#7c3aed" strokeWidth="0.7" strokeDasharray="2,1.5"/>
+              <text x={px-pa/2} y={py+9} textAnchor="middle" fontSize="5" fill="#7c3aed" fontWeight="600">
+                {(d.aisle*1000).toFixed(0)}mm aisle
+              </text>
+            </>}
+            {/* Bay height (N-S dimension per bay) */}
+            {bayHpx>8&&<>
+              <line x1={px-2} y1={py} x2={px-2} y2={py+bayHpx} stroke="#374151" strokeWidth="0.7"/>
+              <line x1={px-5} y1={py} x2={px} y2={py} stroke="#374151" strokeWidth="0.7"/>
+              <line x1={px-5} y1={py+bayHpx} x2={px} y2={py+bayHpx} stroke="#374151" strokeWidth="0.7"/>
+              <text x={px-7} y={py+bayHpx/2} textAnchor="end" dominantBaseline="middle"
+                fontSize="5" fill="#374151" fontWeight="600"
+                transform={`rotate(-90,${px-7},${py+bayHpx/2})`}>
+                {(d.bayWidthM*1000).toFixed(0)}mm
+              </text>
+            </>}
+          </g>
+        );
       })}
 
       {/* ── STAGING AREAS ─── */}
