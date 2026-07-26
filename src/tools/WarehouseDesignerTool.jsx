@@ -1464,7 +1464,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
 
   // Return everything needed for rendering
   return {
-    SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, wW,
+    SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, wW, wL: actualWL,
     X: m=>ML+m*sX, Y: m=>MT+m*sY, W: m=>m*sX, H: m=>m*sY,
     dockSide, forkType, packingBenches: params.packingBenches,
     nMHE: design.nMHE||0, inboundMode: params.inboundMode, outboundMode: params.outboundMode,
@@ -1473,19 +1473,27 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     allRackRows, allCrossAisles, recPallets, disPallets,
     packTables, mheBays, dimRight, sectionLayouts,
     doorW: 3.5,
+    // Design values needed in render
+    zoneAreas: design.zoneAreas||{}, receivingArea: design.receivingArea||80,
+    dispatchArea: design.dispatchArea||80, mheArea: design.mheArea||0,
+    officeArea: design.officeArea||50, netRackArea: design.netRackArea||0,
+    totalDocks: design.totalDocks||2, inboundDocks: design.inboundDocks||1,
+    outboundDocks: design.outboundDocks||1, staging: design.staging||{},
   };
 }
 
 function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }) {
   const fp = buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen);
   const {
-    SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, wW,
+    SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, wW, wL,
     X, Y, W, H,
     dockSide, forkType, packingBenches, nMHE, inboundMode, outboundMode,
     stagingH, isBoth, isOne, recH, disH, offH, mheH, supportH,
     zoneRects, stagingRects, supportRects, dockDoors,
     allRackRows, allCrossAisles, recPallets, disPallets,
     packTables, mheBays, dimRight, sectionLayouts, doorW,
+    zoneAreas, receivingArea, dispatchArea, mheArea, officeArea, netRackArea,
+    totalDocks, inboundDocks, outboundDocks, staging,
   } = fp;
   const MFT=3.2808, M2FT=10.7639;
   const ft = m => `${(m*MFT).toFixed(0)}'`;
