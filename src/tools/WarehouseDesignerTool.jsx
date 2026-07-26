@@ -1506,7 +1506,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   };
 }
 
-function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }) {
+function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, zoom=1 }) {
   if (!design?.wW || !design?.wL) return null;
 
   let fp;
@@ -1534,7 +1534,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
   const aisleM = parseFloat(params.aisleW)||3.0;
 
   return (
-    <svg width={fullscreen?'100%':SVG_W} height={fullscreen?'100%':SVG_H}
+    <svg width={fullscreen?'100%':SVG_W*zoom} height={fullscreen?'100%':SVG_H*zoom}
       viewBox={`0 0 ${SVG_W} ${SVG_H}`}
       id={fullscreen?'fs-plan-svg':undefined}
       style={{border:'1px solid #e2e8f0',borderRadius:'10px',background:'#ffffff',
@@ -1756,28 +1756,30 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
       {allRackRows.map((r,i)=>{
         const px=X(r.x), py=Y(r.y), pw=W(r.w), ph=H(r.h);
         const bayHpx=H(r.bayHm||0.9);
-        // Only show numbers if bay is large enough to read
-        if(pw<8||bayHpx<6) return null;
+        // Always show column letter; show bay numbers if bay is big enough
+        const showBayNum=pw>5&&bayHpx>5;
+        const colFontSz=Math.max(6,Math.min(11,pw*0.75));
+        const bayFontSz=Math.max(4.5,Math.min(9,Math.min(pw*0.6,bayHpx*0.6)));
         const nBays=Math.max(1,Math.floor(r.h/(r.bayHm||0.9)));
         return(
           <g key={`lbl-${i}`}>
-            {/* Column letter at very top of column */}
-            {r.segIdx===0&&<text
-              x={px+pw/2} y={py-2}
-              textAnchor="middle" fontSize={Math.min(7,pw*0.55)}
-              fontWeight="800" fill={r.stroke} opacity="0.9">
+            {/* Column letter above first segment of each column */}
+            {r.segIdx===0&&pw>4&&<text
+              x={px+pw/2} y={py-1.5}
+              textAnchor="middle" fontSize={colFontSz}
+              fontWeight="800" fill={r.stroke}>
               {r.colLabel}
             </text>}
-            {/* Bay numbers within segment */}
-            {Array.from({length:nBays},(_,b)=>{
+            {/* Bay numbers */}
+            {showBayNum&&Array.from({length:Math.min(nBays,200)},(_,b)=>{
               const by=py+b*bayHpx;
               if(by+bayHpx>py+ph+1) return null;
               return(
                 <text key={b}
                   x={px+pw/2} y={by+bayHpx/2}
                   textAnchor="middle" dominantBaseline="middle"
-                  fontSize={Math.min(6,pw*0.5,bayHpx*0.55)}
-                  fontWeight="600" fill={r.stroke} opacity="0.75">
+                  fontSize={bayFontSz} fontWeight="700"
+                  fill={r.stroke} opacity="0.85">
                   {r.colLabel}{String(((r.bayStart||1)+b)).padStart(2,'0')}
                 </text>
               );
@@ -1801,24 +1803,24 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }
             <line x1={px} y1={py+2} x2={px+pw} y2={py+2} stroke="#374151" strokeWidth="0.8"/>
             <line x1={px} y1={py} x2={px} y2={py+5} stroke="#374151" strokeWidth="0.8"/>
             <line x1={px+pw} y1={py} x2={px+pw} y2={py+5} stroke="#374151" strokeWidth="0.8"/>
-            <text x={px+pw/2} y={py+9} textAnchor="middle" fontSize="5.5" fill="#374151" fontWeight="700">
-              {(d.bayDepth*1000).toFixed(0)}mm
+            <text x={px+pw/2} y={py+10} textAnchor="middle" fontSize="7.5" fill="#374151" fontWeight="700">
+              {(d.bayDepth*1000).toFixed(0)}mm depth
             </text>
             {/* Aisle width dimension */}
             {pa>4&&<>
-              <line x1={px-pa} y1={py+2} x2={px} y2={py+2} stroke="#7c3aed" strokeWidth="0.7" strokeDasharray="2,1.5"/>
-              <text x={px-pa/2} y={py+9} textAnchor="middle" fontSize="5" fill="#7c3aed" fontWeight="600">
+              <line x1={px-pa} y1={py+2} x2={px} y2={py+2} stroke="#7c3aed" strokeWidth="0.8" strokeDasharray="2,1.5"/>
+              <text x={px-pa/2} y={py+10} textAnchor="middle" fontSize="6.5" fill="#7c3aed" fontWeight="700">
                 {(d.aisle*1000).toFixed(0)}mm aisle
               </text>
             </>}
             {/* Bay height (N-S dimension per bay) */}
-            {bayHpx>8&&<>
-              <line x1={px-2} y1={py} x2={px-2} y2={py+bayHpx} stroke="#374151" strokeWidth="0.7"/>
-              <line x1={px-5} y1={py} x2={px} y2={py} stroke="#374151" strokeWidth="0.7"/>
-              <line x1={px-5} y1={py+bayHpx} x2={px} y2={py+bayHpx} stroke="#374151" strokeWidth="0.7"/>
-              <text x={px-7} y={py+bayHpx/2} textAnchor="end" dominantBaseline="middle"
-                fontSize="5" fill="#374151" fontWeight="600"
-                transform={`rotate(-90,${px-7},${py+bayHpx/2})`}>
+            {bayHpx>6&&<>
+              <line x1={px-2} y1={py} x2={px-2} y2={py+bayHpx} stroke="#374151" strokeWidth="0.8"/>
+              <line x1={px-5} y1={py} x2={px} y2={py} stroke="#374151" strokeWidth="0.8"/>
+              <line x1={px-5} y1={py+bayHpx} x2={px} y2={py+bayHpx} stroke="#374151" strokeWidth="0.8"/>
+              <text x={px-8} y={py+bayHpx/2} textAnchor="middle" dominantBaseline="middle"
+                fontSize="6.5" fill="#374151" fontWeight="700"
+                transform={`rotate(-90,${px-8},${py+bayHpx/2})`}>
                 {(d.bayWidthM*1000).toFixed(0)}mm
               </text>
             </>}
@@ -4064,6 +4066,7 @@ export default function WarehouseDesignerTool() {
   const [configConfirmed,setConfigConfirmed]=useState(false);
   const [viewMode3D, setViewMode3D] = useState('3d'); // '2d' | '3d'
   const [udViewMode,  setUdViewMode]  = useState('2d'); // user defined — default 2D (no WebGL risk)
+  const [planZoom,    setPlanZoom]    = useState(1);    // floor plan zoom level
   const [floorPlanFS, setFloorPlanFS] = useState(false); // fullscreen 2D plan
   const plan2DRef = useRef(null); // ref for 2D SVG download
   const [loading,   setLoading]   = useState(false);
@@ -5804,10 +5807,27 @@ export default function WarehouseDesignerTool() {
                 )}
               </div>
               <div style={{...S.card,padding:'10px',marginBottom:'12px'}}>
-                {udViewMode==='3d'
-                  ? <Warehouse3DModel analysis={analysis} design={userDesign} params={params} rackConfig={userRackConfig||rackConfig}/>
-                  : <FloorPlanSVG analysis={analysis} design={userDesign} params={params} rackConfig={userRackConfig||rackConfig}/>
-                }
+                {/* Zoom controls */}
+                <div style={{display:'flex',gap:'5px',marginBottom:'6px',flexWrap:'wrap',alignItems:'center'}}>
+                  <span style={{fontSize:'11px',fontWeight:'600',color:'#374151'}}>Zoom:</span>
+                  {[0.5,1,1.5,2,3,4].map(z=>(
+                    <button key={z} onClick={()=>setPlanZoom(z)}
+                      style={{padding:'2px 7px',borderRadius:'5px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'10px',fontWeight:'700',
+                        border:`1px solid ${planZoom===z?'#7c3aed':'#e2e8f0'}`,
+                        background:planZoom===z?'#f5f3ff':'#fff',
+                        color:planZoom===z?'#7c3aed':'#6b7280'}}>
+                      {z===1?'1×':`${z}×`}
+                    </button>
+                  ))}
+                </div>
+                <div style={{overflow:'auto',maxHeight:'500px',border:'1px solid #e2e8f0',
+                  borderRadius:'6px',cursor:'grab'}}
+                  onWheel={e=>{e.preventDefault();
+                    setPlanZoom(z=>Math.max(0.3,Math.min(6,z*(e.deltaY<0?1.15:1/1.15))));}}>
+                  <FloorPlanSVG analysis={analysis} design={userDesign} params={params}
+                    rackConfig={userRackConfig||rackConfig} zoom={planZoom}/>
+                </div>
               </div>
               {/* Warehouse size summary */}
               {analysis?.metrics?.hasInv&&(
@@ -6399,9 +6419,35 @@ export default function WarehouseDesignerTool() {
 
               {viewMode3D==='3d'
                 ? <Warehouse3DModel analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>
-                : (<div ref={plan2DRef}>
-                    <FloorPlanSVG analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>
-                  </div>)}
+                : (<>
+                    {/* Zoom controls */}
+                    <div style={{display:'flex',alignItems:'center',gap:'6px',
+                      marginBottom:'6px',flexWrap:'wrap'}}>
+                      <span style={{fontSize:'11px',fontWeight:'600',color:'#374151'}}>Zoom:</span>
+                      {[0.5,1,1.5,2,3,4].map(z=>(
+                        <button key={z} onClick={()=>setPlanZoom(z)}
+                          style={{padding:'3px 8px',borderRadius:'6px',cursor:'pointer',
+                            fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                            border:`1px solid ${planZoom===z?'#7c3aed':'#e2e8f0'}`,
+                            background:planZoom===z?'#f5f3ff':'#fff',
+                            color:planZoom===z?'#7c3aed':'#6b7280'}}>
+                          {z===1?'1×':`${z}×`}
+                        </button>
+                      ))}
+                      <span style={{fontSize:'10px',color:'#9ca3af',marginLeft:'4px'}}>
+                        Scroll inside plan to zoom · drag to pan
+                      </span>
+                    </div>
+                    {/* Scrollable zoomable plan container */}
+                    <div ref={plan2DRef}
+                      style={{overflow:'auto',border:'1px solid #e2e8f0',borderRadius:'8px',
+                        maxHeight:'600px',background:'#f8fafc',cursor:'grab'}}
+                      onWheel={e=>{e.preventDefault();
+                        setPlanZoom(z=>Math.max(0.3,Math.min(6,z*(e.deltaY<0?1.15:1/1.15))));}}>
+                      <FloorPlanSVG analysis={analysis} design={design} params={params}
+                        rackConfig={rackConfig} zoom={planZoom}/>
+                    </div>
+                  </>)}
 
               {/* Legend + Download (2D only) */}
               {viewMode3D==='2d'&&(
