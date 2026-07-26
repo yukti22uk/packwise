@@ -1276,7 +1276,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var totalBaysRt = (rackConfig||[]).filter(c=>c.rack===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
     if(!totalBaysRt && !rackTypeAreas[rt]) return;
     var rtRi    = RACK_INFO_2D_LOOKUP[rt] || {depth:2.2};
-    var rtPa    = rt==='shelving'||rt==='liveStorage' ? 1.2 : aisleM;
+    var rtPa    = rackAisleM[rt]||aisleM||DEFAULT_AISLE_M[rt]||1.2;
     var rtSlot  = rtRi.depth + rtPa;
     var rtBayH  = rackBayWidthM[rt] || BAY_HEIGHT_M_LOOKUP[rt] || 0.9;
     var rtCross = ({shelving:13,liveStorage:13,selective:27,
@@ -1370,8 +1370,25 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     selective:27, doubleDeep:27, driveIn:27, cantilever:27, ground:27,
   };
 
-  // Build rack section lookup: rackType → total bays from rackConfig
-  var rackTypeBays={};
+  // Rack aisle width per type: from rackConfig.aisle (user entered) or defaults
+  var rackAisleM={};
+  (rackConfig||[]).forEach(function(cfg){
+    if(cfg.rack && !rackAisleM[cfg.rack]){
+      var a=parseFloat(cfg.aisle)||0;
+      if(a>0) rackAisleM[cfg.rack]=a/1000; // mm → m
+    }
+  });
+  // Fallback defaults (mm → m)
+  var DEFAULT_AISLE_M={shelving:1.2,liveStorage:1.2,selective:3.0,
+    doubleDeep:3.5,driveIn:3.5,cantilever:3.0,ground:4.0};
+  var rackBayDepthM={};
+  (rackConfig||[]).forEach(function(cfg){
+    if(cfg.rack && cfg.bayD && !rackBayDepthM[cfg.rack])
+      rackBayDepthM[cfg.rack]=parseFloat(cfg.bayD)/1000;
+  });
+  // Default single-face depths (if rackConfig doesn't provide bayD)
+  var DEFAULT_FACE_DEPTH={shelving:0.6,liveStorage:0.6,selective:1.1,
+    doubleDeep:1.1,driveIn:1.1,cantilever:1.0,ground:1.2};
   (rackConfig||[]).forEach(cfg=>{
     rackTypeBays[cfg.rack]=(rackTypeBays[cfg.rack]||0)+(cfg.baysNeeded||0);
   });
@@ -1380,7 +1397,8 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var rows=[], crossAisles=[], dimAnnotations=[];
     var dom=zone.rackType||(zone2RackTypes[zone.key]?.[0]?.rack)||'shelving';
     var ri=RACK_INFO_2D[dom]||RACK_INFO_2D.shelving;
-    var pa=dom==='shelving'||dom==='liveStorage'?1.2:aisleM;
+    // Picking aisle: user-entered per rack type, else global aisleM, else default
+    var pa=rackAisleM[dom]||aisleM||DEFAULT_AISLE_M[dom]||1.2;
     var colSlot=ri.depth+pa;
     var bayHm=rackBayWidthM[dom]||BAY_HEIGHT_M_LOOKUP[dom]||0.9;
 
@@ -1399,28 +1417,49 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
 
     var breakYs=[0,...crossYs,zone.h-0.3];
     let curX=zone.x+0.3;
+    var globalBayNum=1;
+
+    // Single face depth from rackConfig (user entered) or defaults
+    var faceDepth=rackBayDepthM[dom]||DEFAULT_FACE_DEPTH[dom]||0.6;
+    // Back-to-back gap: 50mm for shelving/live, 100mm beam for pallet racks
+    var backGap=(dom==='shelving'||dom==='liveStorage')?0.05:0.10;
+    // Total column depth (two faces + gap)
+    var colDepth=faceDepth*2+backGap;
+    // Override colSlot with actual dimensions
+    var actualColSlot=colDepth+pa;
+
     for(let i=0;i<nCols;i++){
-      var rx=curX+i*colSlot+pa/2;
-      if(rx+ri.depth>zone.x+zone.w-0.3) break;
+      var rx=curX+i*actualColSlot+pa/2;
+      if(rx+colDepth>zone.x+zone.w-0.3) break;
       var label=colLabel(i);
-      var bayNum=1;  // running bay number within column
+      var colBayStart=globalBayNum;
+
       for(let j=0;j<breakYs.length-1;j++){
         var sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W_M/2:0.3);
         var ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W_M/2:0);
-        if(ey-sy>0.5){
-          rows.push({x:rx,y:sy,w:ri.depth,h:ey-sy,...ri,dom,bayHm,
-            colIdx:i, colLabel:label, segIdx:j, bayStart:bayNum});
-          bayNum+=Math.max(1,Math.floor((ey-sy)/bayHm));
-        }
+        if(ey-sy<0.5) continue;
+        var segBays=Math.max(1,Math.floor((ey-sy)/bayHm));
+
+        // Front face (nearer to picking aisle)
+        rows.push({x:rx, y:sy, w:faceDepth, h:ey-sy, ...ri, dom, bayHm,
+          colIdx:i, colLabel:label, segIdx:j, bayStart:colBayStart,
+          isHalfRack:'front', bayCount:segBays, faceDepth, pa, backGap});
+        // Back face (farther from picking aisle)
+        rows.push({x:rx+faceDepth+backGap, y:sy, w:faceDepth, h:ey-sy, ...ri, dom, bayHm,
+          colIdx:i, colLabel:label, segIdx:j, bayStart:colBayStart,
+          isHalfRack:'back', bayCount:segBays, faceDepth, pa, backGap});
       }
+
       // Dimension annotation at first column only
       if(i===0){
         dimAnnotations.push({
           x:rx, y:zone.y+0.3,
-          bayDepth:ri.depth, aisle:pa, bayWidthM:bayHm,
-          dom, label: colLabel(0),
+          faceDepth, backGap, colDepth, aisle:pa,
+          bayWidthM:bayHm, dom,
         });
       }
+
+      globalBayNum+=sl.baysPerCol;
     }
     return {rows, crossAisles, nCols, baysPerCol:sl.baysPerCol, totalBays, dimAnnotations};
   };
@@ -1752,35 +1791,31 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
         }
       })}
 
-      {/* ── BAY NUMBERING — location codes on each rack bay ────────────────── */}
+      {/* ── BAY NUMBERING — sequential 1→N across all columns ────────────── */}
       {allRackRows.map((r,i)=>{
+        if(r.isHalfRack==='back') return null; // only label front face
         const px=X(r.x), py=Y(r.y), pw=W(r.w), ph=H(r.h);
         const bayHpx=H(r.bayHm||0.9);
-        // Always show column letter; show bay numbers if bay is big enough
-        const showBayNum=pw>5&&bayHpx>5;
-        const colFontSz=Math.max(6,Math.min(11,pw*0.75));
-        const bayFontSz=Math.max(4.5,Math.min(9,Math.min(pw*0.6,bayHpx*0.6)));
-        const nBays=Math.max(1,Math.floor(r.h/(r.bayHm||0.9)));
+        const showBayNum=pw>4&&bayHpx>4;
+        const colFontSz=Math.max(7,Math.min(13,pw*0.8));
+        const bayFontSz=Math.max(5,Math.min(10,Math.min(pw*0.65,bayHpx*0.65)));
+        const nBays=r.bayCount||Math.max(1,Math.floor(r.h/(r.bayHm||0.9)));
         return(
           <g key={`lbl-${i}`}>
-            {/* Column letter above first segment of each column */}
-            {r.segIdx===0&&pw>4&&<text
+            {r.segIdx===0&&pw>3&&<text
               x={px+pw/2} y={py-1.5}
               textAnchor="middle" fontSize={colFontSz}
-              fontWeight="800" fill={r.stroke}>
+              fontWeight="900" fill={r.stroke}>
               {r.colLabel}
             </text>}
-            {/* Bay numbers */}
-            {showBayNum&&Array.from({length:Math.min(nBays,200)},(_,b)=>{
+            {showBayNum&&Array.from({length:Math.min(nBays,300)},(_,b)=>{
               const by=py+b*bayHpx;
               if(by+bayHpx>py+ph+1) return null;
               return(
-                <text key={b}
-                  x={px+pw/2} y={by+bayHpx/2}
+                <text key={b} x={px+pw/2} y={by+bayHpx/2}
                   textAnchor="middle" dominantBaseline="middle"
-                  fontSize={bayFontSz} fontWeight="700"
-                  fill={r.stroke} opacity="0.85">
-                  {r.colLabel}{String(((r.bayStart||1)+b)).padStart(2,'0')}
+                  fontSize={bayFontSz} fontWeight="700" fill={r.stroke} opacity="0.9">
+                  {(r.bayStart||1)+b}
                 </text>
               );
             })}
@@ -1788,39 +1823,55 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
         );
       })}
 
-      {/* ── DIMENSION ANNOTATIONS — one per rack type ─────────────────────── */}
+      {/* ── DIMENSION ANNOTATIONS — face depth + gap + aisle ──────────────── */}
       {allDimAnnotations.map((d,i)=>{
         const px=X(d.x), py=Y(d.y);
-        const pw=W(d.bayDepth);  // column width in px
-        const pa=W(d.aisle);     // aisle width in px
+        const pFace=W(d.faceDepth);   // one rack face width in px
+        const pGap =W(d.backGap);     // back-panel gap in px
+        const pAisle=W(d.aisle);      // picking aisle in px
         const bayHpx=H(d.bayWidthM);
-        const arrowLen=5;
-        // Only draw if there's enough space
-        if(pw<6) return null;
+        if(pFace<3) return null;
+        const ty=py-3; // dimension line Y position (above rack)
+        const TICK=5;
         return(
-          <g key={`dim-${i}`} opacity="0.85">
-            {/* Bay depth dimension (horizontal — across column width) */}
-            <line x1={px} y1={py+2} x2={px+pw} y2={py+2} stroke="#374151" strokeWidth="0.8"/>
-            <line x1={px} y1={py} x2={px} y2={py+5} stroke="#374151" strokeWidth="0.8"/>
-            <line x1={px+pw} y1={py} x2={px+pw} y2={py+5} stroke="#374151" strokeWidth="0.8"/>
-            <text x={px+pw/2} y={py+10} textAnchor="middle" fontSize="7.5" fill="#374151" fontWeight="700">
-              {(d.bayDepth*1000).toFixed(0)}mm depth
+          <g key={`dim-${i}`}>
+            {/* ── face depth dim (front face) ── */}
+            <line x1={px} y1={ty} x2={px+pFace} y2={ty} stroke="#1d4ed8" strokeWidth="1"/>
+            <line x1={px} y1={ty-TICK/2} x2={px} y2={ty+TICK/2} stroke="#1d4ed8" strokeWidth="1"/>
+            <line x1={px+pFace} y1={ty-TICK/2} x2={px+pFace} y2={ty+TICK/2} stroke="#1d4ed8" strokeWidth="1"/>
+            <text x={px+pFace/2} y={ty-4} textAnchor="middle" fontSize="8" fill="#1d4ed8" fontWeight="700">
+              {(d.faceDepth*1000).toFixed(0)}mm
             </text>
-            {/* Aisle width dimension */}
-            {pa>4&&<>
-              <line x1={px-pa} y1={py+2} x2={px} y2={py+2} stroke="#7c3aed" strokeWidth="0.8" strokeDasharray="2,1.5"/>
-              <text x={px-pa/2} y={py+10} textAnchor="middle" fontSize="6.5" fill="#7c3aed" fontWeight="700">
+            {/* ── back gap dim ── */}
+            {pGap>2&&<>
+              <line x1={px+pFace} y1={ty} x2={px+pFace+pGap} y2={ty} stroke="#dc2626" strokeWidth="0.8" strokeDasharray="2,1"/>
+              <text x={px+pFace+pGap/2} y={ty-4} textAnchor="middle" fontSize="6.5" fill="#dc2626" fontWeight="700">
+                {(d.backGap*1000).toFixed(0)}mm
+              </text>
+            </>}
+            {/* ── back face depth dim ── */}
+            <line x1={px+pFace+pGap} y1={ty} x2={px+2*pFace+pGap} y2={ty} stroke="#1d4ed8" strokeWidth="1"/>
+            <line x1={px+pFace+pGap} y1={ty-TICK/2} x2={px+pFace+pGap} y2={ty+TICK/2} stroke="#1d4ed8" strokeWidth="1"/>
+            <line x1={px+2*pFace+pGap} y1={ty-TICK/2} x2={px+2*pFace+pGap} y2={ty+TICK/2} stroke="#1d4ed8" strokeWidth="1"/>
+            <text x={px+pFace+pGap+pFace/2} y={ty-4} textAnchor="middle" fontSize="8" fill="#1d4ed8" fontWeight="700">
+              {(d.faceDepth*1000).toFixed(0)}mm
+            </text>
+            {/* ── aisle dim (left of rack) ── */}
+            {pAisle>4&&<>
+              <line x1={px-pAisle} y1={ty} x2={px} y2={ty} stroke="#7c3aed" strokeWidth="1" strokeDasharray="3,2"/>
+              <line x1={px-pAisle} y1={ty-TICK/2} x2={px-pAisle} y2={ty+TICK/2} stroke="#7c3aed" strokeWidth="1"/>
+              <text x={px-pAisle/2} y={ty-4} textAnchor="middle" fontSize="8" fill="#7c3aed" fontWeight="700">
                 {(d.aisle*1000).toFixed(0)}mm aisle
               </text>
             </>}
-            {/* Bay height (N-S dimension per bay) */}
-            {bayHpx>6&&<>
-              <line x1={px-2} y1={py} x2={px-2} y2={py+bayHpx} stroke="#374151" strokeWidth="0.8"/>
-              <line x1={px-5} y1={py} x2={px} y2={py} stroke="#374151" strokeWidth="0.8"/>
-              <line x1={px-5} y1={py+bayHpx} x2={px} y2={py+bayHpx} stroke="#374151" strokeWidth="0.8"/>
-              <text x={px-8} y={py+bayHpx/2} textAnchor="middle" dominantBaseline="middle"
-                fontSize="6.5" fill="#374151" fontWeight="700"
-                transform={`rotate(-90,${px-8},${py+bayHpx/2})`}>
+            {/* ── bay N-S height dim ── */}
+            {bayHpx>5&&<>
+              <line x1={px-3} y1={py} x2={px-3} y2={py+bayHpx} stroke="#166534" strokeWidth="1"/>
+              <line x1={px-6} y1={py} x2={px-1} y2={py} stroke="#166534" strokeWidth="1"/>
+              <line x1={px-6} y1={py+bayHpx} x2={px-1} y2={py+bayHpx} stroke="#166534" strokeWidth="1"/>
+              <text x={px-9} y={py+bayHpx/2} textAnchor="middle" dominantBaseline="middle"
+                fontSize="7.5" fill="#166534" fontWeight="700"
+                transform={`rotate(-90,${px-9},${py+bayHpx/2})`}>
                 {(d.bayWidthM*1000).toFixed(0)}mm
               </text>
             </>}
@@ -4068,7 +4119,22 @@ export default function WarehouseDesignerTool() {
   const [udViewMode,  setUdViewMode]  = useState('2d'); // user defined — default 2D (no WebGL risk)
   const [planZoom,    setPlanZoom]    = useState(1);    // floor plan zoom level
   const [floorPlanFS, setFloorPlanFS] = useState(false); // fullscreen 2D plan
-  const plan2DRef = useRef(null); // ref for 2D SVG download
+  const plan2DRef   = useRef(null);
+  const planScrollRef = useRef(null); // for passive wheel zoom
+  const fsScrollRef   = useRef(null); // fullscreen scroll ref
+  // Attach non-passive wheel listeners for smooth zoom
+  useEffect(()=>{
+    const attachWheel = (ref) => {
+      const el = ref.current; if(!el) return;
+      const fn = (e) => { e.preventDefault();
+        setPlanZoom(z=>Math.max(0.3,Math.min(8,z*(e.deltaY<0?1.15:1/1.15)))); };
+      el.addEventListener('wheel', fn, {passive:false});
+      return ()=>el.removeEventListener('wheel', fn);
+    };
+    const d1 = attachWheel(planScrollRef);
+    const d2 = attachWheel(fsScrollRef);
+    return ()=>{ d1&&d1(); d2&&d2(); };
+  },[]);
   const [loading,   setLoading]   = useState(false);
   const [progress,  setProgress]  = useState(0);   // 0-100
   const [progressMsg,setProgressMsg]= useState('');
@@ -4930,13 +4996,13 @@ export default function WarehouseDesignerTool() {
                       if(selectedRackTypes.size===0){alert('Select at least one rack type.');return;}
                       // Initialise udRackDefs with defaults for selected types
                       const defaults={
-                        shelving:   {bayW:'900', bayD:'600', bayH:'2200',levels:'4'},
-                        liveStorage:{bayW:'900', bayD:'1500',bayH:'2200',levels:'4'},
-                        selective:  {bayW:'2700',bayD:'1100',bayH:'6000',levels:'4'},
-                        doubleDeep: {bayW:'2700',bayD:'2200',bayH:'6000',levels:'4'},
-                        driveIn:    {bayW:'2700',bayD:'6600',bayH:'6000',levels:'4'},
-                        cantilever: {bayW:'1500',bayD:'2500',bayH:'3000',levels:'6'},
-                        ground:     {bayW:'1500',bayD:'1200',bayH:'',   levels:'2'},
+                        shelving:   {bayW:'900', bayD:'600', bayH:'2200',levels:'4',aisle:'1200'},
+                        liveStorage:{bayW:'900', bayD:'1500',bayH:'2200',levels:'4',aisle:'1200'},
+                        selective:  {bayW:'2700',bayD:'1100',bayH:'6000',levels:'4',aisle:'3000'},
+                        doubleDeep: {bayW:'2700',bayD:'2200',bayH:'6000',levels:'4',aisle:'3500'},
+                        driveIn:    {bayW:'2700',bayD:'6600',bayH:'6000',levels:'4',aisle:'3500'},
+                        cantilever: {bayW:'1500',bayD:'2500',bayH:'3000',levels:'6',aisle:'3000'},
+                        ground:     {bayW:'1500',bayD:'1200',bayH:'',   levels:'2',aisle:'4000'},
                       };
                       setUdRackDefs(prev=>{
                         const next={...prev};
@@ -5022,15 +5088,20 @@ export default function WarehouseDesignerTool() {
                             [key==='cantilever'?'Arm Length / Depth (mm)':key==='driveIn'?'Lane Depth (mm)':'Bay Depth (mm)','bayD'],
                             key==='ground'?['Stack Layers','levels']:['Clear Height (mm)','bayH'],
                             key==='ground'?['Stacked H (mm) — optional','bayH']:null,
+                            ['Picking Aisle (mm)','aisle'],
                           ].filter(Boolean).map(([label,field])=>(
                             <div key={field}>
-                              <div style={{fontSize:'10px',color:'#6b7280',
-                                fontWeight:'600',marginBottom:'3px'}}>{label}</div>
+                              <div style={{fontSize:'10px',fontWeight:'600',marginBottom:'3px',
+                                color:field==='aisle'?'#7c3aed':'#6b7280'}}>
+                                {label}{field==='aisle'&&<span style={{fontWeight:'400',color:'#9ca3af',marginLeft:'4px'}}>(between back-to-back pairs)</span>}
+                              </div>
                               <input type="number" min="1" value={d[field]||''}
                                 onChange={e=>upd(field,e.target.value)}
-                                placeholder={field==='bayH'&&key==='ground'?'optional':'mm'}
+                                placeholder={field==='bayH'&&key==='ground'?'optional':field==='aisle'?'mm':'mm'}
                                 style={{...inp,marginBottom:0,width:'100%',
-                                  fontSize:'12px',padding:'5px 8px'}}/>
+                                  fontSize:'12px',padding:'5px 8px',
+                                  border:field==='aisle'?'1px solid #c4b5fd':'1px solid #e2e8f0',
+                                  background:field==='aisle'?'#faf5ff':'#fff'}}/>
                             </div>
                           ))}
                       </div>
@@ -5064,6 +5135,7 @@ export default function WarehouseDesignerTool() {
                         bayD:String(udRackDefs[key]?.bayD||''),
                         bayH:String(udRackDefs[key]?.bayH||''),
                         levels:String(udRackDefs[key]?.levels||'1'),
+                        aisle:String(udRackDefs[key]?.aisle||'3000'),
                       }));
                       setUserRacks(newRacks);
                       setUdStep(4);
@@ -6439,11 +6511,9 @@ export default function WarehouseDesignerTool() {
                       </span>
                     </div>
                     {/* Scrollable zoomable plan container */}
-                    <div ref={plan2DRef}
+                    <div ref={r=>{plan2DRef.current=r; planScrollRef.current=r;}}
                       style={{overflow:'auto',border:'1px solid #e2e8f0',borderRadius:'8px',
-                        maxHeight:'600px',background:'#f8fafc',cursor:'grab'}}
-                      onWheel={e=>{e.preventDefault();
-                        setPlanZoom(z=>Math.max(0.3,Math.min(6,z*(e.deltaY<0?1.15:1/1.15))));}}>
+                        maxHeight:'600px',background:'#f8fafc',cursor:'grab'}}>
                       <FloorPlanSVG analysis={analysis} design={design} params={params}
                         rackConfig={rackConfig} zoom={planZoom}/>
                     </div>
@@ -6630,7 +6700,25 @@ export default function WarehouseDesignerTool() {
               {design&&<span style={{fontSize:'12px',fontWeight:'400',color:'#94a3b8',
                 marginLeft:'12px'}}>{design.wW}m × {design.wL}m · {(design.wW*design.wL).toLocaleString()}m²</span>}
             </div>
-            <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+            <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
+              {/* Zoom controls */}
+              <span style={{color:'#94a3b8',fontSize:'11px'}}>Zoom:</span>
+              {[0.5,1,1.5,2,3,4,6].map(z=>(
+                <button key={z} onClick={()=>setPlanZoom(z)}
+                  style={{padding:'4px 9px',borderRadius:'6px',cursor:'pointer',
+                    fontFamily:'inherit',fontSize:'11px',fontWeight:'700',border:'none',
+                    background:planZoom===z?'#7c3aed':'#1e293b',
+                    color:planZoom===z?'#fff':'#94a3b8'}}>
+                  {z===1?'1×':`${z}×`}
+                </button>
+              ))}
+              <button onClick={()=>setPlanZoom(z=>Math.min(8,z*1.3))}
+                style={{padding:'4px 8px',background:'#1e293b',color:'#94a3b8',
+                  border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'13px'}}>+</button>
+              <button onClick={()=>setPlanZoom(z=>Math.max(0.3,z/1.3))}
+                style={{padding:'4px 8px',background:'#1e293b',color:'#94a3b8',
+                  border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'13px'}}>−</button>
+              <span style={{color:'#475569',fontSize:'10px',marginRight:'8px'}}>scroll=zoom</span>
               {/* Download in fullscreen */}
               <button onClick={()=>{
                   // Find the actual <svg> element (not the wrapper div)
@@ -6660,14 +6748,15 @@ export default function WarehouseDesignerTool() {
             </div>
           </div>
           {/* Full-screen plan */}
-          <div style={{flex:1,overflow:'auto',padding:'0'}}>
-            <div id="fs-plan-container" style={{width:'100%',height:'100%'}}>
+          <div ref={fsScrollRef} style={{flex:1,overflow:'auto',padding:'0',background:'#f8fafc'}}>
+            <div id="fs-plan-container">
               <FloorPlanSVG
                 analysis={analysis}
                 design={userDesign||design}
                 params={params}
                 rackConfig={userRackConfig||rackConfig}
-                fullscreen={true}/>
+                fullscreen={true}
+                zoom={planZoom}/>
             </div>
           </div>
         </div>
