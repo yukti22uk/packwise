@@ -1389,14 +1389,16 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   // Default single-face depths (if rackConfig doesn't provide bayD)
   var DEFAULT_FACE_DEPTH={shelving:0.6,liveStorage:0.6,selective:1.1,
     doubleDeep:1.1,driveIn:1.1,cantilever:1.0,ground:1.2};
+  // Build rack-type → total bays needed from rackConfig
+  var rackTypeBays={};
   (rackConfig||[]).forEach(cfg=>{
-    rackTypeBays[cfg.rack]=(rackTypeBays[cfg.rack]||0)+(cfg.baysNeeded||0);
+    if(cfg.rack) rackTypeBays[cfg.rack]=(rackTypeBays[cfg.rack]||0)+(cfg.baysNeeded||0);
   });
 
   var rackRowsForZone=(zone)=>{
     var rows=[], crossAisles=[], dimAnnotations=[];
     var dom=zone.rackType||(zone2RackTypes[zone.key]?.[0]?.rack)||'shelving';
-    var ri=(RACK_INFO_2D?.[dom])||(RACK_INFO_2D?.shelving)||{depth:1.0,color:'#dbeafe',stroke:'#3b82f6'}||{depth:1.0,color:"#dbeafe",stroke:"#3b82f6"};
+    var ri=(RACK_INFO_2D?.[dom])||(RACK_INFO_2D?.shelving)||{depth:1.0,color:'#dbeafe',stroke:'#3b82f6'};
     // Picking aisle: user-entered per rack type, else global aisleM, else default
     var pa=(rackAisleM?.[dom])||aisleM||(DEFAULT_AISLE_M?.[dom])||1.2;
     var colSlot=ri.depth+pa;
