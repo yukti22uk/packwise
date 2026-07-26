@@ -1442,13 +1442,13 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
         if(ey-sy<0.5) continue;
         var segBays=Math.max(1,Math.floor((ey-sy)/bayHm));
 
-        // Front face (nearer to picking aisle)
+        // Front face: bays colBayStart … colBayStart+baysPerCol-1
         rows.push({x:rx, y:sy, w:faceDepth, h:ey-sy, ...ri, dom, bayHm,
           colIdx:i, colLabel:label, segIdx:j, bayStart:colBayStart,
           isHalfRack:'front', bayCount:segBays, faceDepth, pa, backGap});
-        // Back face (farther from picking aisle)
+        // Back face: bays colBayStart+baysPerCol … colBayStart+2*baysPerCol-1
         rows.push({x:rx+faceDepth+backGap, y:sy, w:faceDepth, h:ey-sy, ...ri, dom, bayHm,
-          colIdx:i, colLabel:label, segIdx:j, bayStart:colBayStart,
+          colIdx:i, colLabel:label, segIdx:j, bayStart:colBayStart+(sl.baysPerCol||1),
           isHalfRack:'back', bayCount:segBays, faceDepth, pa, backGap});
       }
 
@@ -1461,7 +1461,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
         });
       }
 
-      globalBayNum+=sl.baysPerCol;
+      globalBayNum += (sl.baysPerCol||1) * 2;  // front face + back face
     }
     return {rows, crossAisles, nCols, baysPerCol:sl.baysPerCol, totalBays, dimAnnotations};
   };
@@ -1793,18 +1793,19 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
         }
       })}
 
-      {/* ── BAY NUMBERING — sequential 1→N across all columns ────────────── */}
+      {/* ── BAY NUMBERING — sequential, front + back separate ───────────── */}
       {allRackRows.map((r,i)=>{
-        if(r.isHalfRack==='back') return null; // only label front face
         const px=X(r.x), py=Y(r.y), pw=W(r.w), ph=H(r.h);
         const bayHpx=H(r.bayHm||0.9);
         const showBayNum=pw>4&&bayHpx>4;
         const colFontSz=Math.max(7,Math.min(13,pw*0.8));
         const bayFontSz=Math.max(5,Math.min(10,Math.min(pw*0.65,bayHpx*0.65)));
         const nBays=r.bayCount||Math.max(1,Math.floor(r.h/(r.bayHm||0.9)));
+        // Column letter only on front face top segment
+        const showColLetter = r.isHalfRack!=='back' && r.segIdx===0 && pw>3;
         return(
           <g key={`lbl-${i}`}>
-            {r.segIdx===0&&pw>3&&<text
+            {showColLetter&&<text
               x={px+pw/2} y={py-1.5}
               textAnchor="middle" fontSize={colFontSz}
               fontWeight="900" fill={r.stroke}>
