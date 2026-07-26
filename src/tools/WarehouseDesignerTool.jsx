@@ -1177,7 +1177,6 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   // ── USE LAYOUT-DERIVED DIMENSIONS ────────────────────────────────────────
   // Warehouse length comes FROM the bay layout, not from pre-calculated areas.
   // This ensures the plan always accurately represents the physical bay count.
-  var actualWL = Math.max(wL, layoutWL);  // use at least design wL, or layout-derived
   var SVG_W = fullscreen ? 1800 : 960;
   var SVG_H = fullscreen ? Math.round(1800 * (actualWL/wW) * 0.8 + 120) : 720;
   var ML=62, MR=70, MT=50, MB=70;
@@ -1293,7 +1292,15 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     cur += rtLayout.height;
   });
   // Actual warehouse length derived from layout (not from pre-calculated area)
-  var layoutWL = cur + stagingH + (isOne?0:0); // cur already includes all rack sections
+  var layoutWL = cur + stagingH;
+  var actualWL = Math.max(wL, layoutWL); // layout-derived warehouse length
+  // Adjust scale factor to fit actual layout height
+  SVG_H = fullscreen ? Math.round(1800 * (actualWL/wW) * 0.8 + 120) : 720;
+  DH = SVG_H - MT - MB;
+  sY = DH / actualWL;
+  // Rebuild Y and H coordinate transformers with updated sY
+  Y = m => MT + m*sY;
+  H = m => m*sY;
 
   // Staging at south
   if (isOne) {
