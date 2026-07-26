@@ -1160,6 +1160,7 @@ function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossInterval
 // ── buildFloorPlanLayout: all computation extracted from FloorPlanSVG ──────────
 // Module-level = separate esbuild scope, no TDZ conflicts with rendering code.
 function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) {
+  if (!design || !design.wW || !design.wL) return null;
   var MFT  = 3.2808;
   var M2FT = 10.7639;
   var ft   = m  => `${(m*MFT).toFixed(0)}'`;
@@ -1483,7 +1484,16 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
 }
 
 function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false }) {
-  const fp = buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen);
+  if (!design?.wW || !design?.wL) return null;
+
+  let fp;
+  try {
+    fp = buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen);
+  } catch(e) {
+    console.error('[FloorPlanSVG] buildFloorPlanLayout error:', e);
+    return <div style={{color:'red',padding:'8px',fontSize:'11px'}}>Plan error: {e.message}</div>;
+  }
+  if (!fp?.SVG_W) return <div style={{padding:'8px',color:'#9ca3af',fontSize:'11px'}}>Generating plan…</div>;
   const {
     SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, wW, wL,
     X, Y, W, H,
