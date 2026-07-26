@@ -1143,19 +1143,22 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
 // Module-level section layout calculator (outside FloorPlanSVG to avoid minifier TDZ)
 const CROSS_AISLE_W_M = 3.0; // cross aisle width in metres
 function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossIntervalM) {
-  const nCols = Math.max(3, Math.floor(sectionW / colSlot));
-  const baysPerCol = totalBays > 0 ? Math.ceil(totalBays / nCols) : 3;
-  let y = 0.3; let yStor = 0;
-  const cYs = [];
-  for(let b = 0; b < baysPerCol; b++){
-    y += bayHm; yStor += bayHm;
-    if(yStor >= crossIntervalM && b < baysPerCol - 1){
-      cYs.push(y); y += CROSS_AISLE_W_M; yStor = 0;
+  var nCols = Math.max(3, Math.floor(sectionW / colSlot));
+  var baysPerCol = totalBays > 0 ? Math.ceil(totalBays / nCols) : 3;
+  var y = 0.3, yStor = 0, baysSinceLast = 0;
+  var cYs = [];
+  for(var b = 0; b < baysPerCol; b++){
+    y += bayHm; yStor += bayHm; baysSinceLast++;
+    // Cross aisle: only when ≥2 bays since last AND ≥2 bays remaining
+    var baysRemain = baysPerCol - b - 1;
+    if(yStor >= crossIntervalM && baysSinceLast >= 2 && baysRemain >= 2){
+      cYs.push(y); y += CROSS_AISLE_W_M; yStor = 0; baysSinceLast = 0;
     }
   }
   return { nCols, baysPerCol, height: Math.max(3, y+0.3),
     area: +((y+0.3)*sectionW).toFixed(1), crossYPositions: cYs };
 }
+
 
 // ── buildFloorPlanLayout: all computation extracted from FloorPlanSVG ──────────
 // Module-level = separate esbuild scope, no TDZ conflicts with rendering code.
@@ -1277,7 +1280,10 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     if(!totalBaysRt && !(rackTypeAreas?.[rt])) return;
     var rtRi    = (RACK_INFO_2D_LOOKUP?.[rt]) || {depth:2.2};
     var rtPa    = (rackAisleM?.[rt])||aisleM||(DEFAULT_AISLE_M?.[rt])||1.2;
-    var rtSlot  = rtRi.depth + rtPa;
+    // Use actual bayD from rackConfig for colSlot (matches rackRowsForZone actualColSlot)
+    var rtFaceD = (rackBayDepthM?.[rt]) || rtRi.depth/2 || 1.0;
+    var rtGap   = (rt==="shelving"||rt==="liveStorage")?0.05:0.10;
+    var rtSlot  = rtFaceD*2 + rtGap + rtPa;  // pair depth + aisle
     var rtBayH  = (rackBayWidthM?.[rt])||(BAY_HEIGHT_M_LOOKUP?.[rt])||0.9;
     var rtCross = ({shelving:13,liveStorage:13,selective:27,
       doubleDeep:27,driveIn:27,cantilever:27,ground:27})[rt] || 13;
@@ -1656,42 +1662,19 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
 
         // ── SELECTIVE PALLET RACK ─────────────────────────────────────────
         // Vertical column: bays stack along column HEIGHT, back-to-back partition at center WIDTH
-        if(dom==='selective'||dom==='doubleDeep'){
-          const bayH  = H(2.7);  // one bay height in pixels (N-S direction)
-          const nBays = Math.max(1,Math.floor(r.h/2.7));
-          const halfW = Math.max(2,(pw-3)/2); // width of each pallet face
+        if(dom==='selective'||dom==='doubleDeep'||dom==='driveIn'){
+          // Each rack face: colored rect + horizontal bay beam lines only (no pallet symbols)
+          const bayHpx2=H(r.bayHm||2.7);
+          const nBeams=Math.max(0,Math.floor(r.h/(r.bayHm||2.7))-1);
           return(
             <g key={`rr-${i}`}>
-              {/* Column background */}
               <rect x={px} y={py} width={Math.max(3,pw)} height={ph}
-                fill={r.color} stroke={r.stroke} strokeWidth="1" rx="1"/>
-              {/* Bay rows — each 2.7m tall */}
-              {Array.from({length:nBays},(_,b)=>{
-                const by=py+b*bayH;
-                if(by+bayH>py+ph) return null;
-                return(
-                  <g key={b}>
-                    {/* Front face pallet (left half of column) */}
-                    <rect x={px+1} y={by+1} width={halfW} height={bayH-2}
-                      fill="#fde68a" stroke="#d97706" strokeWidth="0.6" rx="0.5"/>
-                    {/* Back face pallet (right half of column) */}
-                    <rect x={px+halfW+2} y={by+1} width={halfW} height={bayH-2}
-                      fill="#fde68a" stroke="#d97706" strokeWidth="0.6" rx="0.5"/>
-                    {/* Pallet cross marks */}
-                    {[px+1+halfW/2, px+halfW+2+halfW/2].map((bx,bi)=>(
-                      <g key={bi}>
-                        <line x1={bx} y1={by+bayH*0.3} x2={bx} y2={by+bayH*0.7} stroke="#d97706" strokeWidth="0.5"/>
-                        <line x1={bx-halfW*0.3} y1={by+bayH/2} x2={bx+halfW*0.3} y2={by+bayH/2} stroke="#d97706" strokeWidth="0.5"/>
-                      </g>
-                    ))}
-                    {/* Bay beam (horizontal line at top of each bay) */}
-                    {b>0&&<line x1={px} y1={by} x2={px+pw} y2={by} stroke="#374151" strokeWidth="1.5"/>}
-                  </g>
-                );
-              })}
-              {/* ── BACK-TO-BACK PARTITION — vertical centre line through full column height ── */}
-              <line x1={px+pw/2} y1={py} x2={px+pw/2} y2={py+ph}
-                stroke="#1e293b" strokeWidth="1.8"/>
+                fill={r.color} stroke={r.stroke} strokeWidth="0.8" rx="0.5"/>
+              {Array.from({length:nBeams},(_,b)=>(
+                <line key={b} x1={px} y1={py+(b+1)*bayHpx2}
+                  x2={px+pw} y2={py+(b+1)*bayHpx2}
+                  stroke={r.stroke} strokeWidth="1"/>
+              ))}
             </g>
           );
         }
@@ -1783,11 +1766,6 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
                   x2={px+pw} y2={py+(b+1)*bayHpx}
                   stroke={r.stroke} strokeWidth="0.5" strokeOpacity="0.5"/>
               ))}
-              {/* ── BACK-TO-BACK PARTITION ── vertical centre line (two shelving faces) */}
-              <line
-                x1={px+Math.max(3,pw)/2} y1={py}
-                x2={px+Math.max(3,pw)/2} y2={py+ph}
-                stroke={r.stroke} strokeWidth="1.4" strokeOpacity="0.9"/>
             </g>
           );
         }
@@ -1798,8 +1776,8 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
         const px=X(r.x), py=Y(r.y), pw=W(r.w), ph=H(r.h);
         const bayHpx=H(r.bayHm||0.9);
         const showBayNum=pw>4&&bayHpx>4;
-        const colFontSz=Math.max(7,Math.min(13,pw*0.8));
-        const bayFontSz=Math.max(5,Math.min(10,Math.min(pw*0.65,bayHpx*0.65)));
+        const colFontSz=Math.max(9,Math.min(16,pw*0.9));
+        const bayFontSz=Math.max(6,Math.min(13,Math.min(pw*0.75,bayHpx*0.75)));
         const nBays=r.bayCount||Math.max(1,Math.floor(r.h/(r.bayHm||0.9)));
         // Column letter only on front face top segment
         const showColLetter = r.isHalfRack!=='back' && r.segIdx===0 && pw>3;
@@ -5873,7 +5851,7 @@ export default function WarehouseDesignerTool() {
                     {label}
                   </button>))}
                 {udViewMode==='2d'&&(
-                  <button onClick={()=>setFloorPlanFS(true)}
+                  <button onClick={()=>{setFloorPlanFS(true);setPlanZoom(2);}}
                     style={{padding:'8px 12px',borderRadius:'8px',cursor:'pointer',
                       fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
                       border:'2px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
@@ -6481,8 +6459,8 @@ export default function WarehouseDesignerTool() {
                       {l}
                     </button>))}
                   {viewMode3D==='2d'&&(
-                    <button onClick={()=>setFloorPlanFS(true)}
-                      title="View full screen"
+                    <button onClick={()=>{setFloorPlanFS(true);setPlanZoom(2);}}
+                      title="View full screen (zoom 2×)"
                       style={{padding:'5px 12px',borderRadius:'7px',cursor:'pointer',
                         fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
                         border:'2px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
