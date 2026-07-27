@@ -1143,10 +1143,13 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
 // Module-level section layout calculator (outside FloorPlanSVG to avoid minifier TDZ)
 const CROSS_AISLE_W_M = 3.0; // cross aisle width in metres
 function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossIntervalM) {
-  var nCols = Math.max(3, Math.floor(sectionW / colSlot));
-  // totalBays = TOTAL pallet positions (front + back faces combined).
-  // Each B2B column pair has baysPerFace positions on each face.
-  // baysPerFace = ceil(totalBays / 2 / nCols)
+  // totalBays = total positions (front + back combined)
+  // Each B2B column pair contributes baysPerFace on each face.
+  // Cap nCols so nCols × baysPerFace × 2 ≈ totalBays (not much more).
+  var maxColsByWidth = Math.max(3, Math.floor(sectionW / colSlot));
+  // Front face needs ceil(totalBays/2) positions → cap columns at that
+  var maxColsByBays  = totalBays > 0 ? Math.ceil(totalBays / 2) : maxColsByWidth;
+  var nCols = Math.max(3, Math.min(maxColsByWidth, maxColsByBays));
   var baysPerFace = totalBays > 0 ? Math.max(1, Math.ceil(totalBays / 2 / nCols)) : 3;
   var y = 0.3, yStor = 0, baysSinceLast = 0;
   var cYs = [];
@@ -2104,71 +2107,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
         );
       })}
 
-      {/* ── RACKING LAYOUT SUMMARY TABLE ─────────────────────────────────── */}
-      {(layoutSummary||[]).length>0&&(()=>{
-        const tX=X(0)+2, tY=Y(actualWL)+12;
-        const cols=[180,80,80,90];  // col widths in px
-        const rowH=16, hdrH=20;
-        const tW=cols.reduce((s,c)=>s+c,0)+8;
-        const tH=hdrH+(layoutSummary.length+1)*rowH+10;
-        const headers=['Rack Type','Total Bays','Locations','Area (m²)'];
-        return(
-          <g key="summary-table">
-            {/* Title */}
-            <text x={tX} y={tY-2} fontSize="11" fontWeight="800" fill="#0f172a">
-              Racking Layout Summary
-            </text>
-            {/* Table background */}
-            <rect x={tX} y={tY+2} width={tW} height={tH} fill="#f8fafc"
-              stroke="#cbd5e1" strokeWidth="1" rx="3"/>
-            {/* Header row */}
-            <rect x={tX} y={tY+2} width={tW} height={hdrH} fill="#1e293b" rx="3"/>
-            {headers.map((h,ci)=>(
-              <text key={ci}
-                x={tX+cols.slice(0,ci).reduce((s,c)=>s+c,0)+cols[ci]/2+4}
-                y={tY+2+hdrH/2} textAnchor="middle" dominantBaseline="middle"
-                fontSize="9" fontWeight="700" fill="#f1f5f9">{h}</text>
-            ))}
-            {/* Data rows */}
-            {layoutSummary.map((row,ri)=>{
-              const ry=tY+2+hdrH+ri*rowH;
-              const bg=ri%2===0?'#fff':'#f1f5f9';
-              const vals=[row.name,
-                (row.bays||0).toLocaleString(),
-                (row.locs||0).toLocaleString(),
-                '—'];
-              return(
-                <g key={ri}>
-                  <rect x={tX} y={ry} width={tW} height={rowH} fill={bg}/>
-                  {vals.map((v,ci)=>(
-                    <text key={ci}
-                      x={tX+cols.slice(0,ci).reduce((s,c)=>s+c,0)+cols[ci]/2+4}
-                      y={ry+rowH/2} textAnchor="middle" dominantBaseline="middle"
-                      fontSize={ci===0?8.5:9} fontWeight={ci===0?'600':'400'}
-                      fill={ci===0?'#1d4ed8':'#0f172a'}>{v}</text>
-                  ))}
-                  <line x1={tX} y1={ry+rowH} x2={tX+tW} y2={ry+rowH}
-                    stroke="#e2e8f0" strokeWidth="0.5"/>
-                </g>
-              );
-            })}
-            {/* Total row */}
-            {(()=>{
-              const ry=tY+2+hdrH+layoutSummary.length*rowH;
-              const totBays=layoutSummary.reduce((s,r)=>s+(r.bays||0),0);
-              const totLocs=layoutSummary.reduce((s,r)=>s+(r.locs||0),0);
-              return(
-                <g>
-                  <rect x={tX} y={ry} width={tW} height={rowH} fill="#dbeafe"/>
-                  {['TOTAL',totBays.toLocaleString(),totLocs.toLocaleString(),''].map((v,ci)=>(
-                    <text key={ci}
-                      x={tX+cols.slice(0,ci).reduce((s,c)=>s+c,0)+cols[ci]/2+4}
-                      y={ry+rowH/2} textAnchor="middle" dominantBaseline="middle"
-                      fontSize="9" fontWeight="800" fill="#1e40af">{v}</text>
-                  ))}
-                </g>
-              );
-            })()}
+
             {/* Column dividers */}
             {cols.slice(0,-1).map((_,ci)=>{
               const cx=tX+cols.slice(0,ci+1).reduce((s,c)=>s+c,0)+4;
@@ -2178,8 +2117,6 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
             <rect x={tX} y={tY+2} width={tW} height={tH} fill="none"
               stroke="#cbd5e1" strokeWidth="1" rx="3"/>
           </g>
-        );
-      })()}
 
       {/* ── TOTAL AREA FOOTER ─── */}
       <text x={X(wW/2)} y={SVG_H-4} textAnchor="middle" fontSize="10" fontWeight="700" fill="#374151">
@@ -5989,6 +5926,60 @@ export default function WarehouseDesignerTool() {
                       </span>
                     </div>
                   ))}
+                </div>
+              );
+            })()}
+
+            {/* ── RACKING LAYOUT SUMMARY (after rack config, before plan) ──── */}
+            {userRackConfig&&userRackConfig.length>0&&(()=>{
+              const sm={};
+              userRackConfig.forEach(cfg=>{
+                const rt=cfg.rack; if(!rt) return;
+                if(!sm[rt]) sm[rt]={name:({'shelving':'Shelving','liveStorage':'Flow/Live Storage',
+                  'selective':'Selective Pallet','doubleDeep':'Double-Deep','driveIn':'Drive-In',
+                  'cantilever':'Cantilever','ground':'Ground Storage'})[rt]||rt, bays:0, locs:0};
+                sm[rt].bays+=(cfg.baysNeeded||0); sm[rt].locs+=(cfg.locs||0);
+              });
+              const rows=Object.values(sm);
+              const totBays=rows.reduce((s,r)=>s+r.bays,0);
+              const totLocs=rows.reduce((s,r)=>s+r.locs,0);
+              if(!rows.length) return null;
+              return(
+                <div style={{marginBottom:'12px',border:'1px solid #e2e8f0',borderRadius:'10px',
+                  overflow:'hidden'}}>
+                  <div style={{background:'#0f172a',padding:'8px 14px',
+                    fontSize:'12px',fontWeight:'700',color:'#f1f5f9',letterSpacing:'0.03em'}}>
+                    📊 Racking Layout Summary
+                  </div>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                    <thead>
+                      <tr style={{background:'#f1f5f9'}}>
+                        {['Rack Type','Bays (B2B total)','Storage Locations'].map(h=>(
+                          <th key={h} style={{padding:'6px 10px',textAlign:'left',
+                            fontWeight:'700',color:'#475569',fontSize:'10px',
+                            textTransform:'uppercase',borderBottom:'1px solid #e2e8f0'}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r,i)=>(
+                        <tr key={i} style={{background:i%2===0?'#fff':'#f8fafc'}}>
+                          <td style={{padding:'6px 10px',fontWeight:'600',color:'#1d4ed8'}}>{r.name}</td>
+                          <td style={{padding:'6px 10px',textAlign:'right',fontWeight:'700',
+                            color:'#0f172a'}}>{(r.bays||0).toLocaleString()}</td>
+                          <td style={{padding:'6px 10px',textAlign:'right',fontWeight:'700',
+                            color:'#7c3aed'}}>{(r.locs||0).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                      <tr style={{background:'#dbeafe',borderTop:'2px solid #93c5fd'}}>
+                        <td style={{padding:'7px 10px',fontWeight:'800',color:'#1e40af'}}>TOTAL</td>
+                        <td style={{padding:'7px 10px',textAlign:'right',fontWeight:'800',
+                          color:'#1e40af'}}>{totBays.toLocaleString()}</td>
+                        <td style={{padding:'7px 10px',textAlign:'right',fontWeight:'800',
+                          color:'#1e40af'}}>{totLocs.toLocaleString()}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               );
             })()}
