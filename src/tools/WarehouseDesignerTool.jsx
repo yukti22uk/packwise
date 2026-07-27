@@ -1144,20 +1144,23 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
 const CROSS_AISLE_W_M = 3.0; // cross aisle width in metres
 function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossIntervalM) {
   var nCols = Math.max(3, Math.floor(sectionW / colSlot));
-  var baysPerCol = totalBays > 0 ? Math.ceil(totalBays / nCols) : 3;
+  // totalBays = TOTAL pallet positions (front + back faces combined).
+  // Each B2B column pair has baysPerFace positions on each face.
+  // baysPerFace = ceil(totalBays / 2 / nCols)
+  var baysPerFace = totalBays > 0 ? Math.max(1, Math.ceil(totalBays / 2 / nCols)) : 3;
   var y = 0.3, yStor = 0, baysSinceLast = 0;
   var cYs = [];
-  for(var b = 0; b < baysPerCol; b++){
+  for(var b = 0; b < baysPerFace; b++){
     y += bayHm; yStor += bayHm; baysSinceLast++;
-    // Cross aisle: only when ≥2 bays since last AND ≥2 bays remaining
-    var baysRemain = baysPerCol - b - 1;
+    var baysRemain = baysPerFace - b - 1;
     if(yStor >= crossIntervalM && baysSinceLast >= 2 && baysRemain >= 2){
       cYs.push(y); y += CROSS_AISLE_W_M; yStor = 0; baysSinceLast = 0;
     }
   }
-  return { nCols, baysPerCol, height: Math.max(3, y+0.3),
+  return { nCols, baysPerCol: baysPerFace, height: Math.max(3, y+0.3),
     area: +((y+0.3)*sectionW).toFixed(1), crossYPositions: cYs };
 }
+
 
 
 // ── buildFloorPlanLayout: all computation extracted from FloorPlanSVG ──────────
@@ -1279,7 +1282,9 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var totalBaysRt = (rackConfig||[]).filter(c=>c.rack===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
     if(!totalBaysRt && !(rackTypeAreas?.[rt])) return;
     var rtRi    = (RACK_INFO_2D_LOOKUP?.[rt]) || {depth:2.2};
-    var rtPa    = (rackAisleM?.[rt])||aisleM||(DEFAULT_AISLE_M?.[rt])||1.2;
+    // Priority: user-entered per-rack → rack-type default → global aisleM
+    // Global aisleM (forklift) must NOT override shelving's 1.2m default
+    var rtPa    = (rackAisleM?.[rt])||(DEFAULT_AISLE_M?.[rt])||aisleM||1.2;
     // Use actual bayD from rackConfig for colSlot (matches rackRowsForZone actualColSlot)
     var rtFaceD = (rackBayDepthM?.[rt]) || rtRi.depth/2 || 1.0;
     var rtGap   = (rt==="shelving"||rt==="liveStorage")?0.05:0.10;
@@ -1287,6 +1292,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var rtBayH  = (rackBayWidthM?.[rt])||(BAY_HEIGHT_M_LOOKUP?.[rt])||0.9;
     var rtCross = ({shelving:13,liveStorage:13,selective:27,
       doubleDeep:27,driveIn:27,cantilever:27,ground:27})[rt] || 13;
+    // totalBaysRt = total positions (front+back). computeSectionLayout divides by 2 internally.
     var rtBays  = totalBaysRt || Math.ceil(((rackTypeAreas?.[rt])||0) / (rtBayH * wW));
     var rtLayout= computeSectionLayout(rtBays, wW, rtBayH, rtSlot, rtCross);
     sectionLayouts[rt] = {...rtLayout, totalBays: rtBays};
@@ -1406,7 +1412,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var dom=zone.rackType||(zone2RackTypes[zone.key]?.[0]?.rack)||'shelving';
     var ri=(RACK_INFO_2D?.[dom])||(RACK_INFO_2D?.shelving)||{depth:1.0,color:'#dbeafe',stroke:'#3b82f6'};
     // Picking aisle: user-entered per rack type, else global aisleM, else default
-    var pa=(rackAisleM?.[dom])||aisleM||(DEFAULT_AISLE_M?.[dom])||1.2;
+    var pa=(rackAisleM?.[dom])||(DEFAULT_AISLE_M?.[dom])||aisleM||1.2;
     var colSlot=ri.depth+pa;
     var bayHm=(rackBayWidthM?.[dom])||(BAY_HEIGHT_M_LOOKUP?.[dom])||0.9;
 
@@ -1427,47 +1433,54 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     let curX=zone.x+0.3;
     var globalBayNum=1;
 
-    // Single face depth from rackConfig (user entered) or defaults
     var faceDepth=(rackBayDepthM?.[dom])||(DEFAULT_FACE_DEPTH?.[dom])||0.6;
-    // Back-to-back gap: 50mm for shelving/live, 100mm beam for pallet racks
     var backGap=(dom==='shelving'||dom==='liveStorage')?0.05:0.10;
-    // Total column depth (two faces + gap)
     var colDepth=faceDepth*2+backGap;
-    // Override colSlot with actual dimensions
     var actualColSlot=colDepth+pa;
 
     for(let i=0;i<nCols;i++){
       var rx=curX+i*actualColSlot+pa/2;
       if(rx+colDepth>zone.x+zone.w-0.3) break;
       var label=colLabel(i);
-      var colBayStart=globalBayNum;
 
+      // ── Pass 1: count actual drawn bays across all segments ──────────
+      var actualBays=0;
+      for(let j2=0;j2<breakYs.length-1;j2++){
+        var sy0=zone.y+breakYs[j2]+(j2>0?CROSS_AISLE_W_M/2:0.3);
+        var ey0=zone.y+breakYs[j2+1]-(j2<breakYs.length-2?CROSS_AISLE_W_M/2:0);
+        if(ey0-sy0>=0.5) actualBays+=Math.max(1,Math.floor((ey0-sy0)/bayHm));
+      }
+
+      // Front bays: globalBayNum … globalBayNum+actualBays-1
+      // Back bays:  globalBayNum+actualBays … globalBayNum+2*actualBays-1
+      var colFrontStart=globalBayNum;
+      var colBackStart=globalBayNum+actualBays;
+      var frontOffset=0;
+
+      // ── Pass 2: draw rows with correct bay numbers ───────────────────
       for(let j=0;j<breakYs.length-1;j++){
         var sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W_M/2:0.3);
         var ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W_M/2:0);
         if(ey-sy<0.5) continue;
         var segBays=Math.max(1,Math.floor((ey-sy)/bayHm));
 
-        // Front face: bays colBayStart … colBayStart+baysPerCol-1
-        rows.push({x:rx, y:sy, w:faceDepth, h:ey-sy, ...ri, dom, bayHm,
-          colIdx:i, colLabel:label, segIdx:j, bayStart:colBayStart,
-          isHalfRack:'front', bayCount:segBays, faceDepth, pa, backGap});
-        // Back face: bays colBayStart+baysPerCol … colBayStart+2*baysPerCol-1
-        rows.push({x:rx+faceDepth+backGap, y:sy, w:faceDepth, h:ey-sy, ...ri, dom, bayHm,
-          colIdx:i, colLabel:label, segIdx:j, bayStart:colBayStart+(sl.baysPerCol||1),
-          isHalfRack:'back', bayCount:segBays, faceDepth, pa, backGap});
+        rows.push({x:rx,y:sy,w:faceDepth,h:ey-sy,...ri,dom,bayHm,
+          colIdx:i,colLabel:label,segIdx:j,
+          bayStart:colFrontStart+frontOffset,
+          isHalfRack:'front',bayCount:segBays,faceDepth,pa,backGap});
+        rows.push({x:rx+faceDepth+backGap,y:sy,w:faceDepth,h:ey-sy,...ri,dom,bayHm,
+          colIdx:i,colLabel:label,segIdx:j,
+          bayStart:colBackStart+frontOffset,
+          isHalfRack:'back',bayCount:segBays,faceDepth,pa,backGap});
+
+        frontOffset+=segBays;
       }
 
-      // Dimension annotation at first column only
-      if(i===0){
-        dimAnnotations.push({
-          x:rx, y:zone.y+0.3,
-          faceDepth, backGap, colDepth, aisle:pa,
-          bayWidthM:bayHm, dom,
-        });
-      }
+      if(i===0) dimAnnotations.push({
+        x:rx,y:zone.y+0.3,
+        faceDepth,backGap,colDepth,aisle:pa,bayWidthM:bayHm,dom});
 
-      globalBayNum += (sl.baysPerCol||1) * 2;  // front face + back face
+      globalBayNum+=actualBays*2; // advance by actual drawn bays (front+back)
     }
     return {rows, crossAisles, nCols, baysPerCol:sl.baysPerCol, totalBays, dimAnnotations};
   };
