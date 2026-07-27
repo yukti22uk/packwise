@@ -2109,14 +2109,6 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
 
 
             {/* Column dividers */}
-            {cols.slice(0,-1).map((_,ci)=>{
-              const cx=tX+cols.slice(0,ci+1).reduce((s,c)=>s+c,0)+4;
-              return <line key={ci} x1={cx} y1={tY+2} x2={cx} y2={tY+2+tH}
-                stroke="#cbd5e1" strokeWidth="0.5"/>;
-            })}
-            <rect x={tX} y={tY+2} width={tW} height={tH} fill="none"
-              stroke="#cbd5e1" strokeWidth="1" rx="3"/>
-          </g>
 
       {/* ── TOTAL AREA FOOTER ─── */}
       <text x={X(wW/2)} y={SVG_H-4} textAnchor="middle" fontSize="10" fontWeight="700" fill="#374151">
