@@ -1278,6 +1278,10 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var storageHTotal=Object.values(rackTypeAreas).reduce((s,a)=>s+a,0)/wW||10;
   // Build zone sections bay-first
   var sectionLayouts = {}; // rackType → { nCols, baysPerCol, height, area, crossYPositions }
+  var sectionCrossAisles=[];  // cross aisles between rack type sections + staging boundary
+  var SECTION_CA_W=3.0;        // 3m cross aisle between sections
+  var firstRackSection=true;
+
   RACK_ORDER.forEach(rt => {
     var totalBaysRt = (rackConfig||[]).filter(c=>c.rack===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
     if(!totalBaysRt && !(rackTypeAreas?.[rt])) return;
@@ -1297,17 +1301,43 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var rtLayout= computeSectionLayout(rtBays, wW, rtBayH, rtSlot, rtCross);
     sectionLayouts[rt] = {...rtLayout, totalBays: rtBays};
 
+    // Cross aisle before this section:
+    // — Between staging area and first rack section
+    // — Between consecutive rack type sections
+    sectionCrossAisles.push({x:0, y:cur, w:wW, h:SECTION_CA_W,
+      label: firstRackSection ? 'CROSS AISLE (Staging ↔ Storage)' : `CROSS AISLE`});
+    cur += SECTION_CA_W;
+    firstRackSection = false;
+
     var rtStyle = (RACK_TYPE_STYLE?.[rt]) || {label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
     zoneRects.push({key:rt, x:0, y:cur, w:wW, h:rtLayout.height,
       label:rtStyle.label, color:rtStyle.color, border:rtStyle.border, text:rtStyle.text,
       area:rtLayout.area, rackType:rt, sectionLayout:rtLayout});
     cur += rtLayout.height;
   });
-  // Actual warehouse length derived from layout (not from pre-calculated area)
+  // Build rack layout summary (for summary table below plan)
+  var layoutSummary=[];
+  var RACK_LABELS={shelving:'Shelving',liveStorage:'Flow/Live Storage',
+    selective:'Selective Pallet Rack',doubleDeep:'Double-Deep Rack',
+    driveIn:'Drive-In Rack',cantilever:'Cantilever Rack',ground:'Ground Storage'};
+  var summaryMap={};
+  (rackConfig||[]).forEach(function(cfg){
+    var rt=cfg.rack; if(!rt) return;
+    if(!summaryMap[rt]) summaryMap[rt]={name:RACK_LABELS[rt]||rt,bays:0,locs:0};
+    summaryMap[rt].bays+=(cfg.baysNeeded||0);
+    summaryMap[rt].locs+=(cfg.locs||0);
+  });
+  Object.entries(summaryMap).forEach(function(e){ layoutSummary.push(e[1]); });
+  // Add final cross aisle between last rack section and dispatch staging
+  if(sectionCrossAisles.length>0){
+    sectionCrossAisles.push({x:0, y:cur, w:wW, h:SECTION_CA_W,
+      label:'CROSS AISLE (Storage ↔ Staging)'});
+    cur += SECTION_CA_W;
+  }
   var layoutWL = cur + stagingH;
   var actualWL = Math.max(wL, layoutWL); // layout-derived warehouse length
   // Adjust scale factor to fit actual layout height
-  SVG_H = fullscreen ? Math.round(1800 * (actualWL/wW) * 0.8 + 120) : 720;
+  SVG_H = fullscreen ? Math.round(1800 * (actualWL/wW) * 0.8 + 220) : 820; // extra for summary
   DH = SVG_H - MT - MB;
   sY = DH / actualWL;
   // Rebuild Y and H coordinate transformers with updated sY
@@ -1554,7 +1584,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     nMHE: design.nMHE||0, inboundMode: params.inboundMode, outboundMode: params.outboundMode,
     stagingH, isBoth, isOne, recH, disH, offH, mheH, supportH,
     zoneRects, stagingRects, supportRects, dockDoors,
-    allRackRows, allCrossAisles, allDimAnnotations, recPallets, disPallets,
+    allRackRows, allCrossAisles, allDimAnnotations, sectionCrossAisles, layoutSummary, recPallets, disPallets,
     packTables, mheBays, dimRight, sectionLayouts,
     doorW: 3.5,
     // Design values needed in render
@@ -1583,7 +1613,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
     dockSide, forkType, packingBenches, nMHE, inboundMode, outboundMode,
     stagingH, isBoth, isOne, recH, disH, offH, mheH, supportH,
     zoneRects, stagingRects, supportRects, dockDoors,
-    allRackRows, allCrossAisles, allDimAnnotations, recPallets, disPallets,
+    allRackRows, allCrossAisles, allDimAnnotations, sectionCrossAisles, layoutSummary, recPallets, disPallets,
     packTables, mheBays, dimRight, sectionLayouts, doorW,
     zoneAreas, receivingArea, dispatchArea, mheArea, officeArea, netRackArea,
     totalDocks, inboundDocks, outboundDocks, staging,
@@ -1656,17 +1686,49 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
         </g>
       ))}
 
-      {/* ── CROSS AISLES (yellow stripes perpendicular to rack rows) ─── */}
-      {allCrossAisles.map((a,i)=>(
-        <g key={`ca-${i}`}>
-          <rect x={X(a.x)} y={Y(a.y)} width={W(a.w)} height={Math.max(3,H(a.h))}
-            fill="#fef9c3" stroke="#ca8a04" strokeWidth="0.5" opacity="0.8"/>
-          <text x={X(a.x+a.w/2)} y={Y(a.y+a.h/2)} textAnchor="middle"
-            dominantBaseline="middle" fontSize="7" fill="#92400e" fontWeight="700">
-            CROSS AISLE
+      {/* ── SECTION CROSS AISLES — between rack types + staging boundaries ─ */}
+      {(sectionCrossAisles||[]).map((ca,i)=>(
+        <g key={`sca-${i}`}>
+          <rect x={X(ca.x)} y={Y(ca.y)} width={W(ca.w)} height={Math.max(4,H(ca.h))}
+            fill="#fef9c3" stroke="#fcd34d" strokeWidth="0.8" opacity="0.95"/>
+          <line x1={X(ca.x+1)} y1={Y(ca.y+ca.h/2)} x2={X(ca.x+ca.w-1)} y2={Y(ca.y+ca.h/2)}
+            stroke="#d97706" strokeWidth="0.8" strokeDasharray="4,3"/>
+          <text x={X(ca.x+ca.w/2)} y={Y(ca.y+ca.h/2)}
+            textAnchor="middle" dominantBaseline="middle"
+            fontSize={Math.max(7,Math.min(11,H(ca.h)*0.35))}
+            fontWeight="700" fill="#92400e">
+            {ca.label||'CROSS AISLE'}
           </text>
         </g>
       ))}
+
+      {/* ── BAY-LEVEL CROSS AISLES (within rack sections) ─── */}
+      {allCrossAisles.map((a,i)=>{
+        const ay=Y(a.y), ah=Math.max(3,H(a.h));
+        const aw=W(a.w);
+        const caLabel=`${(a.h*1000).toFixed(0)}mm`;
+        return(
+          <g key={`ca-${i}`}>
+            <rect x={X(a.x)} y={ay} width={aw} height={ah}
+              fill="#fef9c3" stroke="#ca8a04" strokeWidth="0.5" opacity="0.8"/>
+            <text x={X(a.x+a.w/2)} y={ay+ah/2} textAnchor="middle"
+              dominantBaseline="middle" fontSize="7" fill="#92400e" fontWeight="700">
+              CROSS AISLE
+            </text>
+            {/* Dimension: cross aisle width on right margin */}
+            {ah>5&&<>
+              <line x1={X(a.x+a.w)+4} y1={ay} x2={X(a.x+a.w)+4} y2={ay+ah}
+                stroke="#92400e" strokeWidth="0.8"/>
+              <line x1={X(a.x+a.w)+1} y1={ay} x2={X(a.x+a.w)+7} y2={ay}
+                stroke="#92400e" strokeWidth="0.8"/>
+              <line x1={X(a.x+a.w)+1} y1={ay+ah} x2={X(a.x+a.w)+7} y2={ay+ah}
+                stroke="#92400e" strokeWidth="0.8"/>
+              <text x={X(a.x+a.w)+10} y={ay+ah/2} dominantBaseline="middle"
+                fontSize="6.5" fill="#92400e" fontWeight="700">{caLabel}</text>
+            </>}
+          </g>
+        );
+      })}
 
       {/* ── RACK ROWS (top view — type-specific symbols) ─── */}
       {allRackRows.map((r,i)=>{
@@ -1850,12 +1912,16 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
             <text x={px+pFace+pGap+pFace/2} y={ty-4} textAnchor="middle" fontSize="8" fill="#1d4ed8" fontWeight="700">
               {(d.faceDepth*1000).toFixed(0)}mm
             </text>
-            {/* ── aisle dim (left of rack) ── */}
+            {/* ── PICKING AISLE dim — prominent, with arrows ── */}
             {pAisle>4&&<>
-              <line x1={px-pAisle} y1={ty} x2={px} y2={ty} stroke="#7c3aed" strokeWidth="1" strokeDasharray="3,2"/>
-              <line x1={px-pAisle} y1={ty-TICK/2} x2={px-pAisle} y2={ty+TICK/2} stroke="#7c3aed" strokeWidth="1"/>
-              <text x={px-pAisle/2} y={ty-4} textAnchor="middle" fontSize="8" fill="#7c3aed" fontWeight="700">
-                {(d.aisle*1000).toFixed(0)}mm aisle
+              <line x1={px-pAisle} y1={ty} x2={px} y2={ty} stroke="#7c3aed" strokeWidth="1.2"/>
+              <line x1={px-pAisle} y1={ty-TICK/2} x2={px-pAisle} y2={ty+TICK/2} stroke="#7c3aed" strokeWidth="1.2"/>
+              <line x1={px} y1={ty-TICK/2} x2={px} y2={ty+TICK/2} stroke="#7c3aed" strokeWidth="1.2"/>
+              <text x={px-pAisle/2} y={ty-4} textAnchor="middle" fontSize="8.5" fill="#7c3aed" fontWeight="800">
+                {(d.aisle*1000).toFixed(0)}mm
+              </text>
+              <text x={px-pAisle/2} y={ty+12} textAnchor="middle" fontSize="6.5" fill="#7c3aed" fontWeight="600">
+                Picking Aisle
               </text>
             </>}
             {/* ── bay N-S height dim ── */}
@@ -2037,6 +2103,83 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
           </g>
         );
       })}
+
+      {/* ── RACKING LAYOUT SUMMARY TABLE ─────────────────────────────────── */}
+      {(layoutSummary||[]).length>0&&(()=>{
+        const tX=X(0)+2, tY=Y(actualWL)+12;
+        const cols=[180,80,80,90];  // col widths in px
+        const rowH=16, hdrH=20;
+        const tW=cols.reduce((s,c)=>s+c,0)+8;
+        const tH=hdrH+(layoutSummary.length+1)*rowH+10;
+        const headers=['Rack Type','Total Bays','Locations','Area (m²)'];
+        return(
+          <g key="summary-table">
+            {/* Title */}
+            <text x={tX} y={tY-2} fontSize="11" fontWeight="800" fill="#0f172a">
+              Racking Layout Summary
+            </text>
+            {/* Table background */}
+            <rect x={tX} y={tY+2} width={tW} height={tH} fill="#f8fafc"
+              stroke="#cbd5e1" strokeWidth="1" rx="3"/>
+            {/* Header row */}
+            <rect x={tX} y={tY+2} width={tW} height={hdrH} fill="#1e293b" rx="3"/>
+            {headers.map((h,ci)=>(
+              <text key={ci}
+                x={tX+cols.slice(0,ci).reduce((s,c)=>s+c,0)+cols[ci]/2+4}
+                y={tY+2+hdrH/2} textAnchor="middle" dominantBaseline="middle"
+                fontSize="9" fontWeight="700" fill="#f1f5f9">{h}</text>
+            ))}
+            {/* Data rows */}
+            {layoutSummary.map((row,ri)=>{
+              const ry=tY+2+hdrH+ri*rowH;
+              const bg=ri%2===0?'#fff':'#f1f5f9';
+              const vals=[row.name,
+                (row.bays||0).toLocaleString(),
+                (row.locs||0).toLocaleString(),
+                '—'];
+              return(
+                <g key={ri}>
+                  <rect x={tX} y={ry} width={tW} height={rowH} fill={bg}/>
+                  {vals.map((v,ci)=>(
+                    <text key={ci}
+                      x={tX+cols.slice(0,ci).reduce((s,c)=>s+c,0)+cols[ci]/2+4}
+                      y={ry+rowH/2} textAnchor="middle" dominantBaseline="middle"
+                      fontSize={ci===0?8.5:9} fontWeight={ci===0?'600':'400'}
+                      fill={ci===0?'#1d4ed8':'#0f172a'}>{v}</text>
+                  ))}
+                  <line x1={tX} y1={ry+rowH} x2={tX+tW} y2={ry+rowH}
+                    stroke="#e2e8f0" strokeWidth="0.5"/>
+                </g>
+              );
+            })}
+            {/* Total row */}
+            {(()=>{
+              const ry=tY+2+hdrH+layoutSummary.length*rowH;
+              const totBays=layoutSummary.reduce((s,r)=>s+(r.bays||0),0);
+              const totLocs=layoutSummary.reduce((s,r)=>s+(r.locs||0),0);
+              return(
+                <g>
+                  <rect x={tX} y={ry} width={tW} height={rowH} fill="#dbeafe"/>
+                  {['TOTAL',totBays.toLocaleString(),totLocs.toLocaleString(),''].map((v,ci)=>(
+                    <text key={ci}
+                      x={tX+cols.slice(0,ci).reduce((s,c)=>s+c,0)+cols[ci]/2+4}
+                      y={ry+rowH/2} textAnchor="middle" dominantBaseline="middle"
+                      fontSize="9" fontWeight="800" fill="#1e40af">{v}</text>
+                  ))}
+                </g>
+              );
+            })()}
+            {/* Column dividers */}
+            {cols.slice(0,-1).map((_,ci)=>{
+              const cx=tX+cols.slice(0,ci+1).reduce((s,c)=>s+c,0)+4;
+              return <line key={ci} x1={cx} y1={tY+2} x2={cx} y2={tY+2+tH}
+                stroke="#cbd5e1" strokeWidth="0.5"/>;
+            })}
+            <rect x={tX} y={tY+2} width={tW} height={tH} fill="none"
+              stroke="#cbd5e1" strokeWidth="1" rx="3"/>
+          </g>
+        );
+      })()}
 
       {/* ── TOTAL AREA FOOTER ─── */}
       <text x={X(wW/2)} y={SVG_H-4} textAnchor="middle" fontSize="10" fontWeight="700" fill="#374151">
