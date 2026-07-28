@@ -13,74 +13,80 @@ const CHUNK_SIZE = 10_000;        // rows per async chunk for aggregation
 // ─── STREAM-AGGREGATE ORDER DATA (handles 10L rows without freezing UI) ───────
 function streamAggregateOrders(rows, masterMap, onProgress) {
   return new Promise(function(resolve) {
-    var dataRows = rows.length > 0 && isHeaderRow(rows[0]) ? rows.slice(1) : rows;
-    var total = Math.min(dataRows.length, MAX_ORDER_ROWS);
-    var typeMap={}, skuMap={}, dateMap={}, glcMap={};
-    var allDates=new Set(), anomalies=[];
+    var _rows = rows.length > 0 && isHeaderRow(rows[0]) ? rows.slice(1) : rows;
+    var _total = Math.min(_rows.length, MAX_ORDER_ROWS);
+    // Prefixed with _ to ensure no naming conflict with parseOrderData locals
+    var _byLoc={}, _bySku={}, _byMonth={}, _byGrpLocCat={};
+    var _dates=new Set(), _errs=[];
 
-    if (total === 0) {
-      resolve({anomalies:anomalies,typeMap:typeMap,skuMap:skuMap,dateMap:dateMap,glcMap:glcMap,allDates:allDates,totalRows:0});
+    if (_total === 0) {
+      resolve({anomalies:_errs,typeMap:_byLoc,skuMap:_bySku,
+        dateMap:_byMonth,glcMap:_byGrpLocCat,allDates:_dates,totalRows:0});
       return;
     }
 
-    function processChunk(start) {
-      var end = Math.min(start + CHUNK_SIZE, total);
+    function _chunk(start) {
+      var end = Math.min(start + CHUNK_SIZE, _total);
       for (var i = start; i < end; i++) {
-        var r=dataRows[i], rowNum=i+(rows.length>dataRows.length?2:1);
-        var orderNo=r[0]||'', dispLoc=r[1]?String(r[1]).trim():'';
-        var sku=r[2]||'', qty=parseFloat(r[3])||0, date=r[4]||'';
-        var orderType=r[5]?String(r[5]).trim():'Unknown', category=r[6]?String(r[6]).trim():'';
+        var r=_rows[i], rn=i+(_rows.length<rows.length?2:1);
+        var no=r[0]||'', dl=r[1]?String(r[1]).trim():'';
+        var sk=r[2]||'', qt=parseFloat(r[3])||0, dt=r[4]||'';
+        var ot=r[5]?String(r[5]).trim():'Unknown', ca=r[6]?String(r[6]).trim():'';
 
-        if (i < 50000) {
-          if (!orderNo) anomalies.push({row:rowNum,sku:sku,field:'Order No',issue:'Missing order number',sev:'High'});
-          if (!sku)     anomalies.push({row:rowNum,sku:'—',field:'SKU',issue:'Missing SKU',sev:'High'});
-          if (qty<=0)   anomalies.push({row:rowNum,sku:sku,field:'Qty',issue:'Zero/negative qty: '+r[3],sev:'High'});
-          if (!date)    anomalies.push({row:rowNum,sku:sku,field:'Date',issue:'Missing date',sev:'Medium'});
-          if (sku&&masterMap.size>0&&!masterMap.has(sku))
-            anomalies.push({row:rowNum,sku:sku,field:'Master',issue:'SKU not in master',sev:'High'});
-        }
-        var locKey=dispLoc||'Unspecified';
-        if (!typeMap[locKey]) typeMap[locKey]={lines:0,orders:new Set(),skus:new Set(),dates:new Set(),qty:0};
-        typeMap[locKey].lines++; typeMap[locKey].qty+=qty;
-        if (orderNo) typeMap[locKey].orders.add(orderNo);
-        if (sku)     typeMap[locKey].skus.add(sku);
-        if (date)    typeMap[locKey].dates.add(date);
-
-        if (sku) {
-          if (!skuMap[sku]) skuMap[sku]={lines:0,orders:new Set(),qty:0,dates:new Set(),categories:new Set(),locations:new Set(),orderTypes:new Set()};
-          skuMap[sku].lines++; skuMap[sku].qty+=qty;
-          if (orderNo)   skuMap[sku].orders.add(orderNo);
-          if (date)      skuMap[sku].dates.add(date);
-          if (category)  skuMap[sku].categories.add(category);
-          if (dispLoc)   skuMap[sku].locations.add(dispLoc);
-          if (orderType) skuMap[sku].orderTypes.add(orderType);
+        if (i<50000) {
+          if (!no) _errs.push({row:rn,sku:sk,field:'Order No',issue:'Missing order number',sev:'High'});
+          if (!sk) _errs.push({row:rn,sku:'—',field:'SKU',issue:'Missing SKU',sev:'High'});
+          if (qt<=0) _errs.push({row:rn,sku:sk,field:'Qty',issue:'Zero/negative qty: '+r[3],sev:'High'});
+          if (!dt) _errs.push({row:rn,sku:sk,field:'Date',issue:'Missing date',sev:'Medium'});
+          if (sk&&masterMap.size>0&&!masterMap.has(sk))
+            _errs.push({row:rn,sku:sk,field:'Master',issue:'SKU not in master',sev:'High'});
         }
 
-        if (date) {
-          var parts=date.split(/[\/\-]/), mon=date.slice(0,7);
-          var yy=parts[2]&&parts[2].length===4?parts[2]:(parts[0]&&parts[0].length===4?parts[0]:'');
-          var mm=parts[2]&&parts[2].length===4?parts[1]:(parts[0]&&parts[0].length===4?parts[0]:'');
-          if (yy&&mm) mon=yy+'-'+(mm.length===1?'0':'')+mm;
-          if (!dateMap[mon]) dateMap[mon]={month:mon,lines:0,qty:0,orders:new Set()};
-          dateMap[mon].lines++; dateMap[mon].qty+=qty;
-          if (orderNo) dateMap[mon].orders.add(orderNo);
-          allDates.add(date);
+        var lk=dl||'Unspecified';
+        if (!_byLoc[lk]) _byLoc[lk]={lines:0,orders:new Set(),skus:new Set(),dates:new Set(),qty:0};
+        _byLoc[lk].lines++; _byLoc[lk].qty+=qt;
+        if (no) _byLoc[lk].orders.add(no);
+        if (sk) _byLoc[lk].skus.add(sk);
+        if (dt) _byLoc[lk].dates.add(dt);
+
+        if (sk) {
+          if (!_bySku[sk]) _bySku[sk]={lines:0,orders:new Set(),qty:0,dates:new Set(),
+            categories:new Set(),locations:new Set(),orderTypes:new Set()};
+          _bySku[sk].lines++; _bySku[sk].qty+=qt;
+          if (no) _bySku[sk].orders.add(no);
+          if (dt) _bySku[sk].dates.add(dt);
+          if (ca) _bySku[sk].categories.add(ca);
+          if (dl) _bySku[sk].locations.add(dl);
+          if (ot) _bySku[sk].orderTypes.add(ot);
         }
 
-        var grp=orderType||'Unknown', loc=dispLoc||'Unspecified', cat=category||'Unspecified';
-        var glcKey=grp+'|||'+loc+'|||'+cat;
-        if (!glcMap[glcKey]) glcMap[glcKey]={group:grp,location:loc,category:cat,lines:0,orders:new Set(),skus:new Set(),qty:0};
-        glcMap[glcKey].lines++; glcMap[glcKey].qty+=qty;
-        if (orderNo) glcMap[glcKey].orders.add(orderNo);
-        if (sku)     glcMap[glcKey].skus.add(sku);
+        if (dt) {
+          var pts=dt.split(/[\/\-]/), mn=dt.slice(0,7);
+          var yy=pts[2]&&pts[2].length===4?pts[2]:(pts[0]&&pts[0].length===4?pts[0]:'');
+          var mm=pts[2]&&pts[2].length===4?pts[1]:(pts[0]&&pts[0].length===4?pts[0]:'');
+          if (yy&&mm) mn=yy+'-'+(mm.length<2?'0':'')+mm;
+          if (!_byMonth[mn]) _byMonth[mn]={month:mn,lines:0,qty:0,orders:new Set()};
+          _byMonth[mn].lines++; _byMonth[mn].qty+=qt;
+          if (no) _byMonth[mn].orders.add(no);
+          _dates.add(dt);
+        }
+
+        var gk=(ot||'Unknown')+'|||'+(dl||'Unspecified')+'|||'+(ca||'Unspecified');
+        if (!_byGrpLocCat[gk]) _byGrpLocCat[gk]={group:ot||'Unknown',location:dl||'Unspecified',
+          category:ca||'Unspecified',lines:0,orders:new Set(),skus:new Set(),qty:0};
+        _byGrpLocCat[gk].lines++; _byGrpLocCat[gk].qty+=qt;
+        if (no) _byGrpLocCat[gk].orders.add(no);
+        if (sk) _byGrpLocCat[gk].skus.add(sk);
       }
-      if (onProgress) onProgress(Math.round((end/total)*100), end);
-      if (end<total) { setTimeout(function(){processChunk(end);},0); }
-      else { resolve({anomalies:anomalies,typeMap:typeMap,skuMap:skuMap,dateMap:dateMap,glcMap:glcMap,allDates:allDates,totalRows:total}); }
+      if (onProgress) onProgress(Math.round((end/_total)*100), end);
+      if (end<_total) { setTimeout(function(){_chunk(end);},0); }
+      else { resolve({anomalies:_errs,typeMap:_byLoc,skuMap:_bySku,
+        dateMap:_byMonth,glcMap:_byGrpLocCat,allDates:_dates,totalRows:_total}); }
     }
-    processChunk(0);
+    _chunk(0);
   });
 }
+
 
 // ─── CONVERT AGGREGATION MAPS TO FINAL ANALYSIS (matches parseOrderData shape) ─
 function buildAnalysisFromMaps({typeMap, skuMap, dateMap, glcMap, allDates, anomalies, totalRows}, masterMap) {
