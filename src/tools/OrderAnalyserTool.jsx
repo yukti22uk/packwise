@@ -11,36 +11,35 @@ const MAX_ORDER_ROWS = 1_000_000; // 10 lakh rows
 const CHUNK_SIZE = 10_000;        // rows per async chunk for aggregation
 
 // ─── STREAM-AGGREGATE ORDER DATA (handles 10L rows without freezing UI) ───────
-// Instead of collecting all rows then aggregating, we aggregate row-by-row.
-// Returns a Promise resolving to the same shape as parseOrderData().
 function streamAggregateOrders(rows, masterMap, onProgress) {
   return new Promise(resolve => {
     const dataRows = rows.length > 0 && isHeaderRow(rows[0]) ? rows.slice(1) : rows;
     const total = Math.min(dataRows.length, MAX_ORDER_ROWS);
 
-    // Accumulators — no giant arrays kept in memory
-    const typeMap   = {};  // by dispatch location
-    const skuMap    = {};  // by SKU
-    const dateMap   = {};  // by date (YYYY-MM)
-    const glcMap    = {};  // group × location × category
-    const allDates  = new Set();  // for periodDays
-    const anomalies = [];
-    let processedRows = 0;
+    // Accumulators
+    const typeMap = {}, skuMap = {}, dateMap = {}, glcMap = {};
+    const allDates = new Set(), anomalies = [];
+
+    if (total === 0) {
+      resolve({ anomalies, typeMap, skuMap, dateMap, glcMap, allDates, totalRows: 0 });
+      return;
+    }
 
     const processChunk = (start) => {
       const end = Math.min(start + CHUNK_SIZE, total);
-      for (let i = start; i < end; i++) {
-        const r = dataRows[i];
-        const rowNum = i + (rows.length > dataRows.length ? 2 : 1);
-        const orderNo    = r[0] || '';
-        const dispLoc    = r[1] ? r[1].trim() : '';
-        const sku        = r[2] || '';
-        const qty        = parseFloat(r[3]) || 0;
-        const date       = r[4] || '';
-        const orderType  = r[5] ? r[5].trim() : 'Unknown';
-        const category   = r[6] ? r[6].trim() : '';
 
-        // Anomaly flags (sample first 50k rows for performance)
+      for (let i = start; i < end; i++) {
+        const r        = dataRows[i];
+        const rowNum   = i + (rows.length > dataRows.length ? 2 : 1);
+        const orderNo  = r[0] || '';
+        const dispLoc  = r[1] ? r[1].trim() : '';
+        const sku      = r[2] || '';
+        const qty      = parseFloat(r[3]) || 0;
+        const date     = r[4] || '';
+        const orderType = r[5] ? r[5].trim() : 'Unknown';
+        const category = r[6] ? r[6].trim() : '';
+
+        // Anomaly flags (first 50k rows only for performance)
         if (i < 50000) {
           if (!orderNo) anomalies.push({row:rowNum,sku,field:'Order No',issue:'Missing order number',sev:'High'});
           if (!sku)     anomalies.push({row:rowNum,sku:'—',field:'SKU',issue:'Missing SKU',sev:'High'});
@@ -50,72 +49,64 @@ function streamAggregateOrders(rows, masterMap, onProgress) {
             anomalies.push({row:rowNum,sku,field:'Master',issue:'SKU not in master',sev:'High'});
         }
 
-    // ─── Aggregate by dispatch location ─────────────────────────────────────
-    const locKey = dispLoc || 'Unspecified';
-    if (!typeMap[locKey]) typeMap[locKey]={lines:0,orders:new Set(),skus:new Set(),dates:new Set(),qty:0};
-    const g = typeMap[locKey];
-    g.lines++; g.qty += qty;
-    if (orderNo) g.orders.add(orderNo);
-    if (sku)     g.skus.add(sku);
-    if (date)    g.dates.add(date);
+        // By dispatch location
+        const locKey = dispLoc || 'Unspecified';
+        if (!typeMap[locKey]) typeMap[locKey] = {lines:0,orders:new Set(),skus:new Set(),dates:new Set(),qty:0};
+        typeMap[locKey].lines++;
+        typeMap[locKey].qty += qty;
+        if (orderNo) typeMap[locKey].orders.add(orderNo);
+        if (sku)     typeMap[locKey].skus.add(sku);
+        if (date)    typeMap[locKey].dates.add(date);
 
-    // ─── Aggregate by SKU ────────────────────────────────────────────────────
-    if (sku) {
-      if (!skuMap[sku]) skuMap[sku]={lines:0,orders:new Set(),qty:0,dates:new Set(),categories:new Set(),locations:new Set(),orderTypes:new Set()};
-      const s = skuMap[sku];
-      s.lines++; s.qty += qty;
-      if (orderNo)   s.orders.add(orderNo);
-      if (date)      s.dates.add(date);
-      if (category)  s.categories.add(category);
-      if (dispLoc)   s.locations.add(dispLoc);
-      if (orderType) s.orderTypes.add(orderType);
-    }
+        // By SKU
+        if (sku) {
+          if (!skuMap[sku]) skuMap[sku] = {lines:0,orders:new Set(),qty:0,dates:new Set(),categories:new Set(),locations:new Set(),orderTypes:new Set()};
+          skuMap[sku].lines++;
+          skuMap[sku].qty += qty;
+          if (orderNo)   skuMap[sku].orders.add(orderNo);
+          if (date)      skuMap[sku].dates.add(date);
+          if (category)  skuMap[sku].categories.add(category);
+          if (dispLoc)   skuMap[sku].locations.add(dispLoc);
+          if (orderType) skuMap[sku].orderTypes.add(orderType);
+        }
 
-    // ─── Monthly trend ───────────────────────────────────────────────────────
-    if (date) {
-      const parts = date.split(/[\/\-]/);
-      let mon = date.slice(0,7);
-      if (parts.length>=2) {
-        const y=parts[2]?.length===4?parts[2]:(parts[0]?.length===4?parts[0]:'');
-        const m=parts[2]?.length===4?parts[1]:(parts[0]?.length===4?parts[0]:'');
-        if(y&&m) mon=`${y}-${String(m).padStart(2,'0')}`;
+        // Monthly trend
+        if (date) {
+          const parts = date.split(/[\/\-]/);
+          let mon = date.slice(0, 7);
+          if (parts.length >= 2) {
+            const y = parts[2]?.length===4 ? parts[2] : (parts[0]?.length===4 ? parts[0] : '');
+            const m = parts[2]?.length===4 ? parts[1] : (parts[0]?.length===4 ? parts[0] : '');
+            if (y && m) mon = `${y}-${String(m).padStart(2,'0')}`;
+          }
+          if (!dateMap[mon]) dateMap[mon] = {month:mon,lines:0,qty:0,orders:new Set()};
+          dateMap[mon].lines++;
+          dateMap[mon].qty += qty;
+          if (orderNo) dateMap[mon].orders.add(orderNo);
+          allDates.add(date);
+        }
+
+        // Group × Location × Category
+        const grp = orderType || 'Unknown';
+        const loc = dispLoc   || 'Unspecified';
+        const cat = category  || 'Unspecified';
+        const glcKey = `${grp}|||${loc}|||${cat}`;
+        if (!glcMap[glcKey]) glcMap[glcKey] = {group:grp,location:loc,category:cat,lines:0,orders:new Set(),skus:new Set(),qty:0};
+        glcMap[glcKey].lines++;
+        glcMap[glcKey].qty += qty;
+        if (orderNo) glcMap[glcKey].orders.add(orderNo);
+        if (sku)     glcMap[glcKey].skus.add(sku);
       }
-      if (!dateMap[mon]) dateMap[mon]={month:mon,lines:0,qty:0,orders:new Set()};
-      dateMap[mon].lines++; dateMap[mon].qty+=qty;
-      if (orderNo) dateMap[mon].orders.add(orderNo);
-    }
 
-    // ─── Group × Location × Category aggregation ─────────────────────────────
-    {
-      const grp = orderType || 'Unknown';
-      const loc = dispLoc   || 'Unspecified';
-      const cat = category  || 'Unspecified';
-      const glcKey = `${grp}|||${loc}|||${cat}`;
-      if (!glcMap[glcKey]) glcMap[glcKey]={group:grp,location:loc,category:cat,
-        lines:0,orders:new Set(),skus:new Set(),qty:0,volume:0};
-      const gc = glcMap[glcKey];
-      gc.lines++; gc.qty+=qty;
-      if (orderNo) gc.orders.add(orderNo);
-      if (sku)     gc.skus.add(sku);
-      // volume added later in buildAnalysisFromMaps when masterMap is available
-    }
-
-    // Track dates for periodDays
-    if (date) allDates.add(date);
-      }
-      processedRows = end;
       if (onProgress) onProgress(Math.round((end/total)*100), end);
 
       if (end < total) {
-        // Yield to browser every chunk
         setTimeout(() => processChunk(end), 0);
       } else {
-        // Build final result (mirrors parseOrderData output shape)
         resolve({ anomalies, typeMap, skuMap, dateMap, glcMap, allDates, totalRows: total });
       }
     };
 
-    if (total === 0) { resolve({ anomalies:[], typeMap:{}, skuMap:{}, dateMap:{}, glcMap:{}, allDates:new Set(), totalRows:0 }); return; }
     processChunk(0);
   });
 }
