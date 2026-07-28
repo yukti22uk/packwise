@@ -1481,37 +1481,30 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
         if(ey0-sy0>=0.5) actualBays+=Math.max(1,Math.floor((ey0-sy0)/bayHm));
       }
 
-      // Front bays: globalBayNum … globalBayNum+actualBays-1
-      // Back bays:  globalBayNum+actualBays … globalBayNum+2*actualBays-1
-      var colFrontStart=globalBayNum;
-      var colBackStart=globalBayNum+actualBays;
+      // Each B2B module = ONE rect spanning full colDepth (faceDepth+gap+faceDepth)
+      // Center partition line drawn in SVG. Bay number shown once per module.
+      var colBayStart=globalBayNum;
       var frontOffset=0;
 
-      // ── Pass 2: draw rows with correct bay numbers ───────────────────
       for(let j=0;j<breakYs.length-1;j++){
         var sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W_M/2:0.3);
         var ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W_M/2:0);
         if(ey-sy<0.5) continue;
         var segBays=Math.max(1,Math.floor((ey-sy)/bayHm));
 
-        rows.push({x:rx,y:sy,w:faceDepth,h:ey-sy,...ri,dom,bayHm,
-          colIdx:i,colLabel:label,segIdx:j,
-          bayStart:colFrontStart+frontOffset,
-          isHalfRack:'front',bayCount:segBays,faceDepth,pa,backGap});
-        rows.push({x:rx+faceDepth+backGap,y:sy,w:faceDepth,h:ey-sy,...ri,dom,bayHm,
-          colIdx:i,colLabel:label,segIdx:j,
-          bayStart:colBackStart+frontOffset,
-          isHalfRack:'back',bayCount:segBays,faceDepth,pa,backGap});
-
+        rows.push({x:rx, y:sy, w:colDepth, h:ey-sy, ...ri, dom, bayHm,
+          colIdx:i, colLabel:label, segIdx:j,
+          bayStart:colBayStart+frontOffset,
+          bayCount:segBays, faceDepth, pa, backGap,
+          showPartition:true});
         frontOffset+=segBays;
       }
 
       if(i===0) dimAnnotations.push({
-        x:rx,y:zone.y+0.3,
-        faceDepth,backGap,colDepth,aisle:pa,bayWidthM:bayHm,dom});
+        x:rx, y:zone.y+0.3,
+        faceDepth, backGap, colDepth, aisle:pa, bayWidthM:bayHm, dom});
 
-      globalBayNum+=actualBays*2; // advance by actual drawn bays (front+back)
-    }
+      globalBayNum+=actualBays; // 1 bay number per B2B module (not ×2)
     return {rows, crossAisles, nCols, baysPerCol:sl.baysPerCol, totalBays, dimAnnotations};
   };
 
@@ -1824,23 +1817,26 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
           );
         }
 
-        // ── SHELVING / LIVE STORAGE ────────────────────────────────────────
+        // ── SHELVING / LIVE STORAGE — full B2B width, center partition ────
         {
-          // Bay dividers run HORIZONTALLY at regular height intervals (every 0.9m for shelving)
-          const bayHpx = H(r.bayHm||0.9); // bay height in pixels
+          const bayHpx = H(r.bayHm||0.9);
           const nBayDividers = Math.max(0, Math.floor(r.h/(r.bayHm||0.9))-1);
+          const halfPx = Math.max(1, (pw-W(r.backGap||0.05))/2);
           return(
             <g key={`rr-${i}`}>
-              {/* Column fill */}
+              {/* Full B2B column */}
               <rect x={px} y={py} width={Math.max(3,pw)} height={Math.max(2,ph)}
                 fill={r.color} stroke={r.stroke} strokeWidth="0.8" rx="0.5"/>
-              {/* Bay dividers — horizontal lines at regular height intervals */}
+              {/* Horizontal bay dividers */}
               {Array.from({length:nBayDividers},(_,b)=>(
-                <line key={b}
-                  x1={px} y1={py+(b+1)*bayHpx}
+                <line key={b} x1={px} y1={py+(b+1)*bayHpx}
                   x2={px+pw} y2={py+(b+1)*bayHpx}
                   stroke={r.stroke} strokeWidth="0.5" strokeOpacity="0.5"/>
               ))}
+              {/* Center partition — back-to-back join */}
+              {r.showPartition&&<line
+                x1={px+halfPx} y1={py} x2={px+halfPx} y2={py+ph}
+                stroke={r.stroke} strokeWidth="1.4" opacity="0.85"/>}
             </g>
           );
         }
@@ -1854,8 +1850,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
         const colFontSz=Math.max(9,Math.min(16,pw*0.9));
         const bayFontSz=Math.max(6,Math.min(13,Math.min(pw*0.75,bayHpx*0.75)));
         const nBays=r.bayCount||Math.max(1,Math.floor(r.h/(r.bayHm||0.9)));
-        // Column letter only on front face top segment
-        const showColLetter = r.isHalfRack!=='back' && r.segIdx===0 && pw>3;
+        const showColLetter = r.segIdx===0 && pw>3; // show on all (no front/back split now)
         return(
           <g key={`lbl-${i}`}>
             {showColLetter&&<text
