@@ -1325,7 +1325,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     if(kv[0]==='ground') return mx;
     return Math.max(mx, kv[1].requiredW||0);
   }, 0) + 0.6;
-  actualWW = Math.max(wW, preLayoutWW);  // width locked from non-ground racks
+  actualWW = Math.max(10, preLayoutWW);  // width from non-ground racks only
 
   // ── PASS 2: ground storage uses actualWW for column count ─────────────────
   if((rackConfig||[]).some(c=>c.rack==='ground') || rackTypeAreas?.['ground']) {
@@ -1374,13 +1374,16 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var layoutWL = cur + stagingH;
   actualWL = Math.max(wL, layoutWL);
 
-  // WIDTH = max of non-ground rack requiredW (ground storage doesn't drive width).
-  // Ground storage gets its columns from this fixed width; LENGTH extends for all its rows.
+  // WIDTH = strictly from non-ground rack requiredW.
+  // We do NOT use max(wW, ...) here — the building may be wider than the racks need,
+  // but ground storage should only get columns based on what non-ground racks require.
+  // This keeps ground storage section height predictable and avoids 22-column sprawl.
   var layoutWW = Object.entries(sectionLayouts).reduce(function(mx, kv){
     if(kv[0]==='ground') return mx;  // ground does NOT drive warehouse width
     return Math.max(mx, kv[1].requiredW||0);
   }, 0) + 0.6;
-  actualWW = Math.max(wW, layoutWW);  // never shrink below user's specified width
+  // actualWW = rack-driven width (never less than 10m for usability)
+  actualWW = Math.max(10, layoutWW);
 
   // Rebuild ALL scale factors with final actual dimensions
   SVG_H = fullscreen ? Math.round(1800 * (actualWL/actualWW) * 0.8 + 220) : 820;
