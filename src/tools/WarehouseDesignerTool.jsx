@@ -1209,8 +1209,11 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var recH    = Math.max(4,(receivingArea||0)/wW);
   var disH    = Math.max(4,(dispatchArea||0)/wW);
   var stagingH= Math.max(recH,disH);
-  var offH    = Math.max(3,(officeArea||50)/wW);
-  var mheH    = mheArea>0 ? Math.max(2,mheArea/wW) : 0;
+  // Use non-ground rack width for support area height calculation
+  // (actualWW computed later, use wW as proxy for now, updated post-compute)
+  var areaW = Math.max(wW, 10);
+  var offH    = Math.max(3,(officeArea||50)/areaW);
+  var mheH    = mheArea>0 ? Math.max(2,mheArea/areaW) : 0;
   var supportH= offH + mheH;
 
   var isOne   = dockSide==='one';
@@ -1233,18 +1236,18 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   // Support area at NORTH (top)
   let cur=0;
   if (officeArea>0) {
-    supportRects.push({ key:'office', x:0, y:cur, w:wW/2, h:offH,
+    supportRects.push({ key:'office', x:0, y:cur, w:actualWW/2, h:offH,
       label:'OFFICE / WELFARE', color:'#dbeafe', border:'#3b82f6', text:'#1d4ed8' });
   }
   if (mheH>0) {
-    supportRects.push({ key:'mhe', x:wW/2, y:cur, w:wW/2, h:offH+mheH,
+    supportRects.push({ key:'mhe', x:actualWW/2, y:cur, w:actualWW/2, h:offH+mheH,
       label:'MHE CHARGING', color:'#fdf4ff', border:'#9333ea', text:'#6b21a8' });
   }
   cur+=supportH;
 
   if (isBoth) {
     // Dispatch at north (after support)
-    stagingRects.push({ key:'dispatch', x:0, y:cur, w:wW, h:disH,
+    stagingRects.push({ key:'dispatch', x:0, y:cur, w:actualWW, h:disH,
       label:'DISPATCH / PACKING', subLabel:`${dispatchArea}m² (${sqft(dispatchArea)})`,
       color:'#fef3c7', border:'#d97706', text:'#92400e' });
     cur+=disH;
@@ -1391,28 +1394,41 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   sX = DW/actualWW; sY = DH/actualWL;
   X = m=>ML+m*sX; Y = m=>MT+m*sY; W = m=>m*sX; H = m=>m*sY;
 
-  // Update all width-dependent rects to use actualWW
+  // Update all width-dependent rects to use finalised actualWW
   zoneRects.forEach(function(z){ z.w=actualWW; });
   sectionCrossAisles.forEach(function(ca){ ca.w=actualWW; });
+  stagingRects.forEach(function(s){
+    // Recalculate positions based on actualWW
+    if(s.key==='receiving'&&isOne){ s.w=actualWW/2; }
+    if(s.key==='dispatch'&&isOne){ s.x=actualWW/2; s.w=actualWW/2; }
+    if(s.key==='receiving'&&isBoth&&s.x===0){ s.w=actualWW-eastW2; }
+    if(s.key==='dispatch'&&isBoth){ s.x=actualWW-eastW; s.w=eastW2; }
+    if(s.key==='receiving'&&!isOne&&!isBoth){ s.w=actualWW; }
+    if(s.key==='dispatch'&&!isOne&&!isBoth){ s.w=actualWW; }
+  });
+  supportRects.forEach(function(s){
+    if(s.key==='office'){ s.w=actualWW/2; }
+    if(s.key==='mhe'){ s.x=actualWW/2; s.w=actualWW/2; }
+  });
 
   // Staging at south
   if (isOne) {
-    stagingRects.push({ key:'receiving', x:0, y:cur, w:wW/2, h:stagingH,
+    stagingRects.push({ key:'receiving', x:0, y:cur, w:actualWW/2, h:stagingH,
       label:'RECEIVING / GRN', subLabel:`${receivingArea}m² (${sqft(receivingArea)})`,
       color:'#e0f2fe', border:'#0284c7', text:'#0369a1' });
-    stagingRects.push({ key:'dispatch', x:wW/2, y:cur, w:wW/2, h:stagingH,
+    stagingRects.push({ key:'dispatch', x:actualWW/2, y:cur, w:actualWW/2, h:stagingH,
       label:'DISPATCH / PACKING', subLabel:`${dispatchArea}m² (${sqft(dispatchArea)})`,
       color:'#fef3c7', border:'#d97706', text:'#92400e' });
   } else if (isBoth) {
-    stagingRects.push({ key:'receiving', x:0, y:cur, w:wW, h:recH,
+    stagingRects.push({ key:'receiving', x:0, y:cur, w:actualWW, h:recH,
       label:'RECEIVING / GRN', subLabel:`${receivingArea}m² (${sqft(receivingArea)})`,
       color:'#e0f2fe', border:'#0284c7', text:'#0369a1' });
   } else {
     var eastW2=Math.min(wW*0.3,14);
-    stagingRects.push({ key:'receiving', x:0, y:cur, w:wW-eastW2, h:stagingH,
+    stagingRects.push({ key:'receiving', x:0, y:cur, w:actualWW-eastW2, h:stagingH,
       label:'RECEIVING / GRN', subLabel:`${receivingArea}m² (${sqft(receivingArea)})`,
       color:'#e0f2fe', border:'#0284c7', text:'#0369a1' });
-    stagingRects.push({ key:'dispatch', x:wW-eastW, y:cur, w:eastW2, h:stagingH,
+    stagingRects.push({ key:'dispatch', x:actualWW-eastW, y:cur, w:eastW2, h:stagingH,
       label:'DISPATCH', subLabel:`${dispatchArea}m² (${sqft(dispatchArea)})`,
       color:'#fef3c7', border:'#d97706', text:'#92400e' });
   }
