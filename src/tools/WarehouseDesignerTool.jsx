@@ -1297,39 +1297,59 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var SECTION_CA_W=3.0;        // 3m cross aisle between sections
   var firstRackSection=true;
 
-  RACK_ORDER.forEach(rt => {
+  // ── HELPER: compute one rack section ────────────────────────────────────────
+  var computeSection = function(rt, sectionW) {
     var totalBaysRt = (rackConfig||[]).filter(c=>c.rack===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
-    if(!totalBaysRt && !(rackTypeAreas?.[rt])) return;
+    if(!totalBaysRt && !(rackTypeAreas?.[rt])) return null;
     var rtRi    = (RACK_INFO_2D_LOOKUP?.[rt]) || {depth:2.2};
-    // Priority: user-entered per-rack → rack-type default → global aisleM
-    // Global aisleM (forklift) must NOT override shelving's 1.2m default
     var rtPa    = (rackAisleM?.[rt])||(DEFAULT_AISLE_M?.[rt])||aisleM||1.2;
-    // Use actual bayD from rackConfig for colSlot (matches rackRowsForZone actualColSlot)
     var rtFaceD = (rackBayDepthM?.[rt]) || rtRi.depth/2 || 1.0;
     var rtGap   = (rt==="shelving"||rt==="liveStorage")?0.05:0.10;
-    var rtSlot  = rtFaceD*2 + rtGap + rtPa;  // pair depth + aisle
+    var rtSlot  = rtFaceD*2 + rtGap + rtPa;
     var rtBayH  = (rackBayWidthM?.[rt])||(BAY_HEIGHT_M_LOOKUP?.[rt])||0.9;
     var rtCross = ({shelving:13,liveStorage:13,selective:27,
       doubleDeep:27,driveIn:27,cantilever:27,ground:27})[rt] || 13;
-    // totalBaysRt = total positions (front+back). computeSectionLayout divides by 2 internally.
     var rtBays  = totalBaysRt || Math.ceil(((rackTypeAreas?.[rt])||0) / (rtBayH * wW));
-    var rtLayout= computeSectionLayout(rtBays, wW, rtBayH, rtSlot, rtCross, rt);
-    sectionLayouts[rt] = {...rtLayout, totalBays: rtBays,
-      actualHeight: rtLayout.height,
-      requiredW: rtLayout.nCols * rtSlot + rtPa};
+    var rtLayout= computeSectionLayout(rtBays, sectionW, rtBayH, rtSlot, rtCross, rt);
+    return {rt, rtLayout, rtBays, rtSlot, rtPa, rtStyle:(RACK_TYPE_STYLE?.[rt])||{label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'}};
+  };
 
+  // ── PASS 1: non-ground sections → derive actualWW ───────────────────────────
+  RACK_ORDER.filter(rt=>rt!=='ground').forEach(rt=>{
+    var s=computeSection(rt, wW);
+    if(!s) return;
+    sectionLayouts[rt]={...s.rtLayout, totalBays:s.rtBays, actualHeight:s.rtLayout.height,
+      requiredW: s.rtLayout.nCols * s.rtSlot + s.rtPa};
+  });
+  var preLayoutWW = Object.entries(sectionLayouts).reduce(function(mx,kv){
+    if(kv[0]==='ground') return mx;
+    return Math.max(mx, kv[1].requiredW||0);
+  }, 0) + 0.6;
+  actualWW = Math.max(wW, preLayoutWW);  // width locked from non-ground racks
+
+  // ── PASS 2: ground storage uses actualWW for column count ─────────────────
+  if((rackConfig||[]).some(c=>c.rack==='ground') || rackTypeAreas?.['ground']) {
+    var sg = computeSection('ground', actualWW);  // ← uses actualWW, not wW
+    if(sg) sectionLayouts['ground']={...sg.rtLayout, totalBays:sg.rtBays,
+      actualHeight:sg.rtLayout.height,
+      requiredW: sg.rtLayout.nCols * sg.rtSlot + sg.rtPa};
+  }
+
+  // ── BUILD zoneRects in RACK_ORDER (now all sectionLayouts are final) ─────
+  RACK_ORDER.forEach(rt => {
+    var sl=sectionLayouts[rt];
+    if(!sl) return;
+    var rtStyle=(RACK_TYPE_STYLE?.[rt])||{label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
     sectionCrossAisles.push({x:0, y:cur, w:actualWW, h:SECTION_CA_W,
       label: firstRackSection ? 'CROSS AISLE (Staging ↔ Storage)' : `CROSS AISLE`});
     cur += SECTION_CA_W;
     firstRackSection = false;
 
-    var rtStyle = (RACK_TYPE_STYLE?.[rt]) || {label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
-    // 1:1 scale — use actual section height, no display cap
-    zoneRects.push({key:rt, x:0, y:cur, w:actualWW, h:rtLayout.height,
+    zoneRects.push({key:rt, x:0, y:cur, w:actualWW, h:sl.height,
       label:rtStyle.label, color:rtStyle.color, border:rtStyle.border, text:rtStyle.text,
-      area:rtLayout.area, rackType:rt, sectionLayout:{...rtLayout, totalBays:rtBays},
-      actualHeight: rtLayout.height, isTruncated: false});
-    cur += rtLayout.height;
+      area:sl.area, rackType:rt, sectionLayout:{...sl, totalBays:sl.totalBays},
+      actualHeight:sl.height, isTruncated:false});
+    cur += sl.height;
   });
   // Build rack layout summary (for summary table below plan)
   var layoutSummary=[];
@@ -1354,12 +1374,13 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var layoutWL = cur + stagingH;
   actualWL = Math.max(wL, layoutWL);
 
-  // Actual warehouse WIDTH: expand to fit full picking aisles on BOTH sides of every rack section
-  var layoutWW = Object.values(sectionLayouts).reduce(function(mx,sl){
-    return Math.max(mx, sl.requiredW||0);
+  // WIDTH = max of non-ground rack requiredW (ground storage doesn't drive width).
+  // Ground storage gets its columns from this fixed width; LENGTH extends for all its rows.
+  var layoutWW = Object.entries(sectionLayouts).reduce(function(mx, kv){
+    if(kv[0]==='ground') return mx;  // ground does NOT drive warehouse width
+    return Math.max(mx, kv[1].requiredW||0);
   }, 0) + 0.6;
-  // Cap width expansion: allow up to 50% extra for full aisles, not unbounded
-  actualWW = Math.min(Math.max(wW, layoutWW), wW * 2.0);  // max 2× user warehouse width
+  actualWW = Math.max(wW, layoutWW);  // never shrink below user's specified width
 
   // Rebuild ALL scale factors with final actual dimensions
   SVG_H = fullscreen ? Math.round(1800 * (actualWL/actualWW) * 0.8 + 220) : 820;
@@ -1488,16 +1509,17 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var crossInterval=(CROSS_AISLE_INTERVAL?.[dom])||13;
 
     // Maximum columns that fit in warehouse width
-    var maxNcols=Math.max(3, Math.floor(zone.w/actualColSlot));
-    // bpf at maximum columns (smallest possible bpf)
+    // For column computation: use original wW (not expanded actualWW) so shelving/SPR
+    // don't get extra columns because ground storage expanded the warehouse width.
+    // Ground storage uses zone.w (= actualWW) to fill the expanded space.
+    var isGround=(dom==='ground');
+    var effectiveW=isGround?zone.w:Math.min(zone.w,wW);
+    var maxNcols=Math.max(3, Math.floor(effectiveW/actualColSlot));
     var bpfAtMax=totalBays>0?Math.max(1,Math.ceil(totalBays/2/maxNcols)):(sl.baysPerCol||1);
-    // Minimum columns needed to achieve that bpf — avoids wasting excess columns
     var nColsMin=totalBays>0?Math.max(3,Math.ceil(totalBays/2/bpfAtMax)):maxNcols;
     var nCols=Math.min(maxNcols, nColsMin);
-    // Recompute bpf for the chosen nCols
-    var minBpfZone=(MIN_BPF_BY_TYPE?.[dom])||1;
-    var bpf=totalBays>0?Math.max(minBpfZone,Math.ceil(totalBays/2/nCols)):bpfAtMax;
-
+    // No forced minBpf — bay count closely matches calculation
+    var bpf=totalBays>0?Math.max(1,Math.ceil(totalBays/2/nCols)):(sl.baysPerCol||1);
 
 
     // Rebuild cross aisles from actual bpf (ignore pre-computed crossYPositions)
