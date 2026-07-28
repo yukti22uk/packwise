@@ -1451,8 +1451,8 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       :String.fromCharCode(64+Math.floor(i/26))+String.fromCharCode(65+(i%26));
 
     var sl=zone.sectionLayout||sectionLayouts[dom]||{nCols:3,baysPerCol:5,crossYPositions:[]};
-    // totalBays from zone.sectionLayout (now includes it) or fallback to sectionLayouts map
-    var totalBays=(sl.totalBays)||(sectionLayouts[dom]?.totalBays)||0;
+    // Always get totalBays from sectionLayouts[dom] first (most reliable source)
+    var totalBays=(sectionLayouts?.[dom]?.totalBays)||(sl?.totalBays)||0;
 
     var faceDepth=(rackBayDepthM?.[dom])||(DEFAULT_FACE_DEPTH?.[dom])||0.6;
     var backGap=(dom==='shelving'||dom==='liveStorage')?0.05:0.10;
@@ -1460,10 +1460,13 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var actualColSlot=colDepth+pa;
     var crossInterval=(CROSS_AISLE_INTERVAL?.[dom])||13;
 
-    // Recompute nCols from ACTUAL colSlot (sl.nCols may differ if face depths don't match)
+    // Recompute nCols from ACTUAL colSlot
     var nCols=Math.max(3, Math.floor(zone.w/actualColSlot));
-    // Recompute baysPerFace to match actual nCols
+    // baysPerFace: total visible = nCols × bpf × 2 ≈ totalBays
     var bpf=totalBays>0?Math.max(1,Math.ceil(totalBays/2/nCols)):(sl.baysPerCol||1);
+
+    // Debug: remove after confirming fix
+    if(typeof console!=='undefined') console.log('[FP] rack='+dom+' totalBays='+totalBays+' nCols='+nCols+' bpf='+bpf+' wW='+zone.w.toFixed(1)+'m colSlot='+actualColSlot.toFixed(2)+'m');
 
     // Rebuild cross aisles from actual bpf (ignore pre-computed crossYPositions)
     var crossYs=[];
