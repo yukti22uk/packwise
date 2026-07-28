@@ -1181,13 +1181,14 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var aisleM  = parseFloat(aisleWParam)||3.0;
 
   // ── USE LAYOUT-DERIVED DIMENSIONS ────────────────────────────────────────
-  // Warehouse length comes FROM the bay layout, not from pre-calculated areas.
-  // This ensures the plan always accurately represents the physical bay count.
+  // actualWW starts as wW; overridden after sectionLayouts computed (line ~1346)
+  var actualWW = wW;   // will be updated once sectionLayouts are built
+  var actualWL = wL;   // will be updated after zone heights computed
   var SVG_W = fullscreen ? 1800 : 960;
-  var SVG_H = fullscreen ? Math.round(1800 * (actualWL/wW) * 0.8 + 120) : 720;
+  var SVG_H = fullscreen ? Math.round(1800 * (wL/wW) * 0.8 + 220) : 820;
   var ML=62, MR=70, MT=50, MB=70;
   var DW=SVG_W-ML-MR, DH=SVG_H-MT-MB;
-  var sX=DW/wW, sY=DH/actualWL;
+  var sX=DW/wW, sY=DH/wL;
   var X=m=>ML+m*sX, Y=m=>MT+m*sY, W=m=>m*sX, H=m=>m*sY;
 
   // ── AREA HEIGHTS ────────────────────────────────────────────────────────────
@@ -1299,18 +1300,20 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     // totalBaysRt = total positions (front+back). computeSectionLayout divides by 2 internally.
     var rtBays  = totalBaysRt || Math.ceil(((rackTypeAreas?.[rt])||0) / (rtBayH * wW));
     var rtLayout= computeSectionLayout(rtBays, wW, rtBayH, rtSlot, rtCross);
-    sectionLayouts[rt] = {...rtLayout, totalBays: rtBays};
+    sectionLayouts[rt] = {...rtLayout, totalBays: rtBays,
+      // Required width for this rack type: full aisle on BOTH sides
+      requiredW: rtLayout.nCols * rtSlot + rtPa};  // pa(start) + N×colSlot + pa(end)
 
     // Cross aisle before this section:
     // — Between staging area and first rack section
     // — Between consecutive rack type sections
-    sectionCrossAisles.push({x:0, y:cur, w:wW, h:SECTION_CA_W,
+    sectionCrossAisles.push({x:0, y:cur, w:actualWW, h:SECTION_CA_W,
       label: firstRackSection ? 'CROSS AISLE (Staging ↔ Storage)' : `CROSS AISLE`});
     cur += SECTION_CA_W;
     firstRackSection = false;
 
     var rtStyle = (RACK_TYPE_STYLE?.[rt]) || {label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
-    zoneRects.push({key:rt, x:0, y:cur, w:wW, h:rtLayout.height,
+    zoneRects.push({key:rt, x:0, y:cur, w:actualWW, h:rtLayout.height,
       label:rtStyle.label, color:rtStyle.color, border:rtStyle.border, text:rtStyle.text,
       area:rtLayout.area, rackType:rt, sectionLayout:{...rtLayout, totalBays:rtBays}});
     cur += rtLayout.height;
@@ -1330,19 +1333,28 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   Object.entries(summaryMap).forEach(function(e){ layoutSummary.push(e[1]); });
   // Add final cross aisle between last rack section and dispatch staging
   if(sectionCrossAisles.length>0){
-    sectionCrossAisles.push({x:0, y:cur, w:wW, h:SECTION_CA_W,
+    sectionCrossAisles.push({x:0, y:cur, w:actualWW, h:SECTION_CA_W,
       label:'CROSS AISLE (Storage ↔ Staging)'});
     cur += SECTION_CA_W;
   }
   var layoutWL = cur + stagingH;
-  var actualWL = Math.max(wL, layoutWL); // layout-derived warehouse length
-  // Adjust scale factor to fit actual layout height
-  SVG_H = fullscreen ? Math.round(1800 * (actualWL/wW) * 0.8 + 220) : 820; // extra for summary
+  actualWL = Math.max(wL, layoutWL); // layout-derived warehouse length
+
+  // Actual warehouse WIDTH: expand to fit full picking aisles on BOTH sides of every rack section
+  var layoutWW = Object.values(sectionLayouts).reduce(function(mx,sl){
+    return Math.max(mx, sl.requiredW||0);
+  }, 0) + 0.6;
+  actualWW = Math.max(wW, layoutWW);  // never shrink below user-specified width
+
+  // Rebuild ALL scale factors with final actual dimensions
+  SVG_H = fullscreen ? Math.round(1800 * (actualWL/actualWW) * 0.8 + 220) : 820;
   DH = SVG_H - MT - MB;
-  sY = DH / actualWL;
-  // Rebuild Y and H coordinate transformers with updated sY
-  Y = m => MT + m*sY;
-  H = m => m*sY;
+  sX = DW/actualWW; sY = DH/actualWL;
+  X = m=>ML+m*sX; Y = m=>MT+m*sY; W = m=>m*sX; H = m=>m*sY;
+
+  // Update all width-dependent rects to use actualWW
+  zoneRects.forEach(function(z){ z.w=actualWW; });
+  sectionCrossAisles.forEach(function(ca){ ca.w=actualWW; });
 
   // Staging at south
   if (isOne) {
@@ -1600,7 +1612,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
 
   // Return everything needed for rendering
   return {
-    SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, wW, wL: actualWL,
+    SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, actualWW, wW: actualWW, wL: actualWL,
     X: m=>ML+m*sX, Y: m=>MT+m*sY, W: m=>m*sX, H: m=>m*sY,
     dockSide, forkType, packingBenches: params.packingBenches,
     nMHE: design.nMHE||0, inboundMode: params.inboundMode, outboundMode: params.outboundMode,
@@ -2142,7 +2154,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
 
       {/* ── TOTAL AREA FOOTER ─── */}
       <text x={X(wW/2)} y={SVG_H-4} textAnchor="middle" fontSize="10" fontWeight="700" fill="#374151">
-        {`Total gross area: ${(wW*actualWL).toLocaleString()}m²  (${Math.round(wW*actualWL*10.7639).toLocaleString()} sq ft)  ·  ${wW}×${Math.round(actualWL)}m  ·  ${dockSide==='one'?'One-side':'Opposite-side'} docks  ·  Derived from ${Object.keys(sectionLayouts).length} rack type sections`}
+        {`Total gross area: ${(actualWW*actualWL).toLocaleString()}m²  (${Math.round(actualWW*actualWL*10.7639).toLocaleString()} sq ft)  ·  ${actualWW.toFixed(1)}×${Math.round(actualWL)}m  ·  ${dockSide==='one'?'One-side':'Opposite-side'} docks  ·  Derived from ${Object.keys(sectionLayouts).length} rack type sections`}
       </text>
     </svg>
   );
