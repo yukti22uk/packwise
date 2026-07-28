@@ -1322,7 +1322,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var s=computeSection(rt, wW);
     if(!s) return;
     sectionLayouts[rt]={...s.rtLayout, totalBays:s.rtBays, actualHeight:s.rtLayout.height,
-      requiredW: s.rtLayout.nCols * s.rtSlot + s.rtPa};
+      requiredW: s.rtLayout.nCols * s.rtSlot + s.rtPa};  // full pa BOTH sides
   });
   var preLayoutWW = Object.entries(sectionLayouts).reduce(function(mx,kv){
     if(kv[0]==='ground') return mx;
@@ -1335,7 +1335,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var sg = computeSection('ground', actualWW);  // ← uses actualWW, not wW
     if(sg) sectionLayouts['ground']={...sg.rtLayout, totalBays:sg.rtBays,
       actualHeight:sg.rtLayout.height,
-      requiredW: sg.rtLayout.nCols * sg.rtSlot + sg.rtPa};
+      requiredW: sg.rtLayout.nCols * sg.rtSlot + sg.rtPa};  // full pa BOTH sides
   }
 
   // ── BUILD zoneRects in RACK_ORDER (now all sectionLayouts are final) ─────
@@ -1599,8 +1599,9 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
         frontOffset+=segBays;
       }
       if(i===0) dimAnnotations.push({
-        x:rx, y:zone.y+0.3,
-        faceDepth, backGap, colDepth, aisle:pa, bayWidthM:bayHm, dom});
+        x:rx, y:zone.y+0.3, zoneX:zone.x,
+        faceDepth, backGap, colDepth, aisle:pa, bayWidthM:bayHm, dom,
+        lastColRight: rx + (nCols-1)*actualColSlot + colDepth });  // right edge of LAST column
       globalBayNum+=actualBays*2; // front+back
     }  // end for(i) columns loop
     return {rows, crossAisles, nCols, baysPerCol:sl.baysPerCol, totalBays, dimAnnotations};
@@ -2005,24 +2006,45 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
             <text x={px+pFace+pGap+pFace/2} y={ty-4} textAnchor="middle" fontSize="8" fill="#1d4ed8" fontWeight="700">
               {(d.faceDepth*1000).toFixed(0)}mm
             </text>
-            {/* ── PICKING AISLE dim — drawn between column A and column B ── */}
+            {/* ── PICKING AISLE dim — between col A and col B ── */}
             {pAisle>4&&(()=>{
-              const aisleX1=px+W(d.colDepth);     // right edge of B2B pair
-              const aisleX2=aisleX1+pAisle;        // start of next pair
+              const aisleX1=px+W(d.colDepth);
+              const aisleX2=aisleX1+pAisle;
               return(<>
-                <line x1={aisleX1} y1={ty} x2={aisleX2} y2={ty}
-                  stroke="#7c3aed" strokeWidth="1.2"/>
-                <line x1={aisleX1} y1={ty-TICK/2} x2={aisleX1} y2={ty+TICK/2}
-                  stroke="#7c3aed" strokeWidth="1.2"/>
-                <line x1={aisleX2} y1={ty-TICK/2} x2={aisleX2} y2={ty+TICK/2}
-                  stroke="#7c3aed" strokeWidth="1.2"/>
-                <text x={(aisleX1+aisleX2)/2} y={ty-4}
-                  textAnchor="middle" fontSize="8.5" fill="#7c3aed" fontWeight="800">
+                <line x1={aisleX1} y1={ty} x2={aisleX2} y2={ty} stroke="#7c3aed" strokeWidth="1.2"/>
+                <line x1={aisleX1} y1={ty-TICK/2} x2={aisleX1} y2={ty+TICK/2} stroke="#7c3aed" strokeWidth="1.2"/>
+                <line x1={aisleX2} y1={ty-TICK/2} x2={aisleX2} y2={ty+TICK/2} stroke="#7c3aed" strokeWidth="1.2"/>
+                <text x={(aisleX1+aisleX2)/2} y={ty-4} textAnchor="middle" fontSize="8.5" fill="#7c3aed" fontWeight="800">
                   {(d.aisle*1000).toFixed(0)}mm
                 </text>
-                <text x={(aisleX1+aisleX2)/2} y={ty+12}
-                  textAnchor="middle" fontSize="6.5" fill="#7c3aed" fontWeight="600">
+                <text x={(aisleX1+aisleX2)/2} y={ty+12} textAnchor="middle" fontSize="6.5" fill="#7c3aed" fontWeight="600">
                   Picking Aisle
+                </text>
+              </>);
+            })()}
+            {/* ── LEADING aisle (before first column) ── */}
+            {pAisle>4&&(()=>{
+              const leadX1=X(d.zoneX||0)+4;
+              const leadX2=px;
+              if(leadX2-leadX1<4) return null;
+              return(<>
+                <line x1={leadX1} y1={ty} x2={leadX2} y2={ty} stroke="#7c3aed" strokeWidth="0.8" strokeDasharray="3,2"/>
+                <line x1={leadX1} y1={ty-TICK/2} x2={leadX1} y2={ty+TICK/2} stroke="#7c3aed" strokeWidth="0.8"/>
+                <text x={(leadX1+leadX2)/2} y={ty+12} textAnchor="middle" fontSize="6" fill="#7c3aed">
+                  {(d.aisle*1000).toFixed(0)}mm
+                </text>
+              </>);
+            })()}
+            {/* ── TRAILING aisle (after last column) ── */}
+            {pAisle>4&&d.lastColRight&&(()=>{
+              const trailX1=X(d.lastColRight);
+              const trailX2=X(actualWW)-4;
+              if(trailX2-trailX1<4) return null;
+              return(<>
+                <line x1={trailX1} y1={ty} x2={trailX2} y2={ty} stroke="#7c3aed" strokeWidth="0.8" strokeDasharray="3,2"/>
+                <line x1={trailX2} y1={ty-TICK/2} x2={trailX2} y2={ty+TICK/2} stroke="#7c3aed" strokeWidth="0.8"/>
+                <text x={(trailX1+trailX2)/2} y={ty+12} textAnchor="middle" fontSize="6" fill="#7c3aed">
+                  {(d.aisle*1000).toFixed(0)}mm
                 </text>
               </>);
             })()}
