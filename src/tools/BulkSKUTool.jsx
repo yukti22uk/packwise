@@ -772,7 +772,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 background:lockedSkus.has(r.name)?'#ede9fe':'#f1f5f9',
                                 color:lockedSkus.has(r.name)?'#6d28d9':'#9ca3af',
                               }}>
-                              {lockedSkus.has(r.name)?'[Lock]':'[Unlock]'}
+                              {lockedSkus.has(r.name)?'🔒':'🔓'}
                             </button>
                           </td>
                         </tr>))}
@@ -855,22 +855,22 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                   padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'700'}}>
                                   {r.stackLayers}{r.heightLocked?' [L]':''}
                                 </span>
-                              : <span style={{color:'#9ca3af'}}>-</span>}
+                              : <span style={{color:'#9ca3af'}}>—</span>}
                           </td>
                           <td style={{padding:'7px 12px'}}>
                             {r.error
-                              ? <span style={{fontSize:'11px',color:'#be185d'}}>! {r.error}</span>
+                              ? <span style={{fontSize:'11px',color:'#be185d'}}>⚠ {r.error}</span>
                               : r.remainder>0
                                 ? <span style={{background:'#fef9c3',color:'#854d0e',padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'600'}}>Mixed</span>
                                 : r.fullPallets>0
                                   ? <span style={{background:'#f0fdf4',color:'#166534',padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'600'}}>Full</span>
-                                  : <span style={{color:'#9ca3af',fontSize:'11px'}}>-</span>}
+                                  : <span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
                           </td>
                           <td style={{padding:'7px 12px',textAlign:'center'}}>
                             <button
                               onClick={()=>toggleSkuLock(r.name)}
                               title={lockedSkus.has(r.name)||r.heightLocked
-                                ? 'Height locked - click to unlock (allow tipping)'
+                                ? 'Height locked — click to unlock (allow tipping)'
                                 : 'Click to lock height upright for this SKU'}
                               style={{
                                 padding:'3px 8px',borderRadius:'99px',cursor:'pointer',
@@ -879,7 +879,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 color:lockedSkus.has(r.name)?'#6d28d9':'#9ca3af',
                                 transition:'all 0.15s',
                               }}>
-                              {lockedSkus.has(r.name)?'[Lock]':'[Unlock]'}
+                              {lockedSkus.has(r.name)?'🔒':'🔓'}
                             </button>
                           </td>
                         </tr>))}
@@ -932,7 +932,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 </div>
                                 <span style={{fontWeight:'700',fontSize:'12px',
                                   color:p.used>=0.8?'#6d28d9':'#9ca3af',minWidth:'36px'}}>
-                                  {(p.used*100).toFixed(1)+'%'}
+                                  {(p.used*100).toFixed(1)}%
                                 </span>
                               </div>
                             </td>
@@ -941,7 +941,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               <div style={{background:fitBg,borderRadius:'7px',
                                 padding:'5px 8px',fontSize:'11px',color:fitCol,fontWeight:'600'}}>
                                 <div>
-                                  {!fitOk?'Infeasible':fitWarn?'Unstable':'Compatible'}
+                                  {!fitOk?'❌ Infeasible':fitWarn?'⚠️ Unstable':'✅ Compatible'}
                                 </div>
                                 {!fitOk&&fit.reason&&
                                   <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400'}}>
@@ -953,7 +953,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                   </div>}
                                 {fitOk&&!fitWarn&&fit.totalH!=null&&
                                   <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400',color:'#166534'}}>
-                                    {'H: '+fit.totalH+'mm, Floor: '+fit.totalFloor+'%'}
+                                    H: {fit.totalH}mm · Floor: {fit.totalFloor}%
                                   </div>}
                               </div>
                             </td>
@@ -965,7 +965,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                   fontSize:'11px',fontWeight:'600',margin:'2px 3px 2px 0'}}>
                                   {s.name}
                                   <span style={{fontWeight:'400',color:'#9ca3af',marginLeft:'4px'}}>
-                                    {'('+((s.remainder*100).toFixed(1))+'%)'}
+                                    ({(s.remainder*100).toFixed(1)}%)
                                     {s.sl&&s.sw&&s.sh?' '+s.sl+'\u00D7'+s.sw+'\u00D7'+s.sh:''}
                                   </span>
                                 </span>))}
@@ -982,7 +982,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
 
           {!results && !processing && !error && (
             <div style={{...S.card,padding:'60px',textAlign:'center',color:'#9ca3af'}}>
-              <div style={{fontSize:'48px',marginBottom:'12px'}}>[ ]</div>
+              <div style={{fontSize:'48px',marginBottom:'12px'}}>📦</div>
               <div style={{fontWeight:'500'}}>Fill in container details and upload your SKU file to get started</div>
             </div>)}
         </div>
