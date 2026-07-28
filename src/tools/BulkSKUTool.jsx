@@ -139,7 +139,7 @@ function calcMixedFitment(palletSkus, pL, pW, pH) {
     const tallSku = bestCombo.find(o => o.best.boxH === hMax);
     const shortSku = bestCombo.find(o => o.best.boxH === hMin);
     const tallAlt  = tallSku?.opts?.filter(o => o.boxH <= hMin*1.5).sort((a,b)=>b.perLayer-a.perLayer)[0];
-    const shortAlt = shortSku?.opts?.filter(o => o.boxH >= hMax/1.5).sort((a,b)=>b.perLayer-a.perLayer)[0];
+    const shortAlt = shortSku?.opts?.filter(o => o.boxH >= hMax*0.667).sort((a,b)=>b.perLayer-a.perLayer)[0];
     const tips = [];
     if (tallAlt)  tips.push('rotate '+tallSku.name+' to '+tallAlt.boxH+'mm height ('+tallAlt.perLayer+' boxes per layer)');
     if (shortAlt) tips.push('rotate '+shortSku.name+' to '+shortAlt.boxH+'mm height');
