@@ -1143,8 +1143,8 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
 // Module-level section layout calculator (outside FloorPlanSVG to avoid minifier TDZ)
 const CROSS_AISLE_W_M = 3.0; // cross aisle width in metres
 function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossIntervalM) {
-  // totalBays = number of bays from calculation (one-face basis).
-  // Two separate rects per B2B pair: total = nCols × baysPerFace × 2 ≈ totalBays
+  // Two separate rects per B2B pair: total visible = nCols × baysPerFace × 2 ≈ totalBays
+  var nCols = Math.max(3, Math.floor(sectionW / colSlot));
   var baysPerFace = totalBays > 0 ? Math.max(1, Math.ceil(totalBays / 2 / nCols)) : 3;
   var y = 0.3, yStor = 0, baysSinceLast = 0;
   var cYs = [];
