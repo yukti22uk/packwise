@@ -12,57 +12,43 @@ const CHUNK_SIZE = 10_000;        // rows per async chunk for aggregation
 
 // ─── STREAM-AGGREGATE ORDER DATA (handles 10L rows without freezing UI) ───────
 function streamAggregateOrders(rows, masterMap, onProgress) {
-  return new Promise(resolve => {
-    const dataRows = rows.length > 0 && isHeaderRow(rows[0]) ? rows.slice(1) : rows;
-    const total = Math.min(dataRows.length, MAX_ORDER_ROWS);
-
-    // Accumulators
-    const typeMap = {}, skuMap = {}, dateMap = {}, glcMap = {};
-    const allDates = new Set(), anomalies = [];
+  return new Promise(function(resolve) {
+    var dataRows = rows.length > 0 && isHeaderRow(rows[0]) ? rows.slice(1) : rows;
+    var total = Math.min(dataRows.length, MAX_ORDER_ROWS);
+    var typeMap={}, skuMap={}, dateMap={}, glcMap={};
+    var allDates=new Set(), anomalies=[];
 
     if (total === 0) {
-      resolve({ anomalies, typeMap, skuMap, dateMap, glcMap, allDates, totalRows: 0 });
+      resolve({anomalies:anomalies,typeMap:typeMap,skuMap:skuMap,dateMap:dateMap,glcMap:glcMap,allDates:allDates,totalRows:0});
       return;
     }
 
-    const processChunk = (start) => {
-      const end = Math.min(start + CHUNK_SIZE, total);
+    function processChunk(start) {
+      var end = Math.min(start + CHUNK_SIZE, total);
+      for (var i = start; i < end; i++) {
+        var r=dataRows[i], rowNum=i+(rows.length>dataRows.length?2:1);
+        var orderNo=r[0]||'', dispLoc=r[1]?String(r[1]).trim():'';
+        var sku=r[2]||'', qty=parseFloat(r[3])||0, date=r[4]||'';
+        var orderType=r[5]?String(r[5]).trim():'Unknown', category=r[6]?String(r[6]).trim():'';
 
-      for (let i = start; i < end; i++) {
-        const r        = dataRows[i];
-        const rowNum   = i + (rows.length > dataRows.length ? 2 : 1);
-        const orderNo  = r[0] || '';
-        const dispLoc  = r[1] ? r[1].trim() : '';
-        const sku      = r[2] || '';
-        const qty      = parseFloat(r[3]) || 0;
-        const date     = r[4] || '';
-        const orderType = r[5] ? r[5].trim() : 'Unknown';
-        const category = r[6] ? r[6].trim() : '';
-
-        // Anomaly flags (first 50k rows only for performance)
         if (i < 50000) {
-          if (!orderNo) anomalies.push({row:rowNum,sku,field:'Order No',issue:'Missing order number',sev:'High'});
+          if (!orderNo) anomalies.push({row:rowNum,sku:sku,field:'Order No',issue:'Missing order number',sev:'High'});
           if (!sku)     anomalies.push({row:rowNum,sku:'—',field:'SKU',issue:'Missing SKU',sev:'High'});
-          if (qty <= 0) anomalies.push({row:rowNum,sku,field:'Qty',issue:`Zero/negative qty: ${r[3]}`,sev:'High'});
-          if (!date)    anomalies.push({row:rowNum,sku,field:'Date',issue:'Missing date',sev:'Medium'});
-          if (sku && masterMap.size > 0 && !masterMap.has(sku))
-            anomalies.push({row:rowNum,sku,field:'Master',issue:'SKU not in master',sev:'High'});
+          if (qty<=0)   anomalies.push({row:rowNum,sku:sku,field:'Qty',issue:'Zero/negative qty: '+r[3],sev:'High'});
+          if (!date)    anomalies.push({row:rowNum,sku:sku,field:'Date',issue:'Missing date',sev:'Medium'});
+          if (sku&&masterMap.size>0&&!masterMap.has(sku))
+            anomalies.push({row:rowNum,sku:sku,field:'Master',issue:'SKU not in master',sev:'High'});
         }
-
-        // By dispatch location
-        const locKey = dispLoc || 'Unspecified';
-        if (!typeMap[locKey]) typeMap[locKey] = {lines:0,orders:new Set(),skus:new Set(),dates:new Set(),qty:0};
-        typeMap[locKey].lines++;
-        typeMap[locKey].qty += qty;
+        var locKey=dispLoc||'Unspecified';
+        if (!typeMap[locKey]) typeMap[locKey]={lines:0,orders:new Set(),skus:new Set(),dates:new Set(),qty:0};
+        typeMap[locKey].lines++; typeMap[locKey].qty+=qty;
         if (orderNo) typeMap[locKey].orders.add(orderNo);
         if (sku)     typeMap[locKey].skus.add(sku);
         if (date)    typeMap[locKey].dates.add(date);
 
-        // By SKU
         if (sku) {
-          if (!skuMap[sku]) skuMap[sku] = {lines:0,orders:new Set(),qty:0,dates:new Set(),categories:new Set(),locations:new Set(),orderTypes:new Set()};
-          skuMap[sku].lines++;
-          skuMap[sku].qty += qty;
+          if (!skuMap[sku]) skuMap[sku]={lines:0,orders:new Set(),qty:0,dates:new Set(),categories:new Set(),locations:new Set(),orderTypes:new Set()};
+          skuMap[sku].lines++; skuMap[sku].qty+=qty;
           if (orderNo)   skuMap[sku].orders.add(orderNo);
           if (date)      skuMap[sku].dates.add(date);
           if (category)  skuMap[sku].categories.add(category);
@@ -70,43 +56,28 @@ function streamAggregateOrders(rows, masterMap, onProgress) {
           if (orderType) skuMap[sku].orderTypes.add(orderType);
         }
 
-        // Monthly trend
         if (date) {
-          const parts = date.split(/[\/\-]/);
-          let mon = date.slice(0, 7);
-          if (parts.length >= 2) {
-            const y = parts[2]?.length===4 ? parts[2] : (parts[0]?.length===4 ? parts[0] : '');
-            const m = parts[2]?.length===4 ? parts[1] : (parts[0]?.length===4 ? parts[0] : '');
-            if (y && m) mon = `${y}-${String(m).padStart(2,'0')}`;
-          }
-          if (!dateMap[mon]) dateMap[mon] = {month:mon,lines:0,qty:0,orders:new Set()};
-          dateMap[mon].lines++;
-          dateMap[mon].qty += qty;
+          var parts=date.split(/[\/\-]/), mon=date.slice(0,7);
+          var yy=parts[2]&&parts[2].length===4?parts[2]:(parts[0]&&parts[0].length===4?parts[0]:'');
+          var mm=parts[2]&&parts[2].length===4?parts[1]:(parts[0]&&parts[0].length===4?parts[0]:'');
+          if (yy&&mm) mon=yy+'-'+(mm.length===1?'0':'')+mm;
+          if (!dateMap[mon]) dateMap[mon]={month:mon,lines:0,qty:0,orders:new Set()};
+          dateMap[mon].lines++; dateMap[mon].qty+=qty;
           if (orderNo) dateMap[mon].orders.add(orderNo);
           allDates.add(date);
         }
 
-        // Group × Location × Category
-        const grp = orderType || 'Unknown';
-        const loc = dispLoc   || 'Unspecified';
-        const cat = category  || 'Unspecified';
-        const glcKey = `${grp}|||${loc}|||${cat}`;
-        if (!glcMap[glcKey]) glcMap[glcKey] = {group:grp,location:loc,category:cat,lines:0,orders:new Set(),skus:new Set(),qty:0};
-        glcMap[glcKey].lines++;
-        glcMap[glcKey].qty += qty;
+        var grp=orderType||'Unknown', loc=dispLoc||'Unspecified', cat=category||'Unspecified';
+        var glcKey=grp+'|||'+loc+'|||'+cat;
+        if (!glcMap[glcKey]) glcMap[glcKey]={group:grp,location:loc,category:cat,lines:0,orders:new Set(),skus:new Set(),qty:0};
+        glcMap[glcKey].lines++; glcMap[glcKey].qty+=qty;
         if (orderNo) glcMap[glcKey].orders.add(orderNo);
         if (sku)     glcMap[glcKey].skus.add(sku);
       }
-
       if (onProgress) onProgress(Math.round((end/total)*100), end);
-
-      if (end < total) {
-        setTimeout(() => processChunk(end), 0);
-      } else {
-        resolve({ anomalies, typeMap, skuMap, dateMap, glcMap, allDates, totalRows: total });
-      }
-    };
-
+      if (end<total) { setTimeout(function(){processChunk(end);},0); }
+      else { resolve({anomalies:anomalies,typeMap:typeMap,skuMap:skuMap,dateMap:dateMap,glcMap:glcMap,allDates:allDates,totalRows:total}); }
+    }
     processChunk(0);
   });
 }
