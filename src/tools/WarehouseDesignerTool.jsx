@@ -1155,8 +1155,10 @@ function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossInterval
       cYs.push(y); y += CROSS_AISLE_W_M; yStor = 0; baysSinceLast = 0;
     }
   }
-  return { nCols, baysPerCol: baysPerFace, height: Math.max(3, y+0.3),
-    area: +((y+0.3)*sectionW).toFixed(1), crossYPositions: cYs };
+  // Height = exact bays × bayHm + margins (no enforced minimum that would cause extra bays)
+  var exactH = y + 0.3;
+  return { nCols, baysPerCol: baysPerFace, height: Math.max(baysPerFace * bayHm + 0.6, exactH),
+    area: +(exactH * sectionW).toFixed(1), crossYPositions: cYs };
 }
 
 
