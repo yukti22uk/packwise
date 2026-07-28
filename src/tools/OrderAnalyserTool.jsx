@@ -4,7 +4,6 @@
 // Step 3: Optional inventory reconciliation
 import { useState, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
-import Papa from 'papaparse';
 import PptxGenJS from 'pptxgenjs';
 import { S } from '../components/styles.jsx';
 
@@ -141,30 +140,34 @@ function buildAnalysisFromMaps({typeMap, skuMap, dateMap, anomalies, totalRows},
     anomalyNote: totalRows>50000 ? `Anomaly check on first 50,000 of ${totalRows.toLocaleString()} rows` : '' };
 }
 
-// ─── PARSE ORDER FILE (CSV/TSV/Excel) — streams for large files ────────────
+// ─── PARSE ORDER FILE (CSV/TSV/Excel) — uses XLSX which handles all formats ───
 function parseFileToRows(file) {
   return new Promise((resolve, reject) => {
-    const ext = file.name.split('.').pop().toLowerCase();
-    if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {
-      Papa.parse(file, {
-        skipEmptyLines: true,
-        delimiter: ext==='tsv' ? '\t' : '',  // auto-detect for csv
-        complete: r => resolve(r.data),
-        error: e => reject(e),
-      });
-    } else if (ext === 'xlsx' || ext === 'xls') {
-      const reader = new FileReader();
-      reader.onload = e => {
-        try {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.onload = e => {
+      try {
+        const ext = file.name.split('.').pop().toLowerCase();
+        let rows;
+        if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {
+          // XLSX can parse CSV/TSV natively
+          const wb = XLSX.read(e.target.result, {type:'string', raw:false});
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+        } else {
+          // Excel binary
           const wb = XLSX.read(e.target.result, {type:'array', cellDates:false, dense:true});
           const ws = wb.Sheets[wb.SheetNames[0]];
-          const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-          resolve(rows.map(r => r.map(c => String(c===null||c===undefined?'':c).trim())));
-        } catch(err) { reject(err); }
-      };
-      reader.readAsArrayBuffer(file);
+          rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+        }
+        resolve(rows.map(r => Array.isArray(r) ? r.map(c=>String(c===null||c===undefined?'':c).trim()) : []));
+      } catch(err) { reject(err); }
+    };
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {
+      reader.readAsText(file);
     } else {
-      reject(new Error('Unsupported file type. Use CSV, TSV, or Excel (.xlsx)'));
+      reader.readAsArrayBuffer(file);
     }
   });
 }
