@@ -1514,12 +1514,13 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     // Ground storage uses zone.w (= actualWW) to fill the expanded space.
     var isGround=(dom==='ground');
     var effectiveW=isGround?zone.w:Math.min(zone.w,wW);
+    var minBpfZone=(MIN_BPF_BY_TYPE?.[dom])||1;  // enforce minimum rows per column
     var maxNcols=Math.max(3, Math.floor(effectiveW/actualColSlot));
-    var bpfAtMax=totalBays>0?Math.max(1,Math.ceil(totalBays/2/maxNcols)):(sl.baysPerCol||1);
+    // With minBpf: cap nCols so bpf >= minBpfZone
+    var bpfAtMax=Math.max(minBpfZone, totalBays>0?Math.max(1,Math.ceil(totalBays/2/maxNcols)):minBpfZone);
     var nColsMin=totalBays>0?Math.max(3,Math.ceil(totalBays/2/bpfAtMax)):maxNcols;
     var nCols=Math.min(maxNcols, nColsMin);
-    // No forced minBpf — bay count closely matches calculation
-    var bpf=totalBays>0?Math.max(1,Math.ceil(totalBays/2/nCols)):(sl.baysPerCol||1);
+    var bpf=totalBays>0?Math.max(minBpfZone,Math.ceil(totalBays/2/nCols)):bpfAtMax;
 
 
     // Rebuild cross aisles from actual bpf (ignore pre-computed crossYPositions)
