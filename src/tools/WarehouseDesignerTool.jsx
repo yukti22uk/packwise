@@ -1642,7 +1642,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
   }
   if (!fp?.SVG_W) return <div style={{padding:'8px',color:'#9ca3af',fontSize:'11px'}}>Generating plan…</div>;
   const {
-    SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, wW, wL,
+    SVG_W, SVG_H, ML, MR, MT, MB, DW, DH, sX, sY, actualWL, actualWW, wW, wL,
     X, Y, W, H,
     dockSide, forkType, packingBenches, nMHE, inboundMode, outboundMode,
     stagingH, isBoth, isOne, recH, disH, offH, mheH, supportH,
@@ -1679,7 +1679,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
       </defs>
 
       {/* ── WAREHOUSE OUTLINE ─── */}
-      <rect x={X(0)} y={Y(0)} width={W(wW)} height={H(wL)} fill="#f8fafc" stroke="#1e293b" strokeWidth="2.5" rx="2"/>
+      <rect x={X(0)} y={Y(0)} width={W(actualWW)} height={H(actualWL)} fill="#f8fafc" stroke="#1e293b" strokeWidth="2.5" rx="2"/>
 
       {/* ── SUPPORT AREAS (office + MHE) ─── */}
       {supportRects.map((s,i)=>(
