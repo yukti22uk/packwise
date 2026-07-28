@@ -89,16 +89,19 @@ function streamAggregateOrders(rows, masterMap, onProgress) {
 
 
 // ─── CONVERT AGGREGATION MAPS TO FINAL ANALYSIS (matches parseOrderData shape) ─
-function buildAnalysisFromMaps({typeMap, skuMap, dateMap, glcMap, allDates, anomalies, totalRows}, masterMap) {
-  const orderSummary = Object.entries(typeMap).map(([loc,g])=>({
+function buildAnalysisFromMaps(maps, masterMap) {
+  var _tmap=maps.typeMap||{}, _smap=maps.skuMap||{}, _dmap=maps.dateMap||{};
+  var _gmap=maps.glcMap||{}, _adt=maps._adt||new Set();
+  var anomalies=maps.anomalies||[], totalRows=maps.totalRows||0;
+  const orderSummary = Object.entries(_tmap).map(([loc,g])=>({
     dispatchLoc:loc, lines:g.lines, uniqueOrders:g.orders.size,
     distinctSKUs:g.skus.size, distinctDates:g.dates.size, totalQty:g.qty,
     avgQtyPerLine:+(g.qty/g.lines).toFixed(1),
     avgLinesPerOrder:+(g.lines/Math.max(1,g.orders.size)).toFixed(1),
   })).sort((a,b)=>b.lines-a.lines);
 
-  const totalLines = Object.values(skuMap).reduce((s,v)=>s+v.lines,0);
-  const skuArr = Object.entries(skuMap).map(([sku,v])=>{
+  const totalLines = Object.values(_smap).reduce((s,v)=>s+v.lines,0);
+  const skuArr = Object.entries(_smap).map(([sku,v])=>{
     const mData = masterMap?.get?.(sku)||null;
     return {
       sku, lines:v.lines, uniqueOrders:v.orders.size, totalQty:v.qty,
@@ -146,14 +149,14 @@ function buildAnalysisFromMaps({typeMap, skuMap, dateMap, glcMap, allDates, anom
   }));
 
   // Monthly trend
-  const monthlyTrend=Object.values(dateMap)
+  const monthlyTrend=Object.values(_dmap)
     .map(m=>({...m, uniqueOrders:m.orders.size, orders:undefined}))
     .sort((a,b)=>a.month.localeCompare(b.month));
 
   // Group × Location × Category — uses actual orderType + category from input
-  const hasCat = Object.values(glcMap||{}).some(g=>g.category&&g.category!=='Unspecified');
-  const hasLoc = Object.values(glcMap||{}).some(g=>g.location&&g.location!=='Unspecified');
-  const grpLocCatSummary = Object.values(glcMap||{}).map(g=>{
+  const hasCat = Object.values(_gmap||{}).some(g=>g.category&&g.category!=='Unspecified');
+  const hasLoc = Object.values(_gmap||{}).some(g=>g.location&&g.location!=='Unspecified');
+  const grpLocCatSummary = Object.values(_gmap||{}).map(g=>{
     let volume=0;
     g.skus.forEach(sku=>{
       const m=masterMap?.get?.(sku);
@@ -169,7 +172,7 @@ function buildAnalysisFromMaps({typeMap, skuMap, dateMap, glcMap, allDates, anom
   );
 
   // periodDays: count distinct dates seen across all orders
-  const periodDays = Math.max((allDates||new Set()).size, monthlyTrend.length*20, 1);
+  const periodDays = Math.max((_adt||new Set()).size, monthlyTrend.length*20, 1);
 
   const abcFmsMatrix={AA:0,AF:0,AM:0,AS:0,BA:0,BF:0,BM:0,BS:0,CA:0,CF:0,CM:0,CS:0};
   skuArr.forEach(r=>{
@@ -187,15 +190,15 @@ function buildAnalysisFromMaps({typeMap, skuMap, dateMap, glcMap, allDates, anom
       ? `Anomaly check on first 50,000 of ${totalRows.toLocaleString()} rows` : '',
   };
 }
-  const orderSummary = Object.entries(typeMap).map(([loc,g])=>({
+  const orderSummary = Object.entries(_tmap).map(([loc,g])=>({
     dispatchLoc:loc, lines:g.lines, uniqueOrders:g.orders.size,
     distinctSKUs:g.skus.size, distinctDates:g.dates.size, totalQty:g.qty,
     avgQtyPerLine:+(g.qty/g.lines).toFixed(1),
     avgLinesPerOrder:+(g.lines/Math.max(1,g.orders.size)).toFixed(1),
   })).sort((a,b)=>b.lines-a.lines);
 
-  const totalLines = Object.values(skuMap).reduce((s,v)=>s+v.lines,0);
-  const skuArr = Object.entries(skuMap).map(([sku,v])=>{
+  const totalLines = Object.values(_smap).reduce((s,v)=>s+v.lines,0);
+  const skuArr = Object.entries(_smap).map(([sku,v])=>{
     const mData = masterMap?.get?.(sku)||null;
     return {
       sku, lines:v.lines, uniqueOrders:v.orders.size, totalQty:v.qty,
@@ -397,17 +400,17 @@ function parseOrderData(text, masterMap) {
   });
 
   // Order summary by type
-  const typeMap = {};
+  const _pdTypeMap = {};
   orders.forEach(o => {
     const locKey = o.dispatchLoc || 'Unspecified';
-    if (!typeMap[locKey]) typeMap[locKey] = { lines:0, orders:new Set(), skus:new Set(), dates:new Set(), qty:0 };
-    const g = typeMap[locKey];
+    if (!_pdTypeMap[locKey]) _pdTypeMap[locKey] = { lines:0, orders:new Set(), skus:new Set(), dates:new Set(), qty:0 };
+    const g = _pdTypeMap[locKey];
     g.lines++; g.qty += o.qty;
     if (o.orderNo) g.orders.add(o.orderNo);
     if (o.sku)     g.skus.add(o.sku);
     if (o.date)    g.dates.add(o.date);
   });
-  const orderSummary = Object.entries(typeMap).map(([loc, g]) => ({
+  const orderSummary = Object.entries(_pdTypeMap).map(([loc, g]) => ({
     dispatchLoc: loc, lines: g.lines, uniqueOrders: g.orders.size,
     distinctSKUs: g.skus.size, distinctDates: g.dates.size, totalQty: g.qty,
     avgQtyPerLine: +(g.qty / g.lines).toFixed(1),
@@ -415,18 +418,18 @@ function parseOrderData(text, masterMap) {
   }));
 
   // SKU summary
-  const skuMap = {};
+  const _pdSkuMap = {};
   orders.forEach(o => {
     if (!o.sku) return;
-    if (!skuMap[o.sku]) skuMap[o.sku] = { lines:0, orders:new Set(), qty:0, dates:[], categories:new Set(), locations:new Set() };
-    skuMap[o.sku].lines++;
-    skuMap[o.sku].qty += o.qty;
-    if (o.orderNo)     skuMap[o.sku].orders.add(o.orderNo);
-    if (o.date)        skuMap[o.sku].dates.push(o.date);
-    if (o.category)    skuMap[o.sku].categories.add(o.category);
-    if (o.dispatchLoc) skuMap[o.sku].locations.add(o.dispatchLoc);
+    if (!_pdSkuMap[o.sku]) _pdSkuMap[o.sku] = { lines:0, orders:new Set(), qty:0, dates:[], categories:new Set(), locations:new Set() };
+    _pdSkuMap[o.sku].lines++;
+    _pdSkuMap[o.sku].qty += o.qty;
+    if (o.orderNo)     _pdSkuMap[o.sku].orders.add(o.orderNo);
+    if (o.date)        _pdSkuMap[o.sku].dates.push(o.date);
+    if (o.category)    _pdSkuMap[o.sku].categories.add(o.category);
+    if (o.dispatchLoc) _pdSkuMap[o.sku].locations.add(o.dispatchLoc);
   });
-  const skuSummary = Object.entries(skuMap).map(([sku, g]) => {
+  const skuSummary = Object.entries(_pdSkuMap).map(([sku, g]) => {
     const m = masterMap.get(sku) || { L:0, W:0, H:0, weight:0, volume:0 };
     const ds = [...g.dates].sort();
     return { sku, lines:g.lines, uniqueOrders:g.orders.size, totalQty:g.qty,
