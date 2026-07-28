@@ -99,7 +99,7 @@ function streamAggregateOrders(rows, masterMap, onProgress) {
   });
 }
 
-// ─── CONVERT AGGREGATION MAPS TO FINAL ANALYSIS (same as parseOrderData) ─────
+// ─── CONVERT AGGREGATION MAPS TO FINAL ANALYSIS (matches parseOrderData shape) ─
 function buildAnalysisFromMaps({typeMap, skuMap, dateMap, anomalies, totalRows}, masterMap) {
   const orderSummary = Object.entries(typeMap).map(([loc,g])=>({
     dispatchLoc:loc, lines:g.lines, uniqueOrders:g.orders.size,
@@ -108,36 +108,82 @@ function buildAnalysisFromMaps({typeMap, skuMap, dateMap, anomalies, totalRows},
     avgLinesPerOrder:+(g.lines/Math.max(1,g.orders.size)).toFixed(1),
   })).sort((a,b)=>b.lines-a.lines);
 
-  // SKU analytics (same logic as original parseOrderData)
   const totalLines = Object.values(skuMap).reduce((s,v)=>s+v.lines,0);
-  const skuArr = Object.entries(skuMap).map(([sku,v])=>({
-    sku, lines:v.lines, uniqueOrders:v.orders.size, totalQty:v.qty,
-    distinctDates:v.dates.size, categories:[...v.categories], locations:[...v.locations],
-    lineFreq:+(v.lines/Math.max(1,v.dates.size)).toFixed(2),
-    lineShare:+((v.lines/Math.max(1,totalLines))*100).toFixed(2),
-  })).sort((a,b)=>b.lines-a.lines);
+  const skuArr = Object.entries(skuMap).map(([sku,v])=>{
+    const mData = masterMap?.get?.(sku)||null;
+    return {
+      sku, lines:v.lines, uniqueOrders:v.orders.size, totalQty:v.qty,
+      distinctDates:v.dates.size,
+      categories:[...v.categories].filter(Boolean),
+      locations:[...v.locations].filter(Boolean),
+      lineFreq:+(v.lines/Math.max(1,v.dates.size)).toFixed(2),
+      lineShare:+((v.lines/Math.max(1,totalLines))*100).toFixed(2),
+      totalVolume: mData ? +(v.qty*(mData.L||0)*(mData.W||0)*(mData.H||0)/1e9).toFixed(4) : 0,
+      masterData: mData,
+    };
+  }).sort((a,b)=>b.lines-a.lines);
 
-  // ABC by lines
-  let cum=0; const totalL=skuArr.reduce((s,r)=>s+r.lines,0);
-  skuArr.forEach(r=>{ cum+=r.lines; r.abc=cum/totalL<=0.7?'A':cum/totalL<=0.9?'B':'C'; });
+  // ABC classification by volume (or lines if no volume)
+  const abcData = [...skuArr].sort((a,b)=>b.totalVolume-a.totalVolume||b.lines-a.lines);
+  const totVol = abcData.reduce((s,r)=>s+r.totalVolume,0);
+  let cum=0;
+  abcData.forEach(r=>{
+    cum+=r.totalVolume||r.lines;
+    const ratio=cum/Math.max(1,totVol||totalLines);
+    r.abc=ratio<=0.7?'A':ratio<=0.9?'B':'C';
+    r.cumVolPct=totVol>0?+(cum/totVol*100).toFixed(2):0;
+  });
+  skuArr.forEach(r=>{ const m=abcData.find(x=>x.sku===r.sku); if(m) r.abc=m.abc; });
 
-  // FMS by lineFreq
-  const freqs=skuArr.map(r=>r.lineFreq).sort((a,b)=>b-a);
-  const p70=freqs[Math.floor(freqs.length*0.3)]||0, p30=freqs[Math.floor(freqs.length*0.7)]||0;
-  skuArr.forEach(r=>{ r.fms=r.lineFreq>=p70?'Fast':r.lineFreq>=p30?'Medium':'Slow'; });
+  // FMS classification by line frequency
+  const fmsData = [...skuArr].sort((a,b)=>b.lineFreq-a.lineFreq||b.lines-a.lines);
+  const totLines2 = fmsData.reduce((s,r)=>s+r.lines,0);
+  let cumL=0;
+  fmsData.forEach(r=>{
+    cumL+=r.lines;
+    r.fms=cumL/Math.max(1,totLines2)<=0.7?'Fast':cumL/Math.max(1,totLines2)<=0.9?'Medium':'Slow';
+  });
+  skuArr.forEach(r=>{ const m=fmsData.find(x=>x.sku===r.sku); if(m) r.fms=m.fms; });
 
-  const monthlyTrend = Object.values(dateMap)
+  // ABC-FMS matrix
+  const abcBySku=Object.fromEntries(abcData.map(r=>[r.sku,r.abc]));
+  const fmsBySku=Object.fromEntries(fmsData.map(r=>[r.sku,r.fms]));
+  const matrix={};
+  [['A','Fast'],['A','Medium'],['A','Slow'],['B','Fast'],['B','Medium'],['B','Slow'],
+   ['C','Fast'],['C','Medium'],['C','Slow']].forEach(([a,f])=>{
+    const key=`${a}-${f}`;
+    const items=skuArr.filter(r=>abcBySku[r.sku]===a&&fmsBySku[r.sku]===f);
+    matrix[key]={count:items.length, totalQty:items.reduce((s,r)=>s+r.totalQty,0), skus:items.map(r=>r.sku)};
+  });
+
+  // Monthly trend
+  const monthlyTrend=Object.values(dateMap)
     .map(m=>({...m, uniqueOrders:m.orders.size, orders:undefined}))
     .sort((a,b)=>a.month.localeCompare(b.month));
 
+  // periodDays: distinct date count from dateMap keys (months ≈ days approximation)
+  const periodDays=Math.max(Object.keys(dateMap).length*20, 1);
+
+  // Location-category summary (simplified)
+  const grpLocCatSummary=orderSummary.map(r=>({...r, category:'All'}));
+  const hasCat=skuArr.some(r=>r.categories.length>0);
+  const hasLoc=skuArr.some(r=>r.locations.length>0);
+
   const abcFmsMatrix={AA:0,AF:0,AM:0,AS:0,BA:0,BF:0,BM:0,BS:0,CA:0,CF:0,CM:0,CS:0};
-  skuArr.forEach(r=>{ const k=r.abc+(r.fms==='Fast'?'F':r.fms==='Medium'?'M':'S'); if(k in abcFmsMatrix) abcFmsMatrix[k]++; });
+  skuArr.forEach(r=>{
+    const k=r.abc+(r.fms==='Fast'?'F':r.fms==='Medium'?'M':'S');
+    if(k in abcFmsMatrix) abcFmsMatrix[k]++;
+  });
 
-  const locations=[...new Set(skuArr.flatMap(r=>r.locations))].sort();
-
-  return { orderSummary, skuSummary:skuArr, monthlyTrend, abcFmsMatrix, locations,
-    anomalies, totalRows,
-    anomalyNote: totalRows>50000 ? `Anomaly check on first 50,000 of ${totalRows.toLocaleString()} rows` : '' };
+  return {
+    anomalies, orderSummary, skuSummary:skuArr,
+    abcData, fmsData, matrix, totVol,
+    monthlyTrend, abcFmsMatrix, grpLocCatSummary,
+    hasCat, hasLoc, periodDays, totalRows,
+    locations:[...new Set(skuArr.flatMap(r=>r.locations))].sort(),
+    anomalyNote: totalRows>50000
+      ? `Anomaly check on first 50,000 of ${totalRows.toLocaleString()} rows` : '',
+  };
 }
 
 // ─── PARSE ORDER FILE — async chunked to avoid hanging browser ───────────────
