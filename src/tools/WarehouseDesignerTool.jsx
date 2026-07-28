@@ -1141,6 +1141,8 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
 
 // ─── SVG FLOOR PLAN ───────────────────────────────────────────────────────────
 // Module-level section layout calculator (outside FloorPlanSVG to avoid minifier TDZ)
+// Module-level constants (outside FloorPlanSVG to avoid minifier TDZ)
+const CROSS_AISLE_W_M = 3.0; // cross aisle width in metres
 // Minimum bays per face per column — keeps sections visually meaningful
 const MIN_BPF_BY_TYPE = {
   shelving:3, liveStorage:3, selective:7, doubleDeep:7,
