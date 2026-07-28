@@ -1141,11 +1141,20 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
 
 // ─── SVG FLOOR PLAN ───────────────────────────────────────────────────────────
 // Module-level section layout calculator (outside FloorPlanSVG to avoid minifier TDZ)
-const CROSS_AISLE_W_M = 3.0; // cross aisle width in metres
-function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossIntervalM) {
-  // Two separate rects per B2B pair: total visible = nCols × baysPerFace × 2 ≈ totalBays
-  var nCols = Math.max(3, Math.floor(sectionW / colSlot));
-  var baysPerFace = totalBays > 0 ? Math.max(1, Math.ceil(totalBays / 2 / nCols)) : 3;
+// Minimum bays per face per column — keeps sections visually meaningful
+const MIN_BPF_BY_TYPE = {
+  shelving:3, liveStorage:3, selective:7, doubleDeep:7,
+  driveIn:5, cantilever:5, ground:5,
+};
+function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossIntervalM, rackType) {
+  var minBpf = (MIN_BPF_BY_TYPE[rackType]||1);
+  // Max columns that physically fit
+  var maxColsByWidth = Math.max(3, Math.floor(sectionW / colSlot));
+  // With minBpf: cap nCols so baysPerFace >= minBpf
+  var bpfAtMax = Math.max(minBpf, totalBays>0?Math.max(1,Math.ceil(totalBays/2/maxColsByWidth)):minBpf);
+  var nColsMin  = totalBays>0?Math.max(3,Math.ceil(totalBays/2/bpfAtMax)):maxColsByWidth;
+  var nCols = Math.min(maxColsByWidth, nColsMin);
+  var baysPerFace = totalBays>0?Math.max(minBpf,Math.ceil(totalBays/2/nCols)):minBpf;
   var y = 0.3, yStor = 0, baysSinceLast = 0;
   var cYs = [];
   for(var b = 0; b < baysPerFace; b++){
@@ -1155,12 +1164,12 @@ function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossInterval
       cYs.push(y); y += CROSS_AISLE_W_M; yStor = 0; baysSinceLast = 0;
     }
   }
-  // Height = exact bays × bayHm + margins (no enforced minimum that would cause extra bays)
   var exactH = y + 0.3;
-  var MIN_VISIBLE_H = 3.0; // minimum section height in metres for visual clarity
-  return { nCols, baysPerCol: baysPerFace, height: Math.max(MIN_VISIBLE_H, baysPerFace * bayHm + 0.6, exactH),
+  return { nCols, baysPerCol: baysPerFace, minBpf,
+    height: Math.max(baysPerFace * bayHm + 0.6, exactH),
     area: +(exactH * sectionW).toFixed(1), crossYPositions: cYs };
 }
+
 
 
 
@@ -1186,7 +1195,9 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var actualWW = wW;   // will be updated once sectionLayouts are built
   var actualWL = wL;   // will be updated after zone heights computed
   var SVG_W = fullscreen ? 1800 : 960;
-  var SVG_H = fullscreen ? Math.round(1800 * (wL/wW) * 0.8 + 220) : 820;
+  var SVG_H = fullscreen
+    ? Math.max(1800, Math.round(1800 * (wL/wW)))
+    : 820;  // rebuilt after actualWL known
   var ML=62, MR=70, MT=50, MB=70;
   var DW=SVG_W-ML-MR, DH=SVG_H-MT-MB;
   var sX=DW/wW, sY=DH/wL;
@@ -1300,7 +1311,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       doubleDeep:27,driveIn:27,cantilever:27,ground:27})[rt] || 13;
     // totalBaysRt = total positions (front+back). computeSectionLayout divides by 2 internally.
     var rtBays  = totalBaysRt || Math.ceil(((rackTypeAreas?.[rt])||0) / (rtBayH * wW));
-    var rtLayout= computeSectionLayout(rtBays, wW, rtBayH, rtSlot, rtCross);
+    var rtLayout= computeSectionLayout(rtBays, wW, rtBayH, rtSlot, rtCross, rt);
     sectionLayouts[rt] = {...rtLayout, totalBays: rtBays,
       actualHeight: rtLayout.height,
       requiredW: rtLayout.nCols * rtSlot + rtPa};
@@ -1482,7 +1493,8 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var nColsMin=totalBays>0?Math.max(3,Math.ceil(totalBays/2/bpfAtMax)):maxNcols;
     var nCols=Math.min(maxNcols, nColsMin);
     // Recompute bpf for the chosen nCols
-    var bpf=totalBays>0?Math.max(1,Math.ceil(totalBays/2/nCols)):bpfAtMax;
+    var minBpfZone=(MIN_BPF_BY_TYPE?.[dom])||1;
+    var bpf=totalBays>0?Math.max(minBpfZone,Math.ceil(totalBays/2/nCols)):bpfAtMax;
 
 
 
@@ -1659,7 +1671,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
   const aisleM = parseFloat(params.aisleW)||3.0;
 
   return (
-    <svg width={fullscreen?'100%':SVG_W*zoom} height={fullscreen?'100%':SVG_H*zoom}
+    <svg width={SVG_W*zoom} height={SVG_H*zoom}
       viewBox={`0 0 ${SVG_W} ${SVG_H}`}
       id={fullscreen?'fs-plan-svg':undefined}
       style={{border:'1px solid #e2e8f0',borderRadius:'10px',background:'#ffffff',
