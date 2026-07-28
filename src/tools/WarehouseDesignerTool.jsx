@@ -1143,14 +1143,11 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
 // Module-level section layout calculator (outside FloorPlanSVG to avoid minifier TDZ)
 const CROSS_AISLE_W_M = 3.0; // cross aisle width in metres
 function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossIntervalM) {
-  // totalBays = total positions (front + back combined)
-  // Each B2B column pair contributes baysPerFace on each face.
-  // Cap nCols so nCols × baysPerFace × 2 ≈ totalBays (not much more).
-  var maxColsByWidth = Math.max(3, Math.floor(sectionW / colSlot));
-  // Front face needs ceil(totalBays/2) positions → cap columns at that
-  var maxColsByBays  = totalBays > 0 ? Math.ceil(totalBays / 2) : maxColsByWidth;
-  var nCols = Math.max(3, Math.min(maxColsByWidth, maxColsByBays));
-  var baysPerFace = totalBays > 0 ? Math.max(1, Math.ceil(totalBays / 2 / nCols)) : 3;
+  // totalBays = number of bays from calculation (one-face basis).
+  // Each B2B column provides baysPerFace positions on EACH face independently.
+  // We need nCols × baysPerFace ≥ totalBays so the front face covers the requirement.
+  var nCols = Math.max(3, Math.floor(sectionW / colSlot));
+  var baysPerFace = totalBays > 0 ? Math.max(1, Math.ceil(totalBays / nCols)) : 3;
   var y = 0.3, yStor = 0, baysSinceLast = 0;
   var cYs = [];
   for(var b = 0; b < baysPerFace; b++){
