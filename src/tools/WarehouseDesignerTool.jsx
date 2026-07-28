@@ -1460,13 +1460,18 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var actualColSlot=colDepth+pa;
     var crossInterval=(CROSS_AISLE_INTERVAL?.[dom])||13;
 
-    // Recompute nCols from ACTUAL colSlot
-    var nCols=Math.max(3, Math.floor(zone.w/actualColSlot));
-    // baysPerFace: total visible = nCols × bpf × 2 ≈ totalBays
-    var bpf=totalBays>0?Math.max(1,Math.ceil(totalBays/2/nCols)):(sl.baysPerCol||1);
+    // Maximum columns that physically fit across warehouse width
+    var maxNcols=Math.max(3, Math.floor(zone.w/actualColSlot));
+    // bpf at maximum columns (smallest possible bpf)
+    var bpfAtMax=totalBays>0?Math.max(1,Math.ceil(totalBays/2/maxNcols)):(sl.baysPerCol||1);
+    // Minimum columns needed to achieve that bpf — avoids wasting excess columns
+    var nColsMin=totalBays>0?Math.max(3,Math.ceil(totalBays/2/bpfAtMax)):maxNcols;
+    var nCols=Math.min(maxNcols, nColsMin);
+    // Recompute bpf for the chosen nCols
+    var bpf=totalBays>0?Math.max(1,Math.ceil(totalBays/2/nCols)):bpfAtMax;
 
     // Debug: remove after confirming fix
-    if(typeof console!=='undefined') console.log('[FP] rack='+dom+' totalBays='+totalBays+' nCols='+nCols+' bpf='+bpf+' wW='+zone.w.toFixed(1)+'m colSlot='+actualColSlot.toFixed(2)+'m');
+    if(typeof console!=='undefined') console.log('[FP] rack='+dom+' totalBays='+totalBays+' maxNcols='+maxNcols+' nCols='+nCols+' bpf='+bpf+' total='+(nCols*bpf*2));
 
     // Rebuild cross aisles from actual bpf (ignore pre-computed crossYPositions)
     var crossYs=[];
