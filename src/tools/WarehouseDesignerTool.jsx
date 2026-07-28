@@ -1457,6 +1457,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var backGap=(dom==='shelving'||dom==='liveStorage')?0.05:0.10;
     var colDepth=faceDepth*2+backGap;
     var actualColSlot=colDepth+pa;
+    var crossInterval=(CROSS_AISLE_INTERVAL?.[dom])||13;
 
     // Recompute nCols from ACTUAL colSlot (sl.nCols may differ if face depths don't match)
     var nCols=Math.max(3, Math.floor(zone.w/actualColSlot));
