@@ -1157,7 +1157,8 @@ function computeSectionLayout(totalBays, sectionW, bayHm, colSlot, crossInterval
   }
   // Height = exact bays × bayHm + margins (no enforced minimum that would cause extra bays)
   var exactH = y + 0.3;
-  return { nCols, baysPerCol: baysPerFace, height: Math.max(baysPerFace * bayHm + 0.6, exactH),
+  var MIN_VISIBLE_H = 3.0; // minimum section height in metres for visual clarity
+  return { nCols, baysPerCol: baysPerFace, height: Math.max(MIN_VISIBLE_H, baysPerFace * bayHm + 0.6, exactH),
     area: +(exactH * sectionW).toFixed(1), crossYPositions: cYs };
 }
 
@@ -1344,7 +1345,8 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var layoutWW = Object.values(sectionLayouts).reduce(function(mx,sl){
     return Math.max(mx, sl.requiredW||0);
   }, 0) + 0.6;
-  actualWW = Math.max(wW, layoutWW);  // never shrink below user-specified width
+  // Cap width expansion: allow up to 50% extra for full aisles, not unbounded
+  actualWW = Math.min(Math.max(wW, layoutWW), wW * 2.0);  // max 2× user warehouse width
 
   // Rebuild ALL scale factors with final actual dimensions
   SVG_H = fullscreen ? Math.round(1800 * (actualWL/actualWW) * 0.8 + 220) : 820;
@@ -1482,8 +1484,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     // Recompute bpf for the chosen nCols
     var bpf=totalBays>0?Math.max(1,Math.ceil(totalBays/2/nCols)):bpfAtMax;
 
-    // Debug: remove after confirming fix
-    if(typeof console!=='undefined') console.log('[FP] rack='+dom+' totalBays='+totalBays+' maxNcols='+maxNcols+' nCols='+nCols+' bpf='+bpf+' total='+(nCols*bpf*2));
+
 
     // Rebuild cross aisles from actual bpf (ignore pre-computed crossYPositions)
     var crossYs=[];
@@ -2154,7 +2155,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
 
       {/* ── TOTAL AREA FOOTER ─── */}
       <text x={X(wW/2)} y={SVG_H-4} textAnchor="middle" fontSize="10" fontWeight="700" fill="#374151">
-        {`Total gross area: ${(actualWW*actualWL).toLocaleString()}m²  (${Math.round(actualWW*actualWL*10.7639).toLocaleString()} sq ft)  ·  ${actualWW.toFixed(1)}×${Math.round(actualWL)}m  ·  ${dockSide==='one'?'One-side':'Opposite-side'} docks  ·  Derived from ${Object.keys(sectionLayouts).length} rack type sections`}
+        {`Total gross area: ${(actualWW*actualWL).toLocaleString()}m²  (${Math.round(actualWW*actualWL*10.7639).toLocaleString()} sq ft)  ·  ${Math.round(actualWW*10)/10}×${Math.round(actualWL)}m  ·  ${dockSide==='one'?'One-side':'Opposite-side'} docks  ·  Derived from ${Object.keys(sectionLayouts).length} rack type sections`}
       </text>
     </svg>
   );
