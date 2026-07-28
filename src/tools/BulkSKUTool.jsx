@@ -744,7 +744,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 background:r.heightLocked?'#ede9fe':'#eff6ff',
                                 color:r.heightLocked?'#6d28d9':'#1d4ed8',
                                 padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'700'}}>
-                                {r.stackLayers}{r.heightLocked?' 🔒':''}L
+                                {r.stackLayers+''+(r.heightLocked?' 🔒':'')+'L'}
                               </span>
                             )}
                           </td>
@@ -928,7 +928,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 </div>
                                 <span style={{fontWeight:'700',fontSize:'12px',
                                   color:p.used>=0.8?'#6d28d9':'#9ca3af',minWidth:'36px'}}>
-                                  {(p.used*100).toFixed(1)}%
+                                  {(p.used*100).toFixed(1)+'%'}
                                 </span>
                               </div>
                             </td>
@@ -953,10 +953,10 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 {fitOk&&fit.oriented&&
                                   <div style={{fontSize:'10px',marginTop:'3px',fontWeight:'400',
                                     color:fitWarn?'#92400e':'#166534'}}>
-                                    H: {fit.totalH}mm · Floor: {fit.totalFloor}%
+                                    <span>{'H: '+fit.totalH+'mm | Floor: '+fit.totalFloor+'pct'}</span>
                                     {fit.oriented.map(o=>(
                                       <span key={o.name} style={{display:'block',marginTop:'1px',color:'#374151'}}>
-                                        {o.name}: {o.best.boxH}mm/layer · {o.best.perLayer} boxes/layer
+                                        {o.name+': '+o.best.boxH+'mm | '+o.best.perLayer+' boxes per layer'}
                                       </span>
                                     ))}
                                   </div>}
@@ -970,7 +970,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                   fontSize:'11px',fontWeight:'600',margin:'2px 3px 2px 0'}}>
                                   {s.name}
                                   <span style={{fontWeight:'400',color:'#9ca3af',marginLeft:'4px'}}>
-                                    ({(s.remainder*100).toFixed(1)}%)
+                                    {'('+((s.remainder*100).toFixed(1))+'%)'}
                                     {s.sl&&s.sw&&s.sh?' '+s.sl+'\u00D7'+s.sw+'\u00D7'+s.sh:''}
                                   </span>
                                 </span>))}
