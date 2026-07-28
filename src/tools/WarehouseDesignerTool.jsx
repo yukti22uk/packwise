@@ -1312,7 +1312,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var rtStyle = (RACK_TYPE_STYLE?.[rt]) || {label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
     zoneRects.push({key:rt, x:0, y:cur, w:wW, h:rtLayout.height,
       label:rtStyle.label, color:rtStyle.color, border:rtStyle.border, text:rtStyle.text,
-      area:rtLayout.area, rackType:rt, sectionLayout:rtLayout});
+      area:rtLayout.area, rackType:rt, sectionLayout:{...rtLayout, totalBays:rtBays}});
     cur += rtLayout.height;
   });
   // Build rack layout summary (for summary table below plan)
@@ -1451,7 +1451,8 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       :String.fromCharCode(64+Math.floor(i/26))+String.fromCharCode(65+(i%26));
 
     var sl=zone.sectionLayout||sectionLayouts[dom]||{nCols:3,baysPerCol:5,crossYPositions:[]};
-    var totalBays=sl.totalBays||0;
+    // totalBays from zone.sectionLayout (now includes it) or fallback to sectionLayouts map
+    var totalBays=(sl.totalBays)||(sectionLayouts[dom]?.totalBays)||0;
 
     var faceDepth=(rackBayDepthM?.[dom])||(DEFAULT_FACE_DEPTH?.[dom])||0.6;
     var backGap=(dom==='shelving'||dom==='liveStorage')?0.05:0.10;
