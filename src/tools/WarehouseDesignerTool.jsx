@@ -1302,21 +1302,20 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var rtBays  = totalBaysRt || Math.ceil(((rackTypeAreas?.[rt])||0) / (rtBayH * wW));
     var rtLayout= computeSectionLayout(rtBays, wW, rtBayH, rtSlot, rtCross);
     sectionLayouts[rt] = {...rtLayout, totalBays: rtBays,
-      // Required width for this rack type: full aisle on BOTH sides
-      requiredW: rtLayout.nCols * rtSlot + rtPa};  // pa(start) + N×colSlot + pa(end)
+      actualHeight: rtLayout.height,
+      requiredW: rtLayout.nCols * rtSlot + rtPa};
 
-    // Cross aisle before this section:
-    // — Between staging area and first rack section
-    // — Between consecutive rack type sections
     sectionCrossAisles.push({x:0, y:cur, w:actualWW, h:SECTION_CA_W,
       label: firstRackSection ? 'CROSS AISLE (Staging ↔ Storage)' : `CROSS AISLE`});
     cur += SECTION_CA_W;
     firstRackSection = false;
 
     var rtStyle = (RACK_TYPE_STYLE?.[rt]) || {label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
+    // 1:1 scale — use actual section height, no display cap
     zoneRects.push({key:rt, x:0, y:cur, w:actualWW, h:rtLayout.height,
       label:rtStyle.label, color:rtStyle.color, border:rtStyle.border, text:rtStyle.text,
-      area:rtLayout.area, rackType:rt, sectionLayout:{...rtLayout, totalBays:rtBays}});
+      area:rtLayout.area, rackType:rt, sectionLayout:{...rtLayout, totalBays:rtBays},
+      actualHeight: rtLayout.height, isTruncated: false});
     cur += rtLayout.height;
   });
   // Build rack layout summary (for summary table below plan)
@@ -1338,8 +1337,9 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       label:'CROSS AISLE (Storage ↔ Staging)'});
     cur += SECTION_CA_W;
   }
+  // 1:1 scale: cur already tracks actual heights since display = actual
   var layoutWL = cur + stagingH;
-  actualWL = Math.max(wL, layoutWL); // layout-derived warehouse length
+  actualWL = Math.max(wL, layoutWL);
 
   // Actual warehouse WIDTH: expand to fit full picking aisles on BOTH sides of every rack section
   var layoutWW = Object.values(sectionLayouts).reduce(function(mx,sl){
@@ -2026,21 +2026,35 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
       {/* ── SECTION LABELS (rack type name at left margin of each section) ─── */}
       {zoneRects.map(z=>{
         const py=Y(z.y), ph=H(z.h);
-        if(ph<14) return null;
+        if(ph<6) return null;
+        const sl=z.sectionLayout||{};
+        const isTrunc=z.isTruncated&&z.actualHeight>z.h;
         return(
           <g key={`zl-${z.key}`}>
-            {/* Section name — left-aligned, not in center so it doesn't overlap racks */}
-            <text x={X(z.x)+6} y={py+Math.min(ph/2,20)}
+            <text x={X(z.x)+6} y={py+Math.min(ph/2,18)}
               dominantBaseline="middle"
               fontSize={Math.min(11, ph*sY*0.3)} fontWeight="700" fill={z.text}
               opacity="0.85">
               {z.label}
             </text>
-            {ph>30&&<text x={X(z.x)+6} y={py+Math.min(ph/2,20)+13}
+            {ph>24&&<text x={X(z.x)+6} y={py+Math.min(ph/2,18)+13}
               dominantBaseline="middle"
               fontSize="8" fontWeight="400" fill={z.text} opacity="0.7">
               {(z.area||0).toFixed(0)}m²
             </text>}
+            {/* Truncation indicator: zigzag line at bottom of capped section */}
+            {isTrunc&&(()=>{
+              const bY=py+ph-4;
+              const pts=[0,4,8,4,0].map((dy,i)=>`${X(z.x)+i*(W(z.w)/4)},${bY+dy}`).join(' ');
+              return(<>
+                <polyline points={pts} fill="none" stroke={z.border||'#94a3b8'}
+                  strokeWidth="1.5" strokeDasharray="4,2"/>
+                <text x={X(z.x+z.w/2)} y={bY+10} textAnchor="middle"
+                  fontSize="7.5" fill={z.text} fontWeight="700" opacity="0.8">
+                  ▼ {sl.totalBays?.toLocaleString()} bays total (layout shows partial pattern)
+                </text>
+              </>);
+            })()}
           </g>
         );
       })}
