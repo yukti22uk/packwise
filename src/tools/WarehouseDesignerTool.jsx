@@ -1505,6 +1505,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
         faceDepth, backGap, colDepth, aisle:pa, bayWidthM:bayHm, dom});
 
       globalBayNum+=actualBays; // 1 bay number per B2B module (not ×2)
+    }  // end for(i) columns loop
     return {rows, crossAisles, nCols, baysPerCol:sl.baysPerCol, totalBays, dimAnnotations};
   };
 
