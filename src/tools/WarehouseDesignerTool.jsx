@@ -1499,7 +1499,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       for(let j2=0;j2<breakYs.length-1;j2++){
         var sy0=zone.y+breakYs[j2]+(j2>0?CROSS_AISLE_W_M/2:0.3);
         var ey0=zone.y+breakYs[j2+1]-(j2<breakYs.length-2?CROSS_AISLE_W_M/2:0);
-        if(ey0-sy0>=0.5) actualBays+=Math.max(1,Math.floor((ey0-sy0)/bayHm));
+        if(ey0-sy0>=0.5) actualBays+=Math.max(1,Math.floor((ey0-sy0)/bayHm+1e-9));
       }
 
       // Each B2B module = ONE rect spanning full colDepth (faceDepth+gap+faceDepth)
@@ -1513,7 +1513,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
         var sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W_M/2:0.3);
         var ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W_M/2:0);
         if(ey-sy<0.5) continue;
-        var segBays=Math.max(1,Math.floor((ey-sy)/bayHm));
+        var segBays=Math.max(1,Math.floor((ey-sy)/bayHm+1e-9));
         rows.push({x:rx, y:sy, w:faceDepth, h:ey-sy, ...ri, dom, bayHm,
           colIdx:i, colLabel:label, segIdx:j,
           bayStart:colFrontStart+frontOffset,
@@ -1844,7 +1844,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
         // ── SHELVING / LIVE STORAGE — full B2B width, center partition ────
         {
           const bayHpx = H(r.bayHm||0.9);
-          const nBayDividers = Math.max(0, Math.floor(r.h/(r.bayHm||0.9))-1);
+          const nBayDividers = Math.max(0, Math.floor(r.h/(r.bayHm||0.9)+1e-9)-1);
           const halfPx = Math.max(1, (pw-W(r.backGap||0.05))/2);
           return(
             <g key={`rr-${i}`}>
@@ -1873,7 +1873,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
         const showBayNum=pw>4&&bayHpx>4;
         const colFontSz=Math.max(9,Math.min(16,pw*0.9));
         const bayFontSz=Math.max(6,Math.min(13,Math.min(pw*0.75,bayHpx*0.75)));
-        const nBays=r.bayCount||Math.max(1,Math.floor(r.h/(r.bayHm||0.9)));
+        const nBays=r.bayCount||Math.max(1,Math.floor(r.h/(r.bayHm||0.9)+1e-9));
         const showColLetter = r.isHalfRack!=='back' && r.segIdx===0 && pw>3;
         return(
           <g key={`lbl-${i}`}>
