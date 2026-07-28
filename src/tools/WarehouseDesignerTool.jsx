@@ -1451,22 +1451,38 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       :String.fromCharCode(64+Math.floor(i/26))+String.fromCharCode(65+(i%26));
 
     var sl=zone.sectionLayout||sectionLayouts[dom]||{nCols:3,baysPerCol:5,crossYPositions:[]};
-    var nCols=sl.nCols, totalBays=sl.totalBays||0;
-    var crossYs=sl.crossYPositions||[];
-
-    crossYs.forEach(y=>{
-      crossAisles.push({x:zone.x,y:zone.y+y-CROSS_AISLE_W_M/2,
-        w:zone.w,h:CROSS_AISLE_W_M,isCrossAisle:true});
-    });
-
-    var breakYs=[0,...crossYs,zone.h-0.3];
-    let curX=zone.x+0.3;
-    var globalBayNum=1;
+    var totalBays=sl.totalBays||0;
 
     var faceDepth=(rackBayDepthM?.[dom])||(DEFAULT_FACE_DEPTH?.[dom])||0.6;
     var backGap=(dom==='shelving'||dom==='liveStorage')?0.05:0.10;
     var colDepth=faceDepth*2+backGap;
     var actualColSlot=colDepth+pa;
+
+    // Recompute nCols from ACTUAL colSlot (sl.nCols may differ if face depths don't match)
+    var nCols=Math.max(3, Math.floor(zone.w/actualColSlot));
+    // Recompute baysPerFace to match actual nCols
+    var bpf=totalBays>0?Math.max(1,Math.ceil(totalBays/2/nCols)):(sl.baysPerCol||1);
+
+    // Rebuild cross aisles from actual bpf (ignore pre-computed crossYPositions)
+    var crossYs=[];
+    {
+      var _y=0.3,_s=0,_bc=0;
+      for(var _b=0;_b<bpf;_b++){
+        _y+=bayHm; _s+=bayHm; _bc++;
+        if(_s>=crossInterval&&_bc>=2&&(bpf-_b-1)>=2){
+          crossYs.push(_y);
+          crossAisles.push({x:zone.x,y:zone.y+_y-CROSS_AISLE_W_M/2,
+            w:zone.w,h:CROSS_AISLE_W_M,isCrossAisle:true});
+          _y+=CROSS_AISLE_W_M; _s=0; _bc=0;
+        }
+      }
+    }
+
+    // Override zone height to exactly fit bpf bays + cross aisles
+    var zoneH=_y+0.3;
+    var breakYs=[0,...crossYs,zoneH-0.3];
+    let curX=zone.x+0.3;
+    var globalBayNum=1;
 
     for(let i=0;i<nCols;i++){
       var rx=curX+i*actualColSlot+pa/2;
