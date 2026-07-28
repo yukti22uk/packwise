@@ -1460,8 +1460,8 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var actualColSlot=colDepth+pa;
     var crossInterval=(CROSS_AISLE_INTERVAL?.[dom])||13;
 
-    // Maximum columns: subtract pa/2 extra (now using full pa at start instead of pa/2)
-    var maxNcols=Math.max(3, Math.floor((zone.w-pa/2)/actualColSlot));
+    // Maximum columns that fit in warehouse width
+    var maxNcols=Math.max(3, Math.floor(zone.w/actualColSlot));
     // bpf at maximum columns (smallest possible bpf)
     var bpfAtMax=totalBays>0?Math.max(1,Math.ceil(totalBays/2/maxNcols)):(sl.baysPerCol||1);
     // Minimum columns needed to achieve that bpf — avoids wasting excess columns
@@ -1491,11 +1491,11 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     // Override zone height to exactly fit bpf bays + cross aisles
     var zoneH=_y+0.3;
     var breakYs=[0,...crossYs,zoneH-0.3];
-    let curX=zone.x+0.3;
+    let curX=zone.x+0.3+pa/2;   // +pa/2 shift → rx[0]=zone.x+0.3+pa (full picking aisle before col A)
     var globalBayNum=1;
 
     for(let i=0;i<nCols;i++){
-      var rx=curX+i*actualColSlot+pa; // full aisle before first column
+      var rx=curX+i*actualColSlot+pa/2; // half-aisle on each side of pair
       if(rx+colDepth>zone.x+zone.w-0.3) break;
       var label=colLabel(i);
 
