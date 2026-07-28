@@ -1,11 +1,173 @@
 // ─── ORDER ANALYSER TOOL ──────────────────────────────────────────────────────
-// Step 1: Paste Master SKU data (fixed column order) → validate + flag anomalies
-// Step 2: Paste Order data (fixed column order) → full analytics → 6-sheet Excel
-// No AI column mapping — user pastes in expected order shown on screen.
-import { useState } from 'react';
+// Step 1: Paste/upload Master SKU data → validate + flag anomalies
+// Step 2: Paste/upload Order data (CSV/TSV/Excel, up to 10,00,000 rows) → analytics
+// Step 3: Optional inventory reconciliation
+import { useState, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
+import Papa from 'papaparse';
 import PptxGenJS from 'pptxgenjs';
 import { S } from '../components/styles.jsx';
+
+const MAX_ORDER_ROWS = 1_000_000; // 10 lakh rows
+const CHUNK_SIZE = 10_000;        // rows per async chunk for aggregation
+
+// ─── STREAM-AGGREGATE ORDER DATA (handles 10L rows without freezing UI) ───────
+// Instead of collecting all rows then aggregating, we aggregate row-by-row.
+// Returns a Promise resolving to the same shape as parseOrderData().
+function streamAggregateOrders(rows, masterMap, onProgress) {
+  return new Promise(resolve => {
+    const dataRows = rows.length > 0 && isHeaderRow(rows[0]) ? rows.slice(1) : rows;
+    const total = Math.min(dataRows.length, MAX_ORDER_ROWS);
+
+    // Accumulators — no giant arrays kept in memory
+    const typeMap   = {};  // by dispatch location
+    const skuMap    = {};  // by SKU
+    const dateMap   = {};  // by date (YYYY-MM)
+    const anomalies = [];
+    let processedRows = 0;
+
+    const processChunk = (start) => {
+      const end = Math.min(start + CHUNK_SIZE, total);
+      for (let i = start; i < end; i++) {
+        const r = dataRows[i];
+        const rowNum = i + (rows.length > dataRows.length ? 2 : 1);
+        const orderNo    = r[0] || '';
+        const dispLoc    = r[1] ? r[1].trim() : '';
+        const sku        = r[2] || '';
+        const qty        = parseFloat(r[3]) || 0;
+        const date       = r[4] || '';
+        const orderType  = r[5] ? r[5].trim() : 'Unknown';
+        const category   = r[6] ? r[6].trim() : '';
+
+        // Anomaly flags (sample first 50k rows for performance)
+        if (i < 50000) {
+          if (!orderNo) anomalies.push({row:rowNum,sku,field:'Order No',issue:'Missing order number',sev:'High'});
+          if (!sku)     anomalies.push({row:rowNum,sku:'—',field:'SKU',issue:'Missing SKU',sev:'High'});
+          if (qty <= 0) anomalies.push({row:rowNum,sku,field:'Qty',issue:`Zero/negative qty: ${r[3]}`,sev:'High'});
+          if (!date)    anomalies.push({row:rowNum,sku,field:'Date',issue:'Missing date',sev:'Medium'});
+          if (sku && masterMap.size > 0 && !masterMap.has(sku))
+            anomalies.push({row:rowNum,sku,field:'Master',issue:'SKU not in master',sev:'High'});
+        }
+
+        // Aggregate by dispatch location
+        const locKey = dispLoc || 'Unspecified';
+        if (!typeMap[locKey]) typeMap[locKey]={lines:0,orders:new Set(),skus:new Set(),dates:new Set(),qty:0};
+        const g = typeMap[locKey];
+        g.lines++; g.qty += qty;
+        if (orderNo) g.orders.add(orderNo);
+        if (sku)     g.skus.add(sku);
+        if (date)    g.dates.add(date);
+
+        // Aggregate by SKU
+        if (sku) {
+          if (!skuMap[sku]) skuMap[sku]={lines:0,orders:new Set(),qty:0,dates:new Set(),categories:new Set(),locations:new Set()};
+          const s = skuMap[sku];
+          s.lines++; s.qty += qty;
+          if (orderNo) s.orders.add(orderNo);
+          if (date)    s.dates.add(date);
+          if (category) s.categories.add(category);
+          if (dispLoc) s.locations.add(dispLoc);
+        }
+
+        // Monthly trend
+        if (date) {
+          const parts = date.split(/[\/\-]/);
+          let mon = date.slice(0,7);
+          if (parts.length>=2) {
+            const y=parts[2]?.length===4?parts[2]:(parts[0]?.length===4?parts[0]:'');
+            const m=parts[2]?.length===4?(parts[1]):(parts[1]?.length===4?parts[0]:parts[1]);
+            if(y&&m) mon=`${y}-${String(m).padStart(2,'0')}`;
+          }
+          if (!dateMap[mon]) dateMap[mon]={month:mon,lines:0,qty:0,orders:new Set()};
+          dateMap[mon].lines++; dateMap[mon].qty+=qty;
+          if (orderNo) dateMap[mon].orders.add(orderNo);
+        }
+      }
+      processedRows = end;
+      if (onProgress) onProgress(Math.round((end/total)*100), end);
+
+      if (end < total) {
+        // Yield to browser every chunk
+        setTimeout(() => processChunk(end), 0);
+      } else {
+        // Build final result (mirrors parseOrderData output shape)
+        resolve({ anomalies, typeMap, skuMap, dateMap, totalRows: total });
+      }
+    };
+
+    if (total === 0) { resolve({ anomalies:[], typeMap:{}, skuMap:{}, dateMap:{}, totalRows:0 }); return; }
+    processChunk(0);
+  });
+}
+
+// ─── CONVERT AGGREGATION MAPS TO FINAL ANALYSIS (same as parseOrderData) ─────
+function buildAnalysisFromMaps({typeMap, skuMap, dateMap, anomalies, totalRows}, masterMap) {
+  const orderSummary = Object.entries(typeMap).map(([loc,g])=>({
+    dispatchLoc:loc, lines:g.lines, uniqueOrders:g.orders.size,
+    distinctSKUs:g.skus.size, distinctDates:g.dates.size, totalQty:g.qty,
+    avgQtyPerLine:+(g.qty/g.lines).toFixed(1),
+    avgLinesPerOrder:+(g.lines/Math.max(1,g.orders.size)).toFixed(1),
+  })).sort((a,b)=>b.lines-a.lines);
+
+  // SKU analytics (same logic as original parseOrderData)
+  const totalLines = Object.values(skuMap).reduce((s,v)=>s+v.lines,0);
+  const skuArr = Object.entries(skuMap).map(([sku,v])=>({
+    sku, lines:v.lines, uniqueOrders:v.orders.size, totalQty:v.qty,
+    distinctDates:v.dates.size, categories:[...v.categories], locations:[...v.locations],
+    lineFreq:+(v.lines/Math.max(1,v.dates.size)).toFixed(2),
+    lineShare:+((v.lines/Math.max(1,totalLines))*100).toFixed(2),
+  })).sort((a,b)=>b.lines-a.lines);
+
+  // ABC by lines
+  let cum=0; const totalL=skuArr.reduce((s,r)=>s+r.lines,0);
+  skuArr.forEach(r=>{ cum+=r.lines; r.abc=cum/totalL<=0.7?'A':cum/totalL<=0.9?'B':'C'; });
+
+  // FMS by lineFreq
+  const freqs=skuArr.map(r=>r.lineFreq).sort((a,b)=>b-a);
+  const p70=freqs[Math.floor(freqs.length*0.3)]||0, p30=freqs[Math.floor(freqs.length*0.7)]||0;
+  skuArr.forEach(r=>{ r.fms=r.lineFreq>=p70?'Fast':r.lineFreq>=p30?'Medium':'Slow'; });
+
+  const monthlyTrend = Object.values(dateMap)
+    .map(m=>({...m, uniqueOrders:m.orders.size, orders:undefined}))
+    .sort((a,b)=>a.month.localeCompare(b.month));
+
+  const abcFmsMatrix={AA:0,AF:0,AM:0,AS:0,BA:0,BF:0,BM:0,BS:0,CA:0,CF:0,CM:0,CS:0};
+  skuArr.forEach(r=>{ const k=r.abc+(r.fms==='Fast'?'F':r.fms==='Medium'?'M':'S'); if(k in abcFmsMatrix) abcFmsMatrix[k]++; });
+
+  const locations=[...new Set(skuArr.flatMap(r=>r.locations))].sort();
+
+  return { orderSummary, skuSummary:skuArr, monthlyTrend, abcFmsMatrix, locations,
+    anomalies, totalRows,
+    anomalyNote: totalRows>50000 ? `Anomaly check on first 50,000 of ${totalRows.toLocaleString()} rows` : '' };
+}
+
+// ─── PARSE ORDER FILE (CSV/TSV/Excel) — streams for large files ────────────
+function parseFileToRows(file) {
+  return new Promise((resolve, reject) => {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {
+      Papa.parse(file, {
+        skipEmptyLines: true,
+        delimiter: ext==='tsv' ? '\t' : '',  // auto-detect for csv
+        complete: r => resolve(r.data),
+        error: e => reject(e),
+      });
+    } else if (ext === 'xlsx' || ext === 'xls') {
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const wb = XLSX.read(e.target.result, {type:'array', cellDates:false, dense:true});
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+          resolve(rows.map(r => r.map(c => String(c===null||c===undefined?'':c).trim())));
+        } catch(err) { reject(err); }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reject(new Error('Unsupported file type. Use CSV, TSV, or Excel (.xlsx)'));
+    }
+  });
+}
 
 // ─── PARSE PASTED TSV ────────────────────────────────────────────────────────
 function parseTSV(text) {
@@ -832,8 +994,13 @@ export default function OrderAnalyserTool() {
   const [mStats,   setMStats]   = useState(null);
 
   const [oText,     setOText]    = useState('');
+  const [oFile,     setOFile]    = useState(null);   // uploaded file
+  const [oProgress, setOProgress]= useState(0);      // 0-100
+  const [oRowCount, setORowCount]= useState(0);      // rows processed
+  const [oLoading,  setOLoading] = useState(false);
   const [analysis,  setAnalysis] = useState(null);
   const [oError,    setOError]   = useState('');
+  const oFileRef = useRef(null);
 
   const [invText,    setInvText]   = useState('');
   const [invAnalysis,setInvAnalysis]= useState(null);
@@ -856,17 +1023,44 @@ export default function OrderAnalyserTool() {
     setMDone(true);
   };
 
-  // ── Step 2: Process order data ─────────────────────────────────────────────
-  const processOrder = () => {
-    if (!oText.trim()) { setOError('Paste your Order data first.'); return; }
-    setOError(''); setAnalysis(null);
-    const result = parseOrderData(oText, masterMap);
-    if (!result.orderSummary.length) {
-      setOError('No valid order rows found. Check that your columns are in the correct order: Order No | Order Type | SKU Code | Qty | Date');
-      return;
+  // ── Step 2: Process order data (supports up to 10L rows via file upload) ────
+  const processOrder = useCallback(async () => {
+    const hasFile = !!oFile;
+    const hasPaste = !!oText.trim();
+    if (!hasFile && !hasPaste) { setOError('Upload a file or paste order data first.'); return; }
+
+    setOError(''); setAnalysis(null); setOProgress(0); setORowCount(0); setOLoading(true);
+
+    try {
+      let rows;
+      if (hasFile) {
+        rows = await parseFileToRows(oFile);
+      } else {
+        rows = parseTSV(oText);
+      }
+
+      if (rows.length < 2) {
+        setOError('No valid rows found. Check column order: Order No | Dispatch Location | SKU Code | Qty | Date');
+        setOLoading(false); return;
+      }
+
+      const maps = await streamAggregateOrders(rows, masterMap, (pct, count) => {
+        setOProgress(pct); setORowCount(count);
+      });
+
+      if (!Object.keys(maps.typeMap).length) {
+        setOError('No valid order rows found. Check column order: Order No | Dispatch Location | SKU Code | Qty | Date');
+        setOLoading(false); return;
+      }
+
+      const result = buildAnalysisFromMaps(maps, masterMap);
+      setAnalysis(result);
+    } catch (err) {
+      setOError(`Error processing file: ${err.message}`);
+    } finally {
+      setOLoading(false); setOProgress(0);
     }
-    setAnalysis(result);
-  };
+  }, [oFile, oText, masterMap]);
 
 
 
@@ -1026,19 +1220,69 @@ export default function OrderAnalyserTool() {
             Order Type examples: STO, Customer, Export etc. Category examples: Refrigerator, TV, Washing Machine. Both are optional — paste 5 columns minimum.
           </div>
 
-          {textarea(oText, setOText,
-            'Paste Order data here (Ctrl+V)\n\nColumns 1-5 required | Columns 6-7 optional:\nOrder No | Order Type | SKU Code | Qty | Date | Category | Dispatch Location\n\nExample (with optional columns):\n1001\tCustomer\tSKU-001\t500\t01/06/2024\tRefrigerator\tMumbai\n1002\tSTO\tSKU-002\t200\t02/06/2024\tWashing Machine\tAhmedabad')}
+          {/* File upload OR paste */}
+          <div style={{marginBottom:'8px'}}>
+            {/* File upload button */}
+            <input ref={oFileRef} type="file" accept=".csv,.tsv,.txt,.xlsx,.xls"
+              style={{display:'none'}}
+              onChange={e=>{const f=e.target.files?.[0];if(f){setOFile(f);setOText('');setAnalysis(null);setOError('');}}}/>
+            <div style={{display:'flex',gap:'8px',marginBottom:'8px',alignItems:'center'}}>
+              <button onClick={()=>oFileRef.current?.click()}
+                style={{padding:'8px 14px',background:'#f0fdf4',border:'1px solid #86efac',
+                  borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',fontSize:'12px',
+                  fontWeight:'700',color:'#166534'}}>
+                📂 Upload CSV / Excel
+              </button>
+              {oFile&&<span style={{fontSize:'12px',color:'#166534',fontWeight:'600'}}>
+                ✓ {oFile.name} ({(oFile.size/1024/1024).toFixed(1)} MB)
+                <button onClick={()=>{setOFile(null);if(oFileRef.current)oFileRef.current.value='';}}
+                  style={{marginLeft:'6px',background:'none',border:'none',cursor:'pointer',
+                    color:'#9ca3af',fontSize:'11px'}}>✕</button>
+              </span>}
+              <span style={{fontSize:'11px',color:'#9ca3af'}}>or paste below</span>
+            </div>
+            <div style={{fontSize:'11px',color:'#6b7280',marginBottom:'6px'}}>
+              Supports <strong>CSV, TSV, Excel (.xlsx)</strong> · Up to <strong>10,00,000 rows</strong>
+            </div>
+
+            {!oFile && textarea(oText, t=>{setOText(t);setAnalysis(null);setOError('');},
+              'Paste Order data here (Ctrl+V from Excel) — or upload a file above\n\nColumns: Order No | Dispatch Location | SKU Code | Qty | Date | Order Type (opt) | Category (opt)')}
+          </div>
 
           {oError && <div style={{ ...S.error, marginTop:'8px' }}>⚠ {oError}</div>}
 
-          <button onClick={processOrder} disabled={!oText.trim()}
+          {/* Progress bar */}
+          {oLoading && (
+            <div style={{marginTop:'10px'}}>
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:'12px',
+                color:'#6b7280',marginBottom:'4px'}}>
+                <span>Processing {oRowCount.toLocaleString()} rows…</span>
+                <span>{oProgress}%</span>
+              </div>
+              <div style={{background:'#e2e8f0',borderRadius:'99px',height:'8px'}}>
+                <div style={{background:'#be185d',borderRadius:'99px',height:'8px',
+                  width:`${oProgress}%`,transition:'width 0.2s'}}/>
+              </div>
+            </div>
+          )}
+
+          <button onClick={processOrder}
+            disabled={oLoading||(!oFile&&!oText.trim())}
             style={{ marginTop:'10px', width:'100%', padding:'10px',
-              background: oText.trim() ? '#be185d' : '#e2e8f0',
-              color: oText.trim() ? '#fff' : '#9ca3af',
+              background: oLoading?'#9ca3af':(oFile||oText.trim())?'#be185d':'#e2e8f0',
+              color: (oFile||oText.trim())?'#fff':'#9ca3af',
               border:'none', borderRadius:'8px', fontWeight:'700', fontSize:'13px',
-              cursor: oText.trim() ? 'pointer' : 'not-allowed', fontFamily:'inherit' }}>
-            ▶ Run Analysis
+              cursor: oLoading?'wait':(oFile||oText.trim())?'pointer':'not-allowed',
+              fontFamily:'inherit' }}>
+            {oLoading ? `⏳ Processing… ${oProgress}%` : '▶ Run Analysis'}
           </button>
+
+          {analysis?.anomalyNote&&(
+            <div style={{fontSize:'11px',color:'#854d0e',marginTop:'6px',
+              background:'#fffbeb',padding:'6px 10px',borderRadius:'6px'}}>
+              ⚡ {analysis.anomalyNote}
+            </div>
+          )}
         </>)}
 
         {/* Results */}
