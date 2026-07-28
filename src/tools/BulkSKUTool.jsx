@@ -932,7 +932,6 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                       </tbody>
                     </table>
                   </div>
-                  </div>
                 </div>
               )}
             </div>
