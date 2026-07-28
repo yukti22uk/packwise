@@ -140,34 +140,64 @@ function buildAnalysisFromMaps({typeMap, skuMap, dateMap, anomalies, totalRows},
     anomalyNote: totalRows>50000 ? `Anomaly check on first 50,000 of ${totalRows.toLocaleString()} rows` : '' };
 }
 
-// ─── PARSE ORDER FILE (CSV/TSV/Excel) — uses XLSX which handles all formats ───
-function parseFileToRows(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.onload = e => {
-      try {
-        const ext = file.name.split('.').pop().toLowerCase();
-        let rows;
-        if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {
-          // XLSX can parse CSV/TSV natively
-          const wb = XLSX.read(e.target.result, {type:'string', raw:false});
-          const ws = wb.Sheets[wb.SheetNames[0]];
-          rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+// ─── PARSE ORDER FILE — async chunked to avoid hanging browser ───────────────
+// CSV/TSV: manual line-by-line parsing in async chunks (never blocks UI)
+// Excel: XLSX (file sizes are small due to Excel row limits)
+function parseCSVChunked(text, onProgress) {
+  return new Promise(resolve => {
+    const lines = text.split(/\r?\n/);
+    const rows = [];
+    const BATCH = 20000;
+    let i = 0;
+    const process = () => {
+      const end = Math.min(i + BATCH, lines.length);
+      for (; i < end; i++) {
+        const line = lines[i];
+        if (!line.trim()) continue;
+        // Handle quoted CSV fields
+        if (line.includes('"')) {
+          const cells = []; let cur = ''; let inQ = false;
+          for (let ci = 0; ci < line.length; ci++) {
+            const ch = line[ci];
+            if (ch === '"') { inQ = !inQ; }
+            else if ((ch === ',' || ch === '\t') && !inQ) { cells.push(cur.trim()); cur = ''; }
+            else { cur += ch; }
+          }
+          cells.push(cur.trim());
+          rows.push(cells);
         } else {
-          // Excel binary
+          // Fast path: no quotes
+          const delim = line.includes('\t') ? '\t' : ',';
+          rows.push(line.split(delim).map(c => c.trim()));
+        }
+      }
+      if (onProgress) onProgress(Math.round((i / lines.length) * 50)); // 0-50% for parsing
+      if (i < lines.length) setTimeout(process, 0);
+      else resolve(rows);
+    };
+    setTimeout(process, 0);
+  });
+}
+
+function parseFileToRows(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext === 'xlsx' || ext === 'xls') {
+      // Excel: XLSX is fine (Excel files max ~1M rows, files usually <50MB)
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.onload = e => {
+        try {
           const wb = XLSX.read(e.target.result, {type:'array', cellDates:false, dense:true});
           const ws = wb.Sheets[wb.SheetNames[0]];
-          rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-        }
-        resolve(rows.map(r => Array.isArray(r) ? r.map(c=>String(c===null||c===undefined?'':c).trim()) : []));
-      } catch(err) { reject(err); }
-    };
-    const ext = file.name.split('.').pop().toLowerCase();
-    if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {
-      reader.readAsText(file);
-    } else {
+          const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+          resolve(rows.map(r => Array.isArray(r) ? r.map(c=>String(c==null?'':c).trim()) : []));
+        } catch(err) { reject(err); }
+      };
       reader.readAsArrayBuffer(file);
+    } else {
+      // CSV / TSV / TXT — async chunked, never blocks UI
+      file.text().then(text => parseCSVChunked(text, onProgress)).then(resolve).catch(reject);
     }
   });
 }
@@ -1037,7 +1067,7 @@ export default function OrderAnalyserTool() {
     try {
       let rows;
       if (hasFile) {
-        rows = await parseFileToRows(oFile);
+        rows = await parseFileToRows(oFile, pct => setOProgress(Math.round(pct * 0.4)));
       } else {
         rows = parseTSV(oText);
       }
@@ -1048,7 +1078,8 @@ export default function OrderAnalyserTool() {
       }
 
       const maps = await streamAggregateOrders(rows, masterMap, (pct, count) => {
-        setOProgress(pct); setORowCount(count);
+        setOProgress(40 + Math.round(pct * 0.6)); // 40-100% for aggregation
+        setORowCount(count);
       });
 
       if (!Object.keys(maps.typeMap).length) {
