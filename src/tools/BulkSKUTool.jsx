@@ -43,6 +43,81 @@ function calcStackLayers(pL, pW, pH, sl, sw, sh, isLocked) {
   return bestLayers;
 }
 
+// ─── SIZE-BASED FITMENT CHECK FOR MIXED PALLETS ───────────────────────────────
+// Checks whether boxes of multiple SKUs can physically co-exist on one pallet.
+// Three checks:
+//  1. Each box fits the pallet in at least one orientation
+//  2. Combined height (separate layers per SKU) ≤ pallet height
+//  3. Combined floor area (each SKU's strip on pallet base) ≤ pallet area
+function calcMixedFitment(palletSkus, pL, pW, pH) {
+  // Find best stacking orientation for each SKU
+  const oriented = palletSkus.map(sku => {
+    const dims = [sku.sl, sku.sw, sku.sh];
+    if (!dims.every(d => d > 0)) return { ...sku, ok: false, reason: 'Missing dimensions' };
+
+    const perms = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+    let best = null;
+    perms.forEach(([x,y,z]) => {
+      if (dims[z] > pH) return;               // too tall
+      const acL = Math.floor(pL / dims[x]);
+      const acW = Math.floor(pW / dims[y]);
+      if (!acL || !acW) return;               // doesn't tile pallet floor
+      const perLayer = acL * acW;
+      if (!best || perLayer > best.perLayer)
+        best = { perLayer, boxH: dims[z], footL: dims[x], footW: dims[y], acL, acW };
+    });
+
+    if (!best) return { ...sku, ok: false,
+      reason: `Box ${dims.join('×')}mm can't fit pallet ${pL}×${pW}×${pH}mm` };
+
+    // How many boxes of this SKU on this mixed pallet
+    const neededBoxes  = Math.max(1, Math.round((sku.remainder||0) * (sku.bpp||1)));
+    const layersNeeded = Math.ceil(neededBoxes / best.perLayer);
+    const heightNeeded = layersNeeded * best.boxH;
+    // Floor area fraction this SKU occupies per layer
+    const floorFrac    = (best.footL * best.footW * Math.min(neededBoxes, best.perLayer)) / (pL * pW);
+
+    return { ...sku, ok: true, best, neededBoxes, layersNeeded, heightNeeded, floorFrac };
+  });
+
+  // 1. Any box incompatible with pallet?
+  const bad = oriented.filter(o => !o.ok);
+  if (bad.length) return {
+    feasible: false,
+    reason: bad.map(b => `${b.name}: ${b.reason}`).join('; '),
+    warning: null, oriented,
+  };
+
+  // 2. Height check — each SKU gets its own layer stack
+  const totalH = oriented.reduce((s, o) => s + o.heightNeeded, 0);
+  if (totalH > pH) return {
+    feasible: false,
+    reason: `Stacked height ${totalH}mm > pallet height ${pH}mm`,
+    warning: null, oriented,
+  };
+
+  // 3. Floor area check — each SKU occupies a horizontal strip
+  const totalFloor = oriented.reduce((s, o) => s + o.floorFrac, 0);
+  if (totalFloor > 1.05) return {
+    feasible: false,
+    reason: `Combined floor area ${(totalFloor*100).toFixed(0)}% exceeds pallet (${pL}×${pW}mm)`,
+    warning: null, oriented,
+  };
+
+  // 4. Height compatibility warning (for stable stacking in shared layers)
+  const stackHs = oriented.map(o => o.best.boxH);
+  const hMin = Math.min(...stackHs), hMax = Math.max(...stackHs);
+  const warning = (hMax / hMin > 1.5)
+    ? `Layer-height mismatch: ${hMin}–${hMax}mm (${(hMax/hMin).toFixed(1)}× ratio) — may be unstable`
+    : null;
+
+  return {
+    feasible: true, warning,
+    totalH, totalFloor: +(totalFloor * 100).toFixed(1),
+    oriented,
+  };
+}
+
 // ─── PALLET MIXING ALGORITHM ──────────────────────────────────────────────────
 function calcPalletMix(skus, pL, pW, pH, maxSkus, lockHeight=false, lockedSkus=new Set()) {
   // Step 1: calc boxes per pallet and pallet equivalents per SKU
@@ -97,7 +172,15 @@ function calcPalletMix(skus, pL, pW, pH, maxSkus, lockHeight=false, lockedSkus=n
   const totalAfter  = totalFull + mixedPallets.length;
   const savings     = totalBefore - totalAfter;
 
-  return { items, mixedPallets, totalFull, totalBefore, totalAfter, savings };
+  // ── Size-based fitment check for each mixed pallet ────────────────────────
+  const mixedWithFitment = mixedPallets.map(p => {
+    const fit = p.skus.length > 1
+      ? calcMixedFitment(p.skus, pL, pW, pH)
+      : { feasible: true, warning: null, totalH: null, totalFloor: null };
+    return { ...p, fitment: fit };
+  });
+
+  return { items, mixedPallets: mixedWithFitment, totalFull, totalBefore, totalAfter, savings };
 }
 
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
@@ -771,18 +854,26 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                     <span style={{fontWeight:'700',fontSize:'13px'}}>Mixed Pallet Groups</span>
                     <span style={{fontSize:'12px',color:'#9ca3af'}}>{mixResult.mixedPallets.length} pallets</span>
                   </div>
-                  <div style={{overflowX:'auto',maxHeight:'300px',overflowY:'auto'}}>
+                  <div style={{overflowX:'auto',maxHeight:'360px',overflowY:'auto'}}>
                     <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
                       <thead><tr>
-                        {['Pallet #','SKUs Mixed','Utilisation','SKU Names'].map(h=>(
+                        {['Pallet #','SKUs','Utilisation','Size Fitment','SKU Names'].map(h=>(
                           <th key={h} style={{padding:'8px 12px',textAlign:'left',fontWeight:'600',
                             fontSize:'11px',color:'#6b7a8d',textTransform:'uppercase',
                             background:'#f5f3ff',borderBottom:'1px solid #e8edf2',
                             whiteSpace:'nowrap',position:'sticky',top:0}}>{h}</th>))}
                       </tr></thead>
                       <tbody>
-                        {mixResult.mixedPallets.map((p,i)=>(
-                          <tr key={i} style={{background:i%2===0?'#faf8ff':'#f5f3ff'}}>
+                        {mixResult.mixedPallets.map((p,i)=>{
+                          const fit = p.fitment||{};
+                          const fitOk = fit.feasible !== false;
+                          const fitWarn = fitOk && !!fit.warning;
+                          const border = !fitOk?'3px solid #be185d':fitWarn?'3px solid #d97706':'3px solid #16a34a';
+                          const fitBg  = !fitOk?'#fff1f2':fitWarn?'#fffbeb':'#f0fdf4';
+                          const fitCol = !fitOk?'#be185d':fitWarn?'#d97706':'#166534';
+                          return(
+                          <tr key={i} style={{background:i%2===0?'#faf8ff':'#f5f3ff',
+                            borderLeft:border}}>
                             <td style={{padding:'7px 12px',fontWeight:'700',color:'#7c3aed'}}>Mixed {i+1}</td>
                             <td style={{padding:'7px 12px',textAlign:'center'}}>
                               <span style={{background:'#7c3aed',color:'#fff',borderRadius:'99px',
@@ -794,7 +885,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
                                 <div style={{flex:1,background:'#e9d5ff',borderRadius:'99px',height:'8px'}}>
                                   <div style={{height:'8px',borderRadius:'99px',
-                                    background: p.used>=0.8?'#7c3aed':p.used>=0.5?'#a78bfa':'#c4b5fd',
+                                    background:p.used>=0.8?'#7c3aed':p.used>=0.5?'#a78bfa':'#c4b5fd',
                                     width:`${Math.min(p.used*100,100)}%`}}/>
                                 </div>
                                 <span style={{fontWeight:'700',fontSize:'12px',
@@ -803,17 +894,44 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 </span>
                               </div>
                             </td>
+                            {/* Size fitment status */}
+                            <td style={{padding:'6px 10px',minWidth:'140px'}}>
+                              <div style={{background:fitBg,borderRadius:'7px',
+                                padding:'5px 8px',fontSize:'11px',color:fitCol,fontWeight:'600'}}>
+                                <div>
+                                  {!fitOk?'❌ Infeasible':fitWarn?'⚠️ Unstable':'✅ Compatible'}
+                                </div>
+                                {!fitOk&&fit.reason&&
+                                  <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400'}}>
+                                    {fit.reason}
+                                  </div>}
+                                {fitWarn&&fit.warning&&
+                                  <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400'}}>
+                                    {fit.warning}
+                                  </div>}
+                                {fitOk&&!fitWarn&&fit.totalH!=null&&
+                                  <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400',color:'#166534'}}>
+                                    H: {fit.totalH}mm · Floor: {fit.totalFloor}%
+                                  </div>}
+                              </div>
+                            </td>
                             <td style={{padding:'7px 12px',color:'#374151'}}>
                               {p.skus.map(s=>(
-                                <span key={s.name} style={{display:'inline-block',background:'#ede9fe',
-                                  color:'#6d28d9',borderRadius:'6px',padding:'2px 8px',
+                                <span key={s.name} style={{display:'inline-block',
+                                  background:'#ede9fe',color:'#6d28d9',
+                                  borderRadius:'6px',padding:'2px 8px',
                                   fontSize:'11px',fontWeight:'600',margin:'2px 3px 2px 0'}}>
-                                  {s.name} ({(s.remainder*100).toFixed(1)}%)
+                                  {s.name}
+                                  <span style={{fontWeight:'400',color:'#9ca3af',marginLeft:'4px'}}>
+                                    ({(s.remainder*100).toFixed(1)}%)
+                                    {s.sl&&s.sw&&s.sh?` ${s.sl}×${s.sw}×${s.sh}`:''}
+                                  </span>
                                 </span>))}
                             </td>
-                          </tr>))}
+                          </tr>);})}
                       </tbody>
                     </table>
+                  </div>
                   </div>
                 </div>
               )}
