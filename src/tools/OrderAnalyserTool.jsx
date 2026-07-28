@@ -1,292 +1,53 @@
-// ─── ORDER ANALYSER TOOL ──────────────────────────────────────────────────────
-// Step 1: Paste/upload Master SKU data → validate + flag anomalies
-// Step 2: Paste/upload Order data (CSV/TSV/Excel, up to 10,00,000 rows) → analytics
-// Step 3: Optional inventory reconciliation
-import { useState, useRef, useCallback } from 'react';
+// ─── ORDER ANALYSER TOOL ─────────────────────────────────────────────────────
+import { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import PptxGenJS from 'pptxgenjs';
 import { S } from '../components/styles.jsx';
 
-const MAX_ORDER_ROWS = 1_000_000; // 10 lakh rows
-const CHUNK_SIZE = 10_000;        // rows per async chunk for aggregation
-
-// ─── STREAM-AGGREGATE ORDER DATA (handles 10L rows without freezing UI) ───────
-function streamAggregateOrders(rows, masterMap, onProgress) {
-  return new Promise(function(resolve) {
-    var _rows = rows.length > 0 && isHeaderRow(rows[0]) ? rows.slice(1) : rows;
-    var _total = Math.min(_rows.length, MAX_ORDER_ROWS);
-    // Prefixed with _ to ensure no naming conflict with parseOrderData locals
-    var _byLoc={}, _bySku={}, _byMonth={}, _byGrpLocCat={};
-    var _dates=new Set(), _errs=[];
-
-    if (_total === 0) {
-      resolve({anomalies:_errs,typeMap:_byLoc,skuMap:_bySku,
-        dateMap:_byMonth,glcMap:_byGrpLocCat,allDates:_dates,totalRows:0});
-      return;
-    }
-
-    function _chunk(start) {
-      var end = Math.min(start + CHUNK_SIZE, _total);
-      for (var i = start; i < end; i++) {
-        var r=_rows[i], rn=i+(_rows.length<rows.length?2:1);
-        var no=r[0]||'', dl=r[1]?String(r[1]).trim():'';
-        var sk=r[2]||'', qt=parseFloat(r[3])||0, dt=r[4]||'';
-        var ot=r[5]?String(r[5]).trim():'Unknown', ca=r[6]?String(r[6]).trim():'';
-
-        if (i<50000) {
-          if (!no) _errs.push({row:rn,sku:sk,field:'Order No',issue:'Missing order number',sev:'High'});
-          if (!sk) _errs.push({row:rn,sku:'—',field:'SKU',issue:'Missing SKU',sev:'High'});
-          if (qt<=0) _errs.push({row:rn,sku:sk,field:'Qty',issue:'Zero/negative qty: '+r[3],sev:'High'});
-          if (!dt) _errs.push({row:rn,sku:sk,field:'Date',issue:'Missing date',sev:'Medium'});
-          if (sk&&masterMap.size>0&&!masterMap.has(sk))
-            _errs.push({row:rn,sku:sk,field:'Master',issue:'SKU not in master',sev:'High'});
-        }
-
-        var lk=dl||'Unspecified';
-        if (!_byLoc[lk]) _byLoc[lk]={lines:0,orders:new Set(),skus:new Set(),dates:new Set(),qty:0};
-        _byLoc[lk].lines++; _byLoc[lk].qty+=qt;
-        if (no) _byLoc[lk].orders.add(no);
-        if (sk) _byLoc[lk].skus.add(sk);
-        if (dt) _byLoc[lk].dates.add(dt);
-
-        if (sk) {
-          if (!_bySku[sk]) _bySku[sk]={lines:0,orders:new Set(),qty:0,dates:new Set(),
-            categories:new Set(),locations:new Set(),orderTypes:new Set()};
-          _bySku[sk].lines++; _bySku[sk].qty+=qt;
-          if (no) _bySku[sk].orders.add(no);
-          if (dt) _bySku[sk].dates.add(dt);
-          if (ca) _bySku[sk].categories.add(ca);
-          if (dl) _bySku[sk].locations.add(dl);
-          if (ot) _bySku[sk].orderTypes.add(ot);
-        }
-
-        if (dt) {
-          var pts=dt.split(/[\/\-]/), mn=dt.slice(0,7);
-          var yy=pts[2]&&pts[2].length===4?pts[2]:(pts[0]&&pts[0].length===4?pts[0]:'');
-          var mm=pts[2]&&pts[2].length===4?pts[1]:(pts[0]&&pts[0].length===4?pts[0]:'');
-          if (yy&&mm) mn=yy+'-'+(mm.length<2?'0':'')+mm;
-          if (!_byMonth[mn]) _byMonth[mn]={month:mn,lines:0,qty:0,orders:new Set()};
-          _byMonth[mn].lines++; _byMonth[mn].qty+=qt;
-          if (no) _byMonth[mn].orders.add(no);
-          _dates.add(dt);
-        }
-
-        var gk=(ot||'Unknown')+'|||'+(dl||'Unspecified')+'|||'+(ca||'Unspecified');
-        if (!_byGrpLocCat[gk]) _byGrpLocCat[gk]={group:ot||'Unknown',location:dl||'Unspecified',
-          category:ca||'Unspecified',lines:0,orders:new Set(),skus:new Set(),qty:0};
-        _byGrpLocCat[gk].lines++; _byGrpLocCat[gk].qty+=qt;
-        if (no) _byGrpLocCat[gk].orders.add(no);
-        if (sk) _byGrpLocCat[gk].skus.add(sk);
-      }
-      if (onProgress) onProgress(Math.round((end/_total)*100), end);
-      if (end<_total) { setTimeout(function(){_chunk(end);},0); }
-      else { resolve({anomalies:_errs,typeMap:_byLoc,skuMap:_bySku,
-        dateMap:_byMonth,glcMap:_byGrpLocCat,allDates:_dates,totalRows:_total}); }
-    }
-    _chunk(0);
-  });
-}
-
-
-// ─── CONVERT AGGREGATION MAPS TO FINAL ANALYSIS (matches parseOrderData shape) ─
-function buildAnalysisFromMaps(maps, masterMap) {
-  var _tmap=maps.typeMap||{}, _smap=maps.skuMap||{}, _dmap=maps.dateMap||{};
-  var _gmap=maps.glcMap||{}, _adt=maps._adt||new Set();
-  var anomalies=maps.anomalies||[], totalRows=maps.totalRows||0;
-  const orderSummary = Object.entries(_tmap).map(([loc,g])=>({
-    dispatchLoc:loc, lines:g.lines, uniqueOrders:g.orders.size,
-    distinctSKUs:g.skus.size, distinctDates:g.dates.size, totalQty:g.qty,
-    avgQtyPerLine:+(g.qty/g.lines).toFixed(1),
-    avgLinesPerOrder:+(g.lines/Math.max(1,g.orders.size)).toFixed(1),
-  })).sort((a,b)=>b.lines-a.lines);
-
-  const totalLines = Object.values(_smap).reduce((s,v)=>s+v.lines,0);
-  const skuArr = Object.entries(_smap).map(([sku,v])=>{
-    const mData = masterMap?.get?.(sku)||null;
-    return {
-      sku, lines:v.lines, uniqueOrders:v.orders.size, totalQty:v.qty,
-      distinctDates:v.dates.size,
-      categories:[...v.categories].filter(Boolean),
-      locations:[...v.locations].filter(Boolean),
-      lineFreq:+(v.lines/Math.max(1,v.dates.size)).toFixed(2),
-      lineShare:+((v.lines/Math.max(1,totalLines))*100).toFixed(2),
-      totalVolume: mData ? +(v.qty*(mData.L||0)*(mData.W||0)*(mData.H||0)/1e9).toFixed(4) : 0,
-      masterData: mData,
-    };
-  }).sort((a,b)=>b.lines-a.lines);
-
-  // ABC classification by volume (fallback to lines if no volume data)
-  const abcData = [...skuArr].sort((a,b)=>b.totalVolume-a.totalVolume||b.lines-a.lines);
-  const totVol = abcData.reduce((s,r)=>s+r.totalVolume,0);
-  let cumV=0;
-  abcData.forEach(r=>{
-    cumV+=totVol>0?r.totalVolume:r.lines;
-    const denom=totVol>0?totVol:totalLines;
-    r.cumVolPct=denom>0?+(cumV/denom*100).toFixed(2):0;
-    r.abc=r.cumVolPct<=70?'A':r.cumVolPct<=90?'B':'C';
-  });
-  skuArr.forEach(r=>{ const m=abcData.find(x=>x.sku===r.sku); if(m) r.abc=m.abc; });
-
-  // FMS classification by lines (cumulative %) — matches original exactly
-  const fmsData = [...skuArr].sort((a,b)=>b.lines-a.lines);
-  const totLines2 = fmsData.reduce((s,r)=>s+r.lines,0);
-  let cumL=0;
-  fmsData.forEach(r=>{
-    cumL+=r.lines;
-    r.cumLinesPct = totLines2>0 ? +(cumL/totLines2*100).toFixed(2) : 0;
-    r.fms = r.cumLinesPct<=33 ? 'Fast' : r.cumLinesPct<=67 ? 'Medium' : 'Slow';
-  });
-  skuArr.forEach(r=>{ const m=fmsData.find(x=>x.sku===r.sku); if(m){r.fms=m.fms;r.cumLinesPct=m.cumLinesPct;} });
-
-  // ABC-FMS matrix
-  const abcBySku=Object.fromEntries(abcData.map(r=>[r.sku,r.abc]));
-  const fmsBySku=Object.fromEntries(fmsData.map(r=>[r.sku,r.fms]));
-  const matrix={};
-  ['A','B','C'].forEach(a=>['Fast','Medium','Slow'].forEach(f=>{
-    const key=`${a}-${f}`;
-    const items=skuArr.filter(r=>abcBySku[r.sku]===a&&fmsBySku[r.sku]===f);
-    matrix[key]={count:items.length, totalQty:items.reduce((s,r)=>s+r.totalQty,0), skus:items.map(r=>r.sku)};
-  }));
-
-  // Monthly trend
-  const monthlyTrend=Object.values(_dmap)
-    .map(m=>({...m, uniqueOrders:m.orders.size, orders:undefined}))
-    .sort((a,b)=>a.month.localeCompare(b.month));
-
-  // Group × Location × Category — uses actual orderType + category from input
-  const hasCat = Object.values(_gmap||{}).some(g=>g.category&&g.category!=='Unspecified');
-  const hasLoc = Object.values(_gmap||{}).some(g=>g.location&&g.location!=='Unspecified');
-  const grpLocCatSummary = Object.values(_gmap||{}).map(g=>{
-    let volume=0;
-    g.skus.forEach(sku=>{
-      const m=masterMap?.get?.(sku);
-      if(m) volume+=((m.L||0)*(m.W||0)*(m.H||0)/1e9)*g.qty;
-    });
-    return {
-      group:g.group, location:g.location, category:g.category,
-      lines:g.lines, uniqueOrders:g.orders.size, distinctSKUs:g.skus.size,
-      totalQty:g.qty, totalVolume:+volume.toFixed(4),
-    };
-  }).sort((a,b)=>
-    a.group.localeCompare(b.group)||a.location.localeCompare(b.location)||b.totalQty-a.totalQty
-  );
-
-  // periodDays: count distinct dates seen across all orders
-  const periodDays = Math.max((_adt||new Set()).size, monthlyTrend.length*20, 1);
-
-  const abcFmsMatrix={AA:0,AF:0,AM:0,AS:0,BA:0,BF:0,BM:0,BS:0,CA:0,CF:0,CM:0,CS:0};
-  skuArr.forEach(r=>{
-    const k=r.abc+(r.fms==='Fast'?'F':r.fms==='Medium'?'M':'S');
-    if(k in abcFmsMatrix) abcFmsMatrix[k]++;
-  });
-
-  return {
-    anomalies, orderSummary, skuSummary:skuArr,
-    abcData, fmsData, matrix, totVol,
-    monthlyTrend, abcFmsMatrix, grpLocCatSummary,
-    hasCat, hasLoc, periodDays, totalRows,
-    locations:[...new Set(skuArr.flatMap(r=>r.locations))].sort(),
-    anomalyNote: totalRows>50000
-      ? `Anomaly check on first 50,000 of ${totalRows.toLocaleString()} rows` : '',
-  };
-}
-  const orderSummary = Object.entries(_tmap).map(([loc,g])=>({
-    dispatchLoc:loc, lines:g.lines, uniqueOrders:g.orders.size,
-    distinctSKUs:g.skus.size, distinctDates:g.dates.size, totalQty:g.qty,
-    avgQtyPerLine:+(g.qty/g.lines).toFixed(1),
-    avgLinesPerOrder:+(g.lines/Math.max(1,g.orders.size)).toFixed(1),
-  })).sort((a,b)=>b.lines-a.lines);
-
-  const totalLines = Object.values(_smap).reduce((s,v)=>s+v.lines,0);
-  const skuArr = Object.entries(_smap).map(([sku,v])=>{
-    const mData = masterMap?.get?.(sku)||null;
-    return {
-      sku, lines:v.lines, uniqueOrders:v.orders.size, totalQty:v.qty,
-      distinctDates:v.dates.size,
-      categories:[...v.categories].filter(Boolean),
-      locations:[...v.locations].filter(Boolean),
-      lineFreq:+(v.lines/Math.max(1,v.dates.size)).toFixed(2),
-      lineShare:+((v.lines/Math.max(1,totalLines))*100).toFixed(2),
-      totalVolume: mData ? +(v.qty*(mData.L||0)*(mData.W||0)*(mData.H||0)/1e9).toFixed(4) : 0,
-      masterData: mData,
-    };
-  }).sort((a,b)=>b.lines-a.lines);
-
-  // ABC classification by volume (or lines if no volume)
-  const abcData = [...skuArr].sort((a,b)=>b.totalVolume-a.totalVolume||b.lines-a.lines);
-  const totVol = abcData.reduce((s,r)=>s+r.totalVolume,0);
-  let cum=0;
-  abcData.forEach(r=>{
-    cum+=r.totalVolume||r.lines;
-    const ratio=cum/Math.max(1,totVol||totalLines);
-    r.abc=ratio<=0.7?'A':ratio<=0.9?'B':'C';
-    r.cumVolPct=totVol>0?+(cum/totVol*100).toFixed(2):0;
-  });
-  skuArr.forEach(r=>{ const m=abcData.find(x=>x.sku===r.sku); if(m) r.abc=m.abc; });
-
-// ─── PARSE ORDER FILE — async chunked to avoid hanging browser ───────────────
-// CSV/TSV: manual line-by-line parsing in async chunks (never blocks UI)
-// Excel: XLSX (file sizes are small due to Excel row limits)
-function parseCSVChunked(text, onProgress) {
-  return new Promise(resolve => {
-    const lines = text.split(/\r?\n/);
-    const rows = [];
-    const BATCH = 20000;
-    let i = 0;
-    const process = () => {
-      const end = Math.min(i + BATCH, lines.length);
-      for (; i < end; i++) {
-        const line = lines[i];
-        if (!line.trim()) continue;
-        // Handle quoted CSV fields
-        if (line.includes('"')) {
-          const cells = []; let cur = ''; let inQ = false;
-          for (let ci = 0; ci < line.length; ci++) {
-            const ch = line[ci];
-            if (ch === '"') { inQ = !inQ; }
-            else if ((ch === ',' || ch === '\t') && !inQ) { cells.push(cur.trim()); cur = ''; }
-            else { cur += ch; }
-          }
-          cells.push(cur.trim());
-          rows.push(cells);
-        } else {
-          // Fast path: no quotes
-          const delim = line.includes('\t') ? '\t' : ',';
-          rows.push(line.split(delim).map(c => c.trim()));
-        }
-      }
-      if (onProgress) onProgress(Math.round((i / lines.length) * 50)); // 0-50% for parsing
-      if (i < lines.length) setTimeout(process, 0);
-      else resolve(rows);
-    };
-    setTimeout(process, 0);
-  });
-}
-
-function parseFileToRows(file, onProgress) {
-  return new Promise((resolve, reject) => {
-    const ext = file.name.split('.').pop().toLowerCase();
+// ─── READ ORDER FILE (CSV / TSV / Excel) ─────────────────────────────────────
+// Returns a Promise<rows[][]> — each row is an array of string cells.
+// Supports .csv, .tsv, .txt (read as text) and .xlsx/.xls (XLSX binary).
+function parseFileToRows(file) {
+  return new Promise(function(resolve, reject) {
+    var ext = file.name.split('.').pop().toLowerCase();
+    var reader = new FileReader();
+    reader.onerror = function() { reject(new Error('Could not read file')); };
     if (ext === 'xlsx' || ext === 'xls') {
-      // Excel: XLSX is fine (Excel files max ~1M rows, files usually <50MB)
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.onload = e => {
+      reader.onload = function(e) {
         try {
-          const wb = XLSX.read(e.target.result, {type:'array', cellDates:false, dense:true});
-          const ws = wb.Sheets[wb.SheetNames[0]];
-          const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-          resolve(rows.map(r => Array.isArray(r) ? r.map(c=>String(c==null?'':c).trim()) : []));
+          var wb = XLSX.read(e.target.result, {type:'array', dense:true});
+          var ws = wb.Sheets[wb.SheetNames[0]];
+          var raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+          resolve(raw.map(function(r) {
+            return Array.isArray(r) ? r.map(function(c) { return String(c==null?'':c).trim(); }) : [];
+          }));
         } catch(err) { reject(err); }
       };
       reader.readAsArrayBuffer(file);
     } else {
-      // CSV / TSV / TXT — async chunked, never blocks UI
-      file.text().then(text => parseCSVChunked(text, onProgress)).then(resolve).catch(reject);
+      // CSV / TSV / TXT
+      reader.onload = function(e) {
+        var text = e.target.result;
+        var rows = [];
+        var rawLines = text.split(/\r?\n/);
+        for (var i = 0; i < rawLines.length; i++) {
+          var line = rawLines[i];
+          if (!line.trim()) continue;
+          var delim = line.indexOf('\t') >= 0 ? '\t' : ',';
+          rows.push(line.split(delim).map(function(c){ return c.trim().replace(/^"|"$/g,''); }));
+        }
+        resolve(rows);
+      };
+      reader.readAsText(file);
     }
   });
 }
 
-// ─── PARSE PASTED TSV ────────────────────────────────────────────────────────
+// Convert rows[][] to TSV text (for use with existing parseOrderData)
+function rowsToText(rows) {
+  return rows.map(function(r){ return r.join('\t'); }).join('\n');
+}
+
 function parseTSV(text) {
   return text.trim().split('\n')
     .map(r => r.split('\t').map(c => c.trim()))
@@ -1141,44 +902,40 @@ export default function OrderAnalyserTool() {
   };
 
   // ── Step 2: Process order data (supports up to 10L rows via file upload) ────
-  const processOrder = useCallback(async () => {
+  const processOrder = async () => {
     const hasFile = !!oFile;
     const hasPaste = !!oText.trim();
     if (!hasFile && !hasPaste) { setOError('Upload a file or paste order data first.'); return; }
 
-    setOError(''); setAnalysis(null); setOProgress(0); setORowCount(0); setOLoading(true);
+    setOError(''); setAnalysis(null); setOLoading(true);
 
     try {
-      let rows;
+      let text;
       if (hasFile) {
-        rows = await parseFileToRows(oFile, pct => setOProgress(Math.round(pct * 0.4)));
+        // Read file then convert to TSV text for parseOrderData
+        setOProgress(20);
+        const rows = await parseFileToRows(oFile);
+        setOProgress(50);
+        text = rowsToText(rows);
+        setOProgress(70);
       } else {
-        rows = parseTSV(oText);
+        text = oText;
       }
 
-      if (rows.length < 2) {
-        setOError('No valid rows found. Check column order: Order No | Dispatch Location | SKU Code | Qty | Date');
-        setOLoading(false); return;
-      }
+      const result = parseOrderData(text, masterMap);
+      setOProgress(100);
 
-      const maps = await streamAggregateOrders(rows, masterMap, (pct, count) => {
-        setOProgress(40 + Math.round(pct * 0.6)); // 40-100% for aggregation
-        setORowCount(count);
-      });
-
-      if (!Object.keys(maps.typeMap).length) {
+      if (!result.orderSummary.length) {
         setOError('No valid order rows found. Check column order: Order No | Dispatch Location | SKU Code | Qty | Date');
         setOLoading(false); return;
       }
-
-      const result = buildAnalysisFromMaps(maps, masterMap);
       setAnalysis(result);
     } catch (err) {
-      setOError(`Error processing file: ${err.message}`);
+      setOError('Error processing data: ' + err.message);
     } finally {
       setOLoading(false); setOProgress(0);
     }
-  }, [oFile, oText, masterMap]);
+  };
 
 
 
