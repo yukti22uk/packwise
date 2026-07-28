@@ -1460,8 +1460,8 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var actualColSlot=colDepth+pa;
     var crossInterval=(CROSS_AISLE_INTERVAL?.[dom])||13;
 
-    // Maximum columns that physically fit across warehouse width
-    var maxNcols=Math.max(3, Math.floor(zone.w/actualColSlot));
+    // Maximum columns: subtract pa/2 extra (now using full pa at start instead of pa/2)
+    var maxNcols=Math.max(3, Math.floor((zone.w-pa/2)/actualColSlot));
     // bpf at maximum columns (smallest possible bpf)
     var bpfAtMax=totalBays>0?Math.max(1,Math.ceil(totalBays/2/maxNcols)):(sl.baysPerCol||1);
     // Minimum columns needed to achieve that bpf — avoids wasting excess columns
@@ -1495,7 +1495,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var globalBayNum=1;
 
     for(let i=0;i<nCols;i++){
-      var rx=curX+i*actualColSlot+pa/2;
+      var rx=curX+i*actualColSlot+pa; // full aisle before first column
       if(rx+colDepth>zone.x+zone.w-0.3) break;
       var label=colLabel(i);
 
@@ -1911,7 +1911,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
         const pAisle=W(d.aisle);      // picking aisle in px
         const bayHpx=H(d.bayWidthM);
         if(pFace<3) return null;
-        const ty=py-3; // dimension line Y position (above rack)
+        const ty=py+Math.min(16,bayHpx*0.25); // inside first bay (avoids cross aisle overlap)
         const TICK=5;
         return(
           <g key={`dim-${i}`}>
@@ -1936,18 +1936,27 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
             <text x={px+pFace+pGap+pFace/2} y={ty-4} textAnchor="middle" fontSize="8" fill="#1d4ed8" fontWeight="700">
               {(d.faceDepth*1000).toFixed(0)}mm
             </text>
-            {/* ── PICKING AISLE dim — prominent, with arrows ── */}
-            {pAisle>4&&<>
-              <line x1={px-pAisle} y1={ty} x2={px} y2={ty} stroke="#7c3aed" strokeWidth="1.2"/>
-              <line x1={px-pAisle} y1={ty-TICK/2} x2={px-pAisle} y2={ty+TICK/2} stroke="#7c3aed" strokeWidth="1.2"/>
-              <line x1={px} y1={ty-TICK/2} x2={px} y2={ty+TICK/2} stroke="#7c3aed" strokeWidth="1.2"/>
-              <text x={px-pAisle/2} y={ty-4} textAnchor="middle" fontSize="8.5" fill="#7c3aed" fontWeight="800">
-                {(d.aisle*1000).toFixed(0)}mm
-              </text>
-              <text x={px-pAisle/2} y={ty+12} textAnchor="middle" fontSize="6.5" fill="#7c3aed" fontWeight="600">
-                Picking Aisle
-              </text>
-            </>}
+            {/* ── PICKING AISLE dim — drawn between column A and column B ── */}
+            {pAisle>4&&(()=>{
+              const aisleX1=px+W(d.colDepth);     // right edge of B2B pair
+              const aisleX2=aisleX1+pAisle;        // start of next pair
+              return(<>
+                <line x1={aisleX1} y1={ty} x2={aisleX2} y2={ty}
+                  stroke="#7c3aed" strokeWidth="1.2"/>
+                <line x1={aisleX1} y1={ty-TICK/2} x2={aisleX1} y2={ty+TICK/2}
+                  stroke="#7c3aed" strokeWidth="1.2"/>
+                <line x1={aisleX2} y1={ty-TICK/2} x2={aisleX2} y2={ty+TICK/2}
+                  stroke="#7c3aed" strokeWidth="1.2"/>
+                <text x={(aisleX1+aisleX2)/2} y={ty-4}
+                  textAnchor="middle" fontSize="8.5" fill="#7c3aed" fontWeight="800">
+                  {(d.aisle*1000).toFixed(0)}mm
+                </text>
+                <text x={(aisleX1+aisleX2)/2} y={ty+12}
+                  textAnchor="middle" fontSize="6.5" fill="#7c3aed" fontWeight="600">
+                  Picking Aisle
+                </text>
+              </>);
+            })()}
             {/* ── bay N-S height dim ── */}
             {bayHpx>5&&<>
               <line x1={px-3} y1={py} x2={px-3} y2={py+bayHpx} stroke="#166534" strokeWidth="1"/>
@@ -4093,6 +4102,7 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params) {
     uCfgs.push({
       id:`u-${binKey}`,rack:rt,bin:binKey,
       rackName:fc.rk.name||'Custom Rack',binName:binInfo.name||binKey,
+      aisle:fc.rk.aisle||fc.rk.pickingAisle||null,
       binDims:[bL,bW,bH],bayW:rW,bayD:rD,
       shelfH:fc.totalH,tierHeight:fc.levelH,clearance:0,
       levelH:fc.levelH,usableH:fc.usableH,beamClr:0,
