@@ -67,7 +67,7 @@ function calcMixedFitment(palletSkus, pL, pW, pH) {
     });
 
     if (!opts.length) return { ...sku, ok: false,
-      reason: `Box ${dims.join('×')}mm can't fit pallet ${pL}×${pW}×${pH}mm`, opts: [] };
+      reason: 'Box '+dims.join('x')+'mm cannot fit pallet '+pL+'x'+pW+'x'+pH+'mm', opts: [] };
 
     // Sort by perLayer desc so opts[0] = best throughput orientation
     opts.sort((a,b) => b.perLayer - a.perLayer || a.boxH - b.boxH);
@@ -77,7 +77,7 @@ function calcMixedFitment(palletSkus, pL, pW, pH) {
   const bad = candidates.filter(o => !o.ok);
   if (bad.length) return {
     feasible: false,
-    reason: bad.map(b => `${b.name}: ${b.reason}`).join('; '),
+    reason: bad.map(function(b){return b.name+': '+b.reason;}).join('; '),
     warning: null, oriented: candidates,
   };
 
@@ -141,11 +141,10 @@ function calcMixedFitment(palletSkus, pL, pW, pH) {
     const tallAlt  = tallSku?.opts?.filter(o => o.boxH <= hMin*1.5).sort((a,b)=>b.perLayer-a.perLayer)[0];
     const shortAlt = shortSku?.opts?.filter(o => o.boxH >= hMax/1.5).sort((a,b)=>b.perLayer-a.perLayer)[0];
     const tips = [];
-    if (tallAlt)  tips.push(`rotate "${tallSku.name}" to ${tallAlt.boxH}mm-high orientation (${tallAlt.perLayer} boxes/layer)`);
-    if (shortAlt) tips.push(`rotate "${shortSku.name}" to ${shortAlt.boxH}mm-high orientation`);
+    if (tallAlt)  tips.push('rotate '+tallSku.name+' to '+tallAlt.boxH+'mm height ('+tallAlt.perLayer+' boxes per layer)');
+    if (shortAlt) tips.push('rotate '+shortSku.name+' to '+shortAlt.boxH+'mm height');
     if (!tips.length) tips.push('consider separate pallets for these SKUs');
-    warning = `Layer-height mismatch: ${hMin}–${hMax}mm (${(hMax/hMin).toFixed(1)}× ratio). `
-            + `To improve: ${tips.join(' or ')}.`;
+    warning = 'Layer-height mismatch: '+hMin+'-'+hMax+'mm ('+((hMax/hMin).toFixed(1))+'x ratio). To improve: '+tips.join(' or ')+'.';
   }
 
   return {
@@ -270,7 +269,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
         vQ = calcLockedBPP(cL, cW, cH, sl, sw, sh);
         // Build orient string for locked (H always vertical)
         const best = Math.floor(cL/sl)*Math.floor(cW/sw) >= Math.floor(cL/sw)*Math.floor(cW/sl)
-          ? `${sl}×${sw}×${sh}` : `${sw}×${sl}×${sh}`;
+          ? (sl+'x'+sw+'x'+sh) : (sw+'x'+sl+'x'+sh);
         orient = best;
       } else {
         const res = calcMixed(cL, cW, cH, sl, sw, sh);
@@ -744,7 +743,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 background:r.heightLocked?'#ede9fe':'#eff6ff',
                                 color:r.heightLocked?'#6d28d9':'#1d4ed8',
                                 padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'700'}}>
-                                {r.stackLayers+''+(r.heightLocked?' 🔒':'')+'L'}
+                                {r.stackLayers+''+(r.heightLocked?' [L]':'')+'L'}
                               </span>
                             )}
                           </td>
@@ -768,7 +767,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 background:lockedSkus.has(r.name)?'#ede9fe':'#f1f5f9',
                                 color:lockedSkus.has(r.name)?'#6d28d9':'#9ca3af',
                               }}>
-                              {lockedSkus.has(r.name)?'🔒':'🔓'}
+                              {lockedSkus.has(r.name)?'[Lock]':'[Unlock]'}
                             </button>
                           </td>
                         </tr>))}
@@ -849,24 +848,24 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               ? <span style={{background:r.heightLocked?'#ede9fe':'#eff6ff',
                                   color:r.heightLocked?'#6d28d9':'#1d4ed8',
                                   padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'700'}}>
-                                  {r.stackLayers}{r.heightLocked?' 🔒':''}
+                                  {r.stackLayers}{r.heightLocked?' [L]':''}
                                 </span>
-                              : <span style={{color:'#9ca3af'}}>—</span>}
+                              : <span style={{color:'#9ca3af'}}>-</span>}
                           </td>
                           <td style={{padding:'7px 12px'}}>
                             {r.error
-                              ? <span style={{fontSize:'11px',color:'#be185d'}}>⚠ {r.error}</span>
+                              ? <span style={{fontSize:'11px',color:'#be185d'}}>! {r.error}</span>
                               : r.remainder>0
                                 ? <span style={{background:'#fef9c3',color:'#854d0e',padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'600'}}>Mixed</span>
                                 : r.fullPallets>0
                                   ? <span style={{background:'#f0fdf4',color:'#166534',padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'600'}}>Full</span>
-                                  : <span style={{color:'#9ca3af',fontSize:'11px'}}>—</span>}
+                                  : <span style={{color:'#9ca3af',fontSize:'11px'}}>-</span>}
                           </td>
                           <td style={{padding:'7px 12px',textAlign:'center'}}>
                             <button
                               onClick={()=>toggleSkuLock(r.name)}
                               title={lockedSkus.has(r.name)||r.heightLocked
-                                ? 'Height locked — click to unlock (allow tipping)'
+                                ? 'Height locked - click to unlock (allow tipping)'
                                 : 'Click to lock height upright for this SKU'}
                               style={{
                                 padding:'3px 8px',borderRadius:'99px',cursor:'pointer',
@@ -875,7 +874,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 color:lockedSkus.has(r.name)?'#6d28d9':'#9ca3af',
                                 transition:'all 0.15s',
                               }}>
-                              {lockedSkus.has(r.name)?'🔒':'🔓'}
+                              {lockedSkus.has(r.name)?'[Lock]':'[Unlock]'}
                             </button>
                           </td>
                         </tr>))}
@@ -933,32 +932,23 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               </div>
                             </td>
                             {/* Size fitment status */}
-                            <td style={{padding:'6px 10px',minWidth:'160px'}}>
+                            <td style={{padding:'6px 10px',minWidth:'140px'}}>
                               <div style={{background:fitBg,borderRadius:'7px',
                                 padding:'5px 8px',fontSize:'11px',color:fitCol,fontWeight:'600'}}>
                                 <div>
-                                  {!fitOk?'❌ Infeasible'
-                                    :fitWarn?('⚠️ Unstable ('+fit.heightRatio+'\u00D7 height ratio)')
-                                    :'✅ Compatible'}
+                                  {!fitOk?'Infeasible':fitWarn?'Unstable':'Compatible'}
                                 </div>
                                 {!fitOk&&fit.reason&&
                                   <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400'}}>
                                     {fit.reason}
                                   </div>}
                                 {fitWarn&&fit.warning&&
-                                  <div style={{fontSize:'10px',marginTop:'4px',fontWeight:'400',color:'#92400e',
-                                    background:'#fef3c7',borderRadius:'4px',padding:'4px 6px',lineHeight:'1.4'}}>
+                                  <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400'}}>
                                     {fit.warning}
                                   </div>}
-                                {fitOk&&fit.oriented&&
-                                  <div style={{fontSize:'10px',marginTop:'3px',fontWeight:'400',
-                                    color:fitWarn?'#92400e':'#166534'}}>
-                                    <span>{'H: '+fit.totalH+'mm | Floor: '+fit.totalFloor+'pct'}</span>
-                                    {fit.oriented.map(o=>(
-                                      <span key={o.name} style={{display:'block',marginTop:'1px',color:'#374151'}}>
-                                        {o.name+': '+o.best.boxH+'mm | '+o.best.perLayer+' boxes per layer'}
-                                      </span>
-                                    ))}
+                                {fitOk&&!fitWarn&&fit.totalH!=null&&
+                                  <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400',color:'#166534'}}>
+                                    {'H: '+fit.totalH+'mm, Floor: '+fit.totalFloor+'%'}
                                   </div>}
                               </div>
                             </td>
@@ -987,7 +977,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
 
           {!results && !processing && !error && (
             <div style={{...S.card,padding:'60px',textAlign:'center',color:'#9ca3af'}}>
-              <div style={{fontSize:'48px',marginBottom:'12px'}}>📦</div>
+              <div style={{fontSize:'48px',marginBottom:'12px'}}>[ ]</div>
               <div style={{fontWeight:'500'}}>Fill in container details and upload your SKU file to get started</div>
             </div>)}
         </div>
