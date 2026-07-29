@@ -706,7 +706,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                 background:r.heightLocked?'#ede9fe':'#eff6ff',
                                 color:r.heightLocked?'#6d28d9':'#1d4ed8',
                                 padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'700'}}>
-                                {r.stackLayers+''+(r.heightLocked?' [L]':'')+'L'}
+                                {r.stackLayers}{r.heightLocked?' 🔒':''}L
                               </span>
                             )}
                           </td>
