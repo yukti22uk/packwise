@@ -50,115 +50,68 @@ function calcStackLayers(pL, pW, pH, sl, sw, sh, isLocked) {
 //  2. Combined height (separate layers per SKU) ≤ pallet height
 //  3. Combined floor area (each SKU's strip on pallet base) ≤ pallet area
 function calcMixedFitment(palletSkus, pL, pW, pH) {
-  var perms = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+  const oriented = palletSkus.map(sku => {
+    const dims = [sku.sl, sku.sw, sku.sh];
+    if (!dims.every(d => d > 0)) return { ...sku, ok: false, reason: 'Missing dimensions' };
 
-  // Find all valid orientations for each SKU
-  var candidates = palletSkus.map(function(sku) {
-    var dims = [sku.sl, sku.sw, sku.sh];
-    if (!dims.every(function(d){ return d > 0; })) {
-      return Object.assign({}, sku, { ok: false, reason: 'Missing dimensions', opts: [] });
-    }
-    var opts = [];
-    perms.forEach(function(p) {
-      var x=p[0], y=p[1], z=p[2];
+    const perms = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+    let best = null;
+    perms.forEach(([x,y,z]) => {
       if (dims[z] > pH) return;
-      var acL = Math.floor(pL / dims[x]);
-      var acW = Math.floor(pW / dims[y]);
+      const acL = Math.floor(pL / dims[x]);
+      const acW = Math.floor(pW / dims[y]);
       if (!acL || !acW) return;
-      opts.push({ perLayer: acL * acW, boxH: dims[z], footL: dims[x], footW: dims[y], acL: acL, acW: acW });
+      const perLayer = acL * acW;
+      if (!best || perLayer > best.perLayer)
+        best = { perLayer, boxH: dims[z], footL: dims[x], footW: dims[y], acL, acW };
     });
-    if (!opts.length) {
-      return Object.assign({}, sku, { ok: false,
-        reason: 'Box ' + dims.join('x') + 'mm cannot fit pallet ' + pL + 'x' + pW + 'x' + pH + 'mm',
-        opts: [] });
-    }
-    opts.sort(function(a,b){ return b.perLayer - a.perLayer || a.boxH - b.boxH; });
-    return Object.assign({}, sku, { ok: true, opts: opts });
+
+    if (!best) return { ...sku, ok: false,
+      reason: 'Box ' + dims.join('x') + 'mm cannot fit pallet ' + pL + 'x' + pW + 'x' + pH + 'mm' };
+
+    const neededBoxes  = Math.max(1, Math.round((sku.remainder||0) * (sku.bpp||1)));
+    const layersNeeded = Math.ceil(neededBoxes / best.perLayer);
+    const heightNeeded = layersNeeded * best.boxH;
+    const floorFrac    = (best.footL * best.footW * Math.min(neededBoxes, best.perLayer)) / (pL * pW);
+    return { ...sku, ok: true, best, neededBoxes, layersNeeded, heightNeeded, floorFrac };
   });
 
-  var bad = candidates.filter(function(o){ return !o.ok; });
+  const bad = oriented.filter(o => !o.ok);
   if (bad.length) return {
     feasible: false,
-    reason: bad.map(function(b){ return b.name + ': ' + b.reason; }).join('; '),
-    warning: null, oriented: candidates,
+    reason: bad.map(b => b.name + ': ' + b.reason).join('; '),
+    warning: null, oriented,
   };
 
-  // Try to pick orientations that minimise height spread
-  var allHeights = [];
-  candidates.forEach(function(c){
-    c.opts.forEach(function(o){ if (allHeights.indexOf(o.boxH)<0) allHeights.push(o.boxH); });
-  });
-  allHeights.sort(function(a,b){ return a-b; });
-
-  var bestCombo = null, bestRatio = 99;
-
-  allHeights.forEach(function(targetH) {
-    var oriented = candidates.map(function(c) {
-      // Find best orientation near target height (within 20%)
-      var ratio20 = targetH * 0.2;
-      var nearby = c.opts.filter(function(o){
-        var diff = o.boxH - targetH;
-        if (diff < 0) diff = -diff;
-        return diff <= ratio20;
-      }).sort(function(a,b){ return b.perLayer - a.perLayer; })[0];
-      var chosen = nearby || c.opts[0];
-      var neededBoxes = Math.max(1, Math.round((c.remainder||0) * (c.bpp||1)));
-      var layersNeeded = Math.ceil(neededBoxes / chosen.perLayer);
-      var heightNeeded = layersNeeded * chosen.boxH;
-      var floorFrac = (chosen.footL * chosen.footW * Math.min(neededBoxes, chosen.perLayer)) / (pL * pW);
-      return Object.assign({}, c, { best: chosen, neededBoxes: neededBoxes,
-        layersNeeded: layersNeeded, heightNeeded: heightNeeded, floorFrac: floorFrac });
-    });
-    var totalH = oriented.reduce(function(s,o){ return s + o.heightNeeded; }, 0);
-    if (totalH > pH) return;
-    var totalFloor = oriented.reduce(function(s,o){ return s + o.floorFrac; }, 0);
-    if (totalFloor > 1.05) return;
-    var hs = oriented.map(function(o){ return o.best.boxH; });
-    var hhi = Math.max.apply(null, hs), hlo = Math.min.apply(null, hs);
-    var r = hlo > 0 ? (hhi / hlo) : 99;
-    if (r < bestRatio) { bestRatio = r; bestCombo = oriented; }
-  });
-
-  if (!bestCombo) {
-    bestCombo = candidates.map(function(c) {
-      var chosen = c.opts[0];
-      var neededBoxes = Math.max(1, Math.round((c.remainder||0) * (c.bpp||1)));
-      var layersNeeded = Math.ceil(neededBoxes / chosen.perLayer);
-      var heightNeeded = layersNeeded * chosen.boxH;
-      var floorFrac = (chosen.footL * chosen.footW * Math.min(neededBoxes, chosen.perLayer)) / (pL * pW);
-      return Object.assign({}, c, { best: chosen, neededBoxes: neededBoxes,
-        layersNeeded: layersNeeded, heightNeeded: heightNeeded, floorFrac: floorFrac });
-    });
-    var hsFb = bestCombo.map(function(o){ return o.best.boxH; });
-    bestRatio = Math.max.apply(null,hsFb) / Math.min.apply(null,hsFb);
-  }
-
-  var totalH2 = bestCombo.reduce(function(s,o){ return s + o.heightNeeded; }, 0);
-  var totalFloor2 = bestCombo.reduce(function(s,o){ return s + o.floorFrac; }, 0);
-  if (totalH2 > pH) return {
+  const totalH = oriented.reduce((s, o) => s + o.heightNeeded, 0);
+  if (totalH > pH) return {
     feasible: false,
-    reason: 'Stacked height ' + totalH2 + 'mm exceeds pallet ' + pH + 'mm',
-    warning: null, oriented: bestCombo,
-  };
-  if (totalFloor2 > 1.05) return {
-    feasible: false,
-    reason: 'Floor area ' + (totalFloor2*100).toFixed(0) + '% exceeds pallet',
-    warning: null, oriented: bestCombo,
+    reason: 'Stacked height ' + totalH + 'mm > pallet height ' + pH + 'mm',
+    warning: null, oriented,
   };
 
-  var hsF = bestCombo.map(function(o){ return o.best.boxH; });
-  var hMin = Math.min.apply(null, hsF), hMax = Math.max.apply(null, hsF);
-  var warning = null;
-  if (hMin > 0 && (hMax / hMin) > 1.5) {
-    warning = 'Height mismatch ' + hMin + '-' + hMax + 'mm (' + ((hMax/hMin).toFixed(1)) + 'x). Consider separate pallets or rotating boxes.';
-  }
+  const totalFloor = oriented.reduce((s, o) => s + o.floorFrac, 0);
+  if (totalFloor > 1.05) return {
+    feasible: false,
+    reason: 'Combined floor area ' + (totalFloor*100).toFixed(0) + '% exceeds pallet (' + pL + 'x' + pW + 'mm)',
+    warning: null, oriented,
+  };
+
+  const stackHs = oriented.map(o => o.best.boxH);
+  const hMin = Math.min(...stackHs), hMax = Math.max(...stackHs);
+  const ratio = hMin > 0 ? hMax / hMin : 1;
+  const warning = ratio > 1.5
+    ? 'Layer-height mismatch: ' + hMin + '-' + hMax + 'mm (' + ratio.toFixed(1) + 'x ratio). ' +
+      'Try rotating taller boxes to a shorter orientation, or place these SKUs on separate pallets.'
+    : null;
 
   return {
-    feasible: true, warning: warning,
-    totalH: totalH2, totalFloor: +(totalFloor2 * 100).toFixed(1),
-    oriented: bestCombo, heightRatio: +bestRatio.toFixed(2),
+    feasible: true, warning,
+    totalH, totalFloor: +(totalFloor * 100).toFixed(1),
+    oriented,
   };
 }
+
 
 // ─── PALLET MIXING ALGORITHM ──────────────────────────────────────────────────
 function calcPalletMix(skus, pL, pW, pH, maxSkus, lockHeight=false, lockedSkus=new Set()) {
