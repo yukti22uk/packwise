@@ -20,29 +20,61 @@ const BIN_CATALOG = {
   LONG:{ name:'Long-Goods Slot',        dims:'per item',            phys:null,               volCm3:null,    fill:0.40, slotH:0.40 },
 };
 
-// ─── BIN / PALLET OVERRIDES ───────────────────────────────────────────────────
-// Users can edit bin dimensions and location counts before rack selection.
-// binOverrides shape: { XS:{L:300,W:200,H:100,locs:1234}, ... }
-// Any field left at 0/blank falls back to the BIN_CATALOG default.
-function binPhysFor(binKey, binOverrides) {
-  const ov = binOverrides ? binOverrides[binKey] : null;
-  const base = BIN_CATALOG[binKey] ? BIN_CATALOG[binKey].phys : null;
-  if (!ov) return base;
-  const L = parseFloat(ov.L) || (base ? base[0] : 0);
-  const W = parseFloat(ov.W) || (base ? base[1] : 0);
-  const H = parseFloat(ov.H) || (base ? base[2] : 0);
-  if (!L || !W || !H) return base;
-  return [L, W, H];
+// ─── BIN / PALLET SIZE VARIANTS ───────────────────────────────────────────────
+// Users can define up to MAX_BIN_VARIANTS different sizes for one bin band, each
+// with its own quantity. Each variant becomes its own rack configuration and its
+// own section in the floor plan.
+// Shape: { XL:[{L,W,H,locs,label}, {…}, {…}], M:[{…}] }
+const MAX_BIN_VARIANTS = 3;
+
+// Split a layout key like "selective__v2" back to its base rack type
+function baseRackOf(key) {
+  if (!key) return key;
+  const i = key.indexOf('__');
+  return i < 0 ? key : key.slice(0, i);
 }
-// Scale factor to apply to each bin group's location count
+
+// Resolve the list of size variants for a bin band
+function binVariantsFor(binKey, binOverrides, fallbackLocs) {
+  const base = BIN_CATALOG[binKey] ? BIN_CATALOG[binKey].phys : null;
+  const arr  = binOverrides ? binOverrides[binKey] : null;
+  if (Array.isArray(arr) && arr.length) {
+    const out = [];
+    arr.forEach(function(ov, i){
+      const L = parseFloat(ov.L) || (base ? base[0] : 0);
+      const W = parseFloat(ov.W) || (base ? base[1] : 0);
+      const H = parseFloat(ov.H) || (base ? base[2] : 0);
+      const n = parseFloat(ov.locs) || 0;
+      if (n <= 0) return;
+      out.push({
+        idx: i,
+        label: ov.label || ('Size ' + (i + 1)),
+        phys: (L && W && H) ? [L, W, H] : base,
+        locs: n,
+      });
+    });
+    if (out.length) return out;
+  }
+  return [{ idx:0, label:'Size 1', phys:base, locs: fallbackLocs || 0 }];
+}
+
+// Primary (first) physical size for a band — used where a single size is needed
+function binPhysFor(binKey, binOverrides) {
+  const v = binVariantsFor(binKey, binOverrides, 0);
+  return v[0] ? v[0].phys : (BIN_CATALOG[binKey] ? BIN_CATALOG[binKey].phys : null);
+}
+
+// Total requested locations across all variants ÷ system-generated locations
 function binLocScales(analysis, binOverrides) {
   const scales = {};
   if (!binOverrides) return scales;
   Object.keys(binOverrides).forEach(function(k){
-    const ov = binOverrides[k];
+    const arr = binOverrides[k];
+    if (!Array.isArray(arr)) return;
+    let want = 0;
+    arr.forEach(function(v){ want += parseFloat(v.locs) || 0; });
     const orig = (analysis && analysis.binSummary && analysis.binSummary[k])
       ? (analysis.binSummary[k].locs || 0) : 0;
-    const want = parseFloat(ov && ov.locs) || 0;
     if (want > 0 && orig > 0) scales[k] = want / orig;
   });
   return scales;
@@ -1010,11 +1042,10 @@ function recalcCfg(cfg) {
 // Auto-generate rack config from analysis
 function generateRackConfig(analysis, params, binOverrides) {
   const { clearH, forkType, aisleW } = params;
-  const locScales = binLocScales(analysis, binOverrides);
   const shelfMaxH = Math.min(3500, Math.floor(clearH*1000 - 300));
   const maxLift   = { manual:2200, counterbalance:6000, reach:9000, vna:12000 };
   const liftH     = maxLift[forkType]||6000;
-  const aisleWmm = Math.floor(parseFloat(aisleW)*1000);
+  const aisleWmm  = Math.floor(parseFloat(aisleW)*1000);
 
   // Group by rack + bin
   const groups = {};
@@ -1026,82 +1057,98 @@ function generateRackConfig(analysis, params, binOverrides) {
     groups[key].locs += r.locsReq;
   });
 
-  // Apply user location-count overrides (scaled proportionally per rack|bin group)
-  Object.values(groups).forEach(g => {
-    const sc = locScales[g.bin];
-    if (sc) g.locs = Math.max(1, Math.round(g.locs * sc));
+  // Expand each rack|bin group into ONE CONFIG PER SIZE VARIANT.
+  // If a bin is served by more than one rack type, each variant quantity is
+  // apportioned by that rack type's share of the bin's total locations.
+  const out = [];
+  Object.values(groups).filter(g=>g.locs>0).forEach(g => {
+    const binTotal = (analysis && analysis.binSummary && analysis.binSummary[g.bin])
+      ? (analysis.binSummary[g.bin].locs || g.locs) : g.locs;
+    const share = binTotal > 0 ? (g.locs / binTotal) : 1;
+    const variants = binVariantsFor(g.bin, binOverrides, g.locs);
+    const multi = variants.length > 1;
+
+    variants.forEach((v, vi) => {
+      const suffix = multi ? ('__v' + (vi+1)) : '';
+      const meta = {
+        id: g.rack + '|' + g.bin + suffix,
+        rack: g.rack, bin: g.bin, rackName: g.rackName,
+        binName: multi ? (g.binName + ' - ' + v.label) : g.binName,
+        locs: Math.max(1, Math.round(v.locs * share)),
+        layoutKey: g.rack + suffix,
+        variantLabel: v.label, variantIdx: vi, variantCount: variants.length,
+        binDims: v.phys,
+      };
+      out.push(buildOneCfg(meta, v.phys, g.rack, params, shelfMaxH, liftH, aisleWmm));
+    });
   });
+  return out;
+}
 
-  return Object.values(groups).filter(g=>g.locs>0).map(g => {
-    const binDims = binPhysFor(g.bin, binOverrides);
+// Build ONE rack configuration for a single bin size on a single rack type
+function buildOneCfg(meta, binDims, rack, params, shelfMaxH, liftH, aisleWmm) {
+  const clearH = params.clearH;
 
-    if (['shelving','liveStorage'].includes(g.rack) && binDims) {
-      const [bL,bW,bH] = binDims;
-      // Use widest standard bay that's a clean multiple of bin width
-      // Wider bays = more bins per level = fewer bays = slightly less area
-      const stdBayWidths = [1800, 1500, 1200, 900];
-      const bayW = stdBayWidths.find(bw => bw % Math.min(bL,bW) === 0) ||
-                   stdBayWidths.find(bw => Math.floor(bw/Math.min(bL,bW)) >= 2) || 900;
-      const bayD = Math.max(Math.max(bL,bW)+50, 400); // min depth to fit 1 bin
-      const clearance = 50;
-      const o1 = tryShelfOrientation(binDims,bayW,bayD,shelfMaxH,clearance,'LW');
-      const o2 = tryShelfOrientation(binDims,bayW,bayD,shelfMaxH,clearance,'WL');
-      const bestOrient = o1.locsPerBay>=o2.locsPerBay ? 'LW' : 'WL';
-      const best = bestOrient==='LW' ? o1 : o2;
-      return recalcCfg({ id:`${g.rack}|${g.bin}`, ...g, binDims,
-        bayW, bayD, shelfH:shelfMaxH, clearance,
-        tierHeight: shelfMaxH, // per-tier height (same as shelfH for 1 tier)
-        orientation:bestOrient, tiers:1, shelvingAisle:SHELVING_AISLE_MM,
-        locsPerBay:best.locsPerBay, o1, o2, aisleW:SHELVING_AISLE_MM,
-        ...best });
+  if (['shelving','liveStorage'].includes(rack) && binDims) {
+    const bL = binDims[0], bW = binDims[1];
+    const stdBayWidths = [1800, 1500, 1200, 900];
+    const bayW = stdBayWidths.find(bw => bw % Math.min(bL,bW) === 0) ||
+                 stdBayWidths.find(bw => Math.floor(bw/Math.min(bL,bW)) >= 2) || 900;
+    const bayD = Math.max(Math.max(bL,bW)+50, 400);
+    const clearance = 50;
+    const o1 = tryShelfOrientation(binDims,bayW,bayD,shelfMaxH,clearance,'LW');
+    const o2 = tryShelfOrientation(binDims,bayW,bayD,shelfMaxH,clearance,'WL');
+    const bestOrient = o1.locsPerBay>=o2.locsPerBay ? 'LW' : 'WL';
+    const best = bestOrient==='LW' ? o1 : o2;
+    return recalcCfg({ ...meta,
+      bayW, bayD, shelfH:shelfMaxH, clearance, tierHeight:shelfMaxH,
+      orientation:bestOrient, tiers:1, shelvingAisle:SHELVING_AISLE_MM,
+      locsPerBay:best.locsPerBay, o1, o2, aisleW:SHELVING_AISLE_MM,
+      ...best });
 
-    } else if (['selective','driveIn','doubleDeep'].includes(g.rack)) {
-      // Derive bay geometry from the ACTUAL pallet footprint (respects user edits).
-      // Pallet is loaded with its shorter horizontal face toward the aisle.
-      const pl   = binDims ? Math.max(binDims[0], binDims[1]) : 1200; // depth into rack
-      const pw   = binDims ? Math.min(binDims[0], binDims[1]) : 1000; // face width
-      const ph   = binDims ? binDims[2] : 1200;                        // load height
-      const depth   = g.rack==='driveIn'?6 : g.rack==='doubleDeep'?2 : 1;
-      const acrossW = 2;              // pallets per bay across the beam (standard)
-      const sideGap = 100;            // clearance between pallets / uprights
-      const bayW_mm = acrossW*pw + (acrossW+1)*sideGap;
-      const bayD_mm = depth*pl + 50;  // rack depth follows pallet depth
-      // Vertical pitch = pallet load height + beam and lift clearance
-      const levelPitch = Math.max(600, ph + 200);
-      const levels = Math.max(1,
-        Math.floor((Math.min(liftH, clearH*1000) - 800) / levelPitch));
-      const locsPerBay = acrossW*levels*depth;
-      return recalcCfg({ id:`${g.rack}|${g.bin}`, ...g, binDims,
-        bayW:bayW_mm, bayD:bayD_mm, levels,
-        locsPerBay, tiers:1, orientation:'std',
-        acrossW, acrossD:depth, aisleW:aisleWmm });
+  } else if (['selective','driveIn','doubleDeep'].includes(rack)) {
+    // Bay geometry derived from the ACTUAL pallet footprint
+    const pl = binDims ? Math.max(binDims[0], binDims[1]) : 1200; // depth into rack
+    const pw = binDims ? Math.min(binDims[0], binDims[1]) : 1000; // face width
+    const ph = binDims ? binDims[2] : 1200;                        // load height
+    const depth   = rack==='driveIn'?6 : rack==='doubleDeep'?2 : 1;
+    const acrossW = 2;
+    const sideGap = 100;
+    const bayW_mm = acrossW*pw + (acrossW+1)*sideGap;
+    const bayD_mm = depth*pl + 50;
+    const levelPitch = Math.max(600, ph + 200);
+    const levels = Math.max(1,
+      Math.floor((Math.min(liftH, clearH*1000) - 800) / levelPitch));
+    return recalcCfg({ ...meta,
+      bayW:bayW_mm, bayD:bayD_mm, levels,
+      locsPerBay: acrossW*levels*depth, tiers:1, orientation:'std',
+      acrossW, acrossD:depth, aisleW:aisleWmm });
 
-    } else if (g.rack==='cantilever') {
-      // Arm depth follows the item depth; level pitch follows item height
-      const iL = binDims ? Math.max(binDims[0], binDims[1]) : 2500;
-      const iH = binDims ? binDims[2] : 400;
-      const levelPitch = Math.max(300, iH + 150);
-      const levels  = Math.max(1, Math.floor((clearH*1000-500)/levelPitch));
-      const bayW_mm = 1500;
-      const bayD_mm = Math.max(1000, iL + 200);
-      const acrossW = Math.max(1, Math.floor(bayW_mm / Math.max(1, (binDims?Math.min(binDims[0],binDims[1]):750) + 50)));
-      return recalcCfg({ id:`${g.rack}|${g.bin}`, ...g, binDims,
-        bayW:bayW_mm, bayD:bayD_mm, levels, locsPerBay:acrossW*levels,
-        acrossW, acrossD:1, tiers:1, orientation:'std', aisleW:3000 });
+  } else if (rack==='cantilever') {
+    const iL = binDims ? Math.max(binDims[0], binDims[1]) : 2500;
+    const iH = binDims ? binDims[2] : 400;
+    const levelPitch = Math.max(300, iH + 150);
+    const levels  = Math.max(1, Math.floor((clearH*1000-500)/levelPitch));
+    const bayW_mm = 1500;
+    const bayD_mm = Math.max(1000, iL + 200);
+    const faceW   = binDims ? Math.min(binDims[0], binDims[1]) : 750;
+    const acrossW = Math.max(1, Math.floor(bayW_mm / (faceW + 50)));
+    return recalcCfg({ ...meta,
+      bayW:bayW_mm, bayD:bayD_mm, levels, locsPerBay:acrossW*levels,
+      acrossW, acrossD:1, tiers:1, orientation:'std', aisleW:3000 });
 
-    } else {
-      // Ground / floor storage — footprint is the bin itself, stacked if height allows
-      const gL = binDims ? Math.max(binDims[0], binDims[1]) : 1200;
-      const gW = binDims ? Math.min(binDims[0], binDims[1]) : 1000;
-      const gH = binDims ? binDims[2] : 1200;
-      const stackLimit = Math.max(1,
-        Math.floor((Math.min(liftH, clearH*1000) - 500) / Math.max(200, gH)));
-      const levels = Math.min(4, stackLimit); // ground stacks capped for safety
-      return recalcCfg({ id:`${g.rack}|${g.bin}`, ...g, binDims,
-        bayW:gW+100, bayD:gL+100, levels, locsPerBay:levels,
-        acrossW:1, acrossD:1, tiers:1, orientation:'std', aisleW:aisleWmm });
-    }
-  });
+  } else {
+    // Ground / floor storage — footprint is the bin itself, stacked if height allows
+    const gL = binDims ? Math.max(binDims[0], binDims[1]) : 1200;
+    const gW = binDims ? Math.min(binDims[0], binDims[1]) : 1000;
+    const gH = binDims ? binDims[2] : 1200;
+    const stackLimit = Math.max(1,
+      Math.floor((Math.min(liftH, clearH*1000) - 500) / Math.max(200, gH)));
+    const levels = Math.min(4, stackLimit);
+    return recalcCfg({ ...meta,
+      bayW:gW+100, bayD:gL+100, levels, locsPerBay:levels,
+      acrossW:1, acrossD:1, tiers:1, orientation:'std', aisleW:aisleWmm });
+  }
 }
 
 // Keep the headline level counts on `design` consistent with the actual rack
@@ -1355,10 +1402,12 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     doubleDeep:2.7,driveIn:2.7,cantilever:1.5,ground:1.2};
 
   // Build rack-type → bayW (m) map from actual rackConfig data
+  var LK=function(cfg){ return cfg.layoutKey || cfg.rack; };
   var rackBayWidthM={};
   (rackConfig||[]).forEach(cfg=>{
-    if(cfg.rack && cfg.bayW && !rackBayWidthM[cfg.rack]){
-      rackBayWidthM[cfg.rack]=parseFloat(cfg.bayW)/1000; // mm → m
+    var k=LK(cfg);
+    if(k && cfg.bayW && !rackBayWidthM[k]){
+      rackBayWidthM[k]=parseFloat(cfg.bayW)/1000; // mm → m
     }
   });
   var RACK_INFO_2D_LOOKUP={
@@ -1366,11 +1415,34 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     doubleDeep: {depth:4.4},driveIn:    {depth:5.5},cantilever:{depth:2.0},ground:{depth:2.4},
   };
   // Order rack types sensibly: manual pick first (near dispatch), then pallet, then bulk
-  var RACK_ORDER=['shelving','liveStorage','selective','doubleDeep','driveIn','cantilever','ground'];
-  // Group rackConfig by rack type
+  var RACK_BASE_ORDER=['shelving','liveStorage','selective','doubleDeep','driveIn','cantilever','ground'];
+  // Expand to one entry per size variant, keeping the base ordering
+  var RACK_ORDER=(function(){
+    var seen={}, ordered=[];
+    RACK_BASE_ORDER.forEach(function(base){
+      (rackConfig||[]).forEach(function(cfg){
+        if(cfg.rack!==base) return;
+        var k=LK(cfg);
+        if(!seen[k]){ seen[k]=1; ordered.push(k); }
+      });
+      if(!seen[base]){ seen[base]=1; ordered.push(base); }
+    });
+    return ordered;
+  })();
+  // Variant label per layout key (for section headings)
+  var rackVariantLabel={};
+  (rackConfig||[]).forEach(function(cfg){
+    var k=LK(cfg);
+    if(cfg.variantCount>1 && !rackVariantLabel[k]){
+      var d=cfg.binDims;
+      rackVariantLabel[k]=cfg.variantLabel+(d?(' '+d[0]+'x'+d[1]+'x'+d[2]):'');
+    }
+  });
+  // Group rackConfig by layout key
   var rackTypeAreas={};
   (rackConfig||[]).forEach(cfg=>{
-    rackTypeAreas[cfg.rack]=(rackTypeAreas[cfg.rack]||0)+(cfg.area||0);
+    var k=LK(cfg);
+    rackTypeAreas[k]=(rackTypeAreas[k]||0)+(cfg.area||0);
   });
   // Fallback from slotted data
   if(!Object.keys(rackTypeAreas).length){
@@ -1387,23 +1459,24 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
 
   // ── HELPER: compute one rack section ────────────────────────────────────────
   var computeSection = function(rt, sectionW) {
-    var totalBaysRt = (rackConfig||[]).filter(c=>c.rack===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
+    var totalBaysRt = (rackConfig||[]).filter(c=>LK(c)===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
     if(!totalBaysRt && !(rackTypeAreas?.[rt])) return null;
-    var rtRi    = (RACK_INFO_2D_LOOKUP?.[rt]) || {depth:2.2};
-    var rtPa    = (rackAisleM?.[rt])||(DEFAULT_AISLE_M?.[rt])||aisleM||1.2;
+    var rtB     = baseRackOf(rt);
+    var rtRi    = (RACK_INFO_2D_LOOKUP?.[rtB]) || {depth:2.2};
+    var rtPa    = (rackAisleM?.[rt])||(DEFAULT_AISLE_M?.[rtB])||aisleM||1.2;
     var rtFaceD = (rackBayDepthM?.[rt]) || rtRi.depth/2 || 1.0;
-    var rtGap   = (rt==="shelving"||rt==="liveStorage")?0.05:0.10;
+    var rtGap   = (rtB==="shelving"||rtB==="liveStorage")?0.05:0.10;
     var rtSlot  = rtFaceD*2 + rtGap + rtPa;
-    var rtBayH  = (rackBayWidthM?.[rt])||(BAY_HEIGHT_M_LOOKUP?.[rt])||0.9;
+    var rtBayH  = (rackBayWidthM?.[rt])||(BAY_HEIGHT_M_LOOKUP?.[rtB])||0.9;
     var rtCross = ({shelving:13,liveStorage:13,selective:27,
-      doubleDeep:27,driveIn:27,cantilever:27,ground:27})[rt] || 13;
+      doubleDeep:27,driveIn:27,cantilever:27,ground:27})[rtB] || 13;
     var rtBays  = totalBaysRt || Math.ceil(((rackTypeAreas?.[rt])||0) / (rtBayH * wW));
-    var rtLayout= computeSectionLayout(rtBays, sectionW, rtBayH, rtSlot, rtCross, rt);
-    return {rt, rtLayout, rtBays, rtSlot, rtPa, rtFaceD, rtGap, rtStyle:(RACK_TYPE_STYLE?.[rt])||{label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'}};
+    var rtLayout= computeSectionLayout(rtBays, sectionW, rtBayH, rtSlot, rtCross, rtB);
+    return {rt, rtLayout, rtBays, rtSlot, rtPa, rtFaceD, rtGap, rtStyle:(RACK_TYPE_STYLE?.[rtB])||{label:rtB,color:'#f8fafc',border:'#e2e8f0',text:'#374151'}};
   };
 
   // ── PASS 1: non-ground sections → derive actualWW ───────────────────────────
-  RACK_ORDER.filter(rt=>rt!=='ground').forEach(rt=>{
+  RACK_ORDER.filter(rt=>baseRackOf(rt)!=='ground').forEach(rt=>{
     var s=computeSection(rt, wW);
     if(!s) return;
     // requiredW EXACTLY matches rackRowsForZone column positions:
@@ -1418,24 +1491,27 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       requiredW: s.rtLayout.nCols * s.rtSlot + 2*s.rtPa + 0.6};  // full pa BOTH sides + margins
   });
   var preLayoutWW = Object.entries(sectionLayouts).reduce(function(mx,kv){
-    if(kv[0]==='ground') return mx;
+    if(baseRackOf(kv[0])==='ground') return mx;
     return Math.max(mx, kv[1].requiredW||0);
   }, 10);  // requiredW already includes 0.6 margins; no extra +0.6 needed
   actualWW = Math.max(10, preLayoutWW);
 
   // ── PASS 2: ground storage uses actualWW for column count ─────────────────
-  if((rackConfig||[]).some(c=>c.rack==='ground') || rackTypeAreas?.['ground']) {
-    var sg = computeSection('ground', actualWW);  // ← uses actualWW, not wW
-    if(sg) sectionLayouts['ground']={...sg.rtLayout, totalBays:sg.rtBays,
+  RACK_ORDER.filter(rt=>baseRackOf(rt)==='ground').forEach(function(rt){
+    if(!((rackConfig||[]).some(c=>LK(c)===rt) || rackTypeAreas?.[rt])) return;
+    var sg = computeSection(rt, actualWW);  // ← uses actualWW, not wW
+    if(sg) sectionLayouts[rt]={...sg.rtLayout, totalBays:sg.rtBays,
       actualHeight:sg.rtLayout.height,
       requiredW: sg.rtLayout.nCols * sg.rtSlot + 2*sg.rtPa + 0.6};  // full pa BOTH sides + margins
-  }
+  });
 
   // ── BUILD zoneRects in RACK_ORDER (now all sectionLayouts are final) ─────
   RACK_ORDER.forEach(rt => {
     var sl=sectionLayouts[rt];
     if(!sl) return;
-    var rtStyle=(RACK_TYPE_STYLE?.[rt])||{label:rt,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
+    var rtBase=baseRackOf(rt);
+    var rtStyle=(RACK_TYPE_STYLE?.[rtBase])||{label:rtBase,color:'#f8fafc',border:'#e2e8f0',text:'#374151'};
+    if(rackVariantLabel[rt]) rtStyle={...rtStyle, label:rtStyle.label+' - '+rackVariantLabel[rt]};
     sectionCrossAisles.push({x:0, y:cur, w:actualWW, h:SECTION_CA_W,
       label: firstRackSection ? 'CROSS AISLE (Staging ↔ Storage)' : `CROSS AISLE`});
     cur += SECTION_CA_W;
@@ -1454,8 +1530,11 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     driveIn:'Drive-In Rack',cantilever:'Cantilever Rack',ground:'Ground Storage'};
   var summaryMap={};
   (rackConfig||[]).forEach(function(cfg){
-    var rt=cfg.rack; if(!rt) return;
-    if(!summaryMap[rt]) summaryMap[rt]={name:RACK_LABELS[rt]||rt,bays:0,locs:0};
+    var rt=LK(cfg); if(!rt) return;
+    if(!summaryMap[rt]) summaryMap[rt]={
+      name:(RACK_LABELS[baseRackOf(rt)]||baseRackOf(rt))
+        +(cfg.variantCount>1?(' - '+cfg.variantLabel):''),
+      bays:0,locs:0};
     summaryMap[rt].bays+=(cfg.baysNeeded||0);
     summaryMap[rt].locs+=(cfg.locs||0);
   });
@@ -1475,7 +1554,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   // but ground storage should only get columns based on what non-ground racks require.
   // This keeps ground storage section height predictable and avoids 22-column sprawl.
   var layoutWW = Object.entries(sectionLayouts).reduce(function(mx, kv){
-    if(kv[0]==='ground') return mx;  // ground does NOT drive warehouse width
+    if(baseRackOf(kv[0])==='ground') return mx;  // ground does NOT drive warehouse width
     return Math.max(mx, kv[1].requiredW||0);
   }, 10);  // requiredW already includes margins
   // actualWW = rack-driven width
@@ -1575,9 +1654,10 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   // Rack aisle width per type: from rackConfig.aisle (user entered) or defaults
   var rackAisleM={};
   (rackConfig||[]).forEach(function(cfg){
-    if(cfg.rack && !rackAisleM[cfg.rack]){
+    var kA=LK(cfg);
+    if(kA && !rackAisleM[kA]){
       var a=parseFloat(cfg.aisle)||0;
-      if(a>0) rackAisleM[cfg.rack]=a/1000; // mm → m
+      if(a>0) rackAisleM[kA]=a/1000; // mm → m
     }
   });
   // Fallback defaults (mm → m)
@@ -1585,8 +1665,9 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     doubleDeep:3.5,driveIn:3.5,cantilever:3.0,ground:4.0};
   var rackBayDepthM={};
   (rackConfig||[]).forEach(function(cfg){
-    if(cfg.rack && cfg.bayD && !rackBayDepthM[cfg.rack])
-      rackBayDepthM[cfg.rack]=parseFloat(cfg.bayD)/1000;
+    var kD=LK(cfg);
+    if(kD && cfg.bayD && !rackBayDepthM[kD])
+      rackBayDepthM[kD]=parseFloat(cfg.bayD)/1000;
   });
   // Default single-face depths (if rackConfig doesn't provide bayD)
   var DEFAULT_FACE_DEPTH={shelving:0.6,liveStorage:0.6,selective:1.1,
@@ -1594,17 +1675,19 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   // Build rack-type → total bays needed from rackConfig
   var rackTypeBays={};
   (rackConfig||[]).forEach(cfg=>{
-    if(cfg.rack) rackTypeBays[cfg.rack]=(rackTypeBays[cfg.rack]||0)+(cfg.baysNeeded||0);
+    var kB=LK(cfg);
+    if(kB) rackTypeBays[kB]=(rackTypeBays[kB]||0)+(cfg.baysNeeded||0);
   });
 
   var rackRowsForZone=(zone)=>{
     var rows=[], crossAisles=[], dimAnnotations=[];
     var dom=zone.rackType||(zone2RackTypes[zone.key]?.[0]?.rack)||'shelving';
-    var ri=(RACK_INFO_2D?.[dom])||(RACK_INFO_2D?.shelving)||{depth:1.0,color:'#dbeafe',stroke:'#3b82f6'};
+    var domB=baseRackOf(dom); // base rack type for static lookup tables
+    var ri=(RACK_INFO_2D?.[domB])||(RACK_INFO_2D?.shelving)||{depth:1.0,color:'#dbeafe',stroke:'#3b82f6'};
     // Picking aisle: user-entered per rack type, else global aisleM, else default
-    var pa=(rackAisleM?.[dom])||(DEFAULT_AISLE_M?.[dom])||aisleM||1.2;
+    var pa=(rackAisleM?.[dom])||(DEFAULT_AISLE_M?.[domB])||aisleM||1.2;
     var colSlot=ri.depth+pa;
-    var bayHm=(rackBayWidthM?.[dom])||(BAY_HEIGHT_M_LOOKUP?.[dom])||0.9;
+    var bayHm=(rackBayWidthM?.[dom])||(BAY_HEIGHT_M_LOOKUP?.[domB])||0.9;
 
     // Column label: A,B,...,Z,AA,AB,...
     var colLabel=(i)=>i<26?String.fromCharCode(65+i)
@@ -1614,19 +1697,19 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     // Always get totalBays from sectionLayouts[dom] first (most reliable source)
     var totalBays=(sectionLayouts?.[dom]?.totalBays)||(sl?.totalBays)||0;
 
-    var faceDepth=(rackBayDepthM?.[dom])||(DEFAULT_FACE_DEPTH?.[dom])||0.6;
-    var backGap=(dom==='shelving'||dom==='liveStorage')?0.05:0.10;
+    var faceDepth=(rackBayDepthM?.[dom])||(DEFAULT_FACE_DEPTH?.[domB])||0.6;
+    var backGap=(domB==='shelving'||domB==='liveStorage')?0.05:0.10;
     var colDepth=faceDepth*2+backGap;
     var actualColSlot=colDepth+pa;
-    var crossInterval=(CROSS_AISLE_INTERVAL?.[dom])||13;
+    var crossInterval=(CROSS_AISLE_INTERVAL?.[domB])||13;
 
     // Maximum columns that fit in warehouse width
     // For column computation: use original wW (not expanded actualWW) so shelving/SPR
     // don't get extra columns because ground storage expanded the warehouse width.
     // Ground storage uses zone.w (= actualWW) to fill the expanded space.
-    var isGround=(dom==='ground');
+    var isGround=(domB==='ground');
     var effectiveW=isGround?zone.w:Math.min(zone.w,wW);
-    var minBpfZone=(MIN_BPF_BY_TYPE?.[dom])||1;  // enforce minimum rows per column
+    var minBpfZone=(MIN_BPF_BY_TYPE?.[domB])||1;  // enforce minimum rows per column
     var maxNcols=Math.max(3, Math.floor(effectiveW/actualColSlot));
     // With minBpf: cap nCols so bpf >= minBpfZone
     var bpfAtMax=Math.max(minBpfZone, totalBays>0?Math.max(1,Math.ceil(totalBays/2/maxNcols)):minBpfZone);
@@ -1737,15 +1820,15 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   {
     var maxNonGroundPa = 0;
     Object.entries(sectionLayouts).forEach(function(kv){
-      if(kv[0]==='ground') return;
+      if(baseRackOf(kv[0])==='ground') return;
       var sl=kv[1];
       // Approximate pa from rtPa stored in sectionLayouts (set via computeSection)
-      var approxPa=(rackAisleM?.[kv[0]])||(DEFAULT_AISLE_M?.[kv[0]])||aisleM||1.2;
+      var approxPa=(rackAisleM?.[kv[0]])||(DEFAULT_AISLE_M?.[baseRackOf(kv[0])])||aisleM||1.2;
       if(approxPa>maxNonGroundPa) maxNonGroundPa=approxPa;
     });
     var maxRightEdge=0;
     allRackRows.forEach(function(r){
-      if(r.dom==='ground') return;
+      if(baseRackOf(r.dom)==='ground') return;
       var re=r.x+r.w;
       if(re>maxRightEdge) maxRightEdge=re;
     });
@@ -3479,23 +3562,21 @@ function exportExcel(analysis, design, params, rackConfig, binOverrides) {
   XLSX.utils.book_append_sheet(wb, ws([
     ['BIN & PALLET SCHEDULE'],[],
     ['Container Type','Dimensions','Locations Needed','Units (Bins/Pallets) Required','Notes'],
-    ...Object.values(binGroups).map(b => {
-      const sc = xLocScales[b.bin];
-      const nLocs = sc ? Math.max(1, Math.round(b.locs*sc)) : b.locs;
-      return [
-        b.binName,
-        dimsOf(b.bin),
-        nLocs,
-        nLocs, // 1 bin per location
-        b.bin==='XL'?'Standard pallet 1.2×1.2m assumed'
-          :b.bin==='LONG'?'Size per item — cantilever slot'
-          :'One container per location',
-      ];
+    ...Object.values(binGroups).flatMap(b => {
+      const vs = binVariantsFor(b.bin, binOverrides, b.locs);
+      return vs.map(v => [
+        b.binName + (vs.length>1 ? (' - ' + v.label) : ''),
+        v.phys ? (v.phys[0]+' x '+v.phys[1]+' x '+v.phys[2]+' mm') : dimsOf(b.bin),
+        v.locs,
+        v.locs, // 1 container per location
+        b.bin==='LONG' ? 'Size per item - cantilever slot'
+          : (vs.length>1 ? 'Size variant of ' + b.bin : 'One container per location'),
+      ]);
     }),
     [],
     ['TOTAL CONTAINERS REQUIRED','',
-      Object.values(binGroups).reduce((s,b)=>s+(xLocScales[b.bin]?Math.round(b.locs*xLocScales[b.bin]):b.locs),0),
-      Object.values(binGroups).reduce((s,b)=>s+(xLocScales[b.bin]?Math.round(b.locs*xLocScales[b.bin]):b.locs),0),''],
+      Object.values(binGroups).reduce((s,b)=>s+binVariantsFor(b.bin,binOverrides,b.locs).reduce((t,v)=>t+v.locs,0),0),
+      Object.values(binGroups).reduce((s,b)=>s+binVariantsFor(b.bin,binOverrides,b.locs).reduce((t,v)=>t+v.locs,0),0),''],
   ],[28,22,18,24,38]),'5. Bin & Pallet Schedule');
 
   // Sheet 6: Area Summary
@@ -4636,10 +4717,10 @@ export default function WarehouseDesignerTool() {
       const seeded = {};
       Object.keys(a?.binSummary || {}).forEach(k => {
         const phys = BIN_CATALOG[k] ? BIN_CATALOG[k].phys : null;
-        seeded[k] = {
+        seeded[k] = [{
           L: phys ? phys[0] : '', W: phys ? phys[1] : '', H: phys ? phys[2] : '',
-          locs: a.binSummary[k].locs || 0,
-        };
+          locs: a.binSummary[k].locs || 0, label: 'Size 1',
+        }];
       });
       setBinOverrides(seeded);
       setBinEditsDirty(false);
@@ -4697,10 +4778,43 @@ export default function WarehouseDesignerTool() {
   };
 
   // ── Bin / Pallet editor handlers ────────────────────────────────────────
-  const updateBinField = (binKey, field, val) => {
+  const updateBinField = (binKey, idx, field, val) => {
     setBinOverrides(prev => {
       const next = { ...(prev || {}) };
-      next[binKey] = { ...(next[binKey] || {}), [field]: val };
+      const arr  = (next[binKey] || []).slice();
+      arr[idx] = { ...(arr[idx] || {}), [field]: val };
+      next[binKey] = arr;
+      return next;
+    });
+    setBinEditsDirty(true);
+  };
+
+  // Add another size for this bin band, splitting the remaining quantity
+  const addBinVariant = (binKey) => {
+    setBinOverrides(prev => {
+      const next = { ...(prev || {}) };
+      const arr  = (next[binKey] || []).slice();
+      if (arr.length >= MAX_BIN_VARIANTS) return prev;
+      const src  = arr[arr.length - 1] || {};
+      const half = Math.max(1, Math.floor((parseFloat(src.locs) || 2) / 2));
+      if (arr.length) arr[arr.length - 1] = { ...src, locs: half };
+      arr.push({
+        L: src.L || '', W: src.W || '', H: src.H || '',
+        locs: half, label: 'Size ' + (arr.length + 1),
+      });
+      next[binKey] = arr;
+      return next;
+    });
+    setBinEditsDirty(true);
+  };
+
+  const removeBinVariant = (binKey, idx) => {
+    setBinOverrides(prev => {
+      const next = { ...(prev || {}) };
+      const arr  = (next[binKey] || []).slice();
+      if (arr.length <= 1) return prev;
+      arr.splice(idx, 1);
+      next[binKey] = arr.map((v, i) => ({ ...v, label: v.label || ('Size ' + (i + 1)) }));
       return next;
     });
     setBinEditsDirty(true);
@@ -4722,10 +4836,10 @@ export default function WarehouseDesignerTool() {
     const seeded = {};
     Object.keys(analysis?.binSummary || {}).forEach(k => {
       const phys = BIN_CATALOG[k] ? BIN_CATALOG[k].phys : null;
-      seeded[k] = {
+      seeded[k] = [{
         L: phys ? phys[0] : '', W: phys ? phys[1] : '', H: phys ? phys[2] : '',
-        locs: analysis.binSummary[k].locs || 0,
-      };
+        locs: analysis.binSummary[k].locs || 0, label: 'Size 1',
+      }];
     });
     setBinOverrides(seeded);
     const rc = generateRackConfig(analysis, params);
@@ -6656,7 +6770,8 @@ export default function WarehouseDesignerTool() {
                       </span>
                     </div>
                     <div style={{fontSize:'11px',color:'#6b7280',marginTop:'2px'}}>
-                      Change dimensions or the number of bins/pallets, then re-generate the rack config.
+                      Define up to 3 sizes per container type with their own quantities -
+                      each becomes a separate rack configuration and layout block.
                     </div>
                   </div>
                   <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
@@ -6676,112 +6791,146 @@ export default function WarehouseDesignerTool() {
                 {binEditsOpen && (
                   <div style={{marginTop:'12px'}}>
                     <div style={{overflowX:'auto'}}>
-                      <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
-                        <thead>
-                          <tr style={{background:'#f8fafc'}}>
-                            {['Bin','Container Type','Length (mm)','Width (mm)','Height (mm)','No. of Locations','Volume'].map(h=>(
-                              <th key={h} style={{padding:'7px 10px',textAlign:'left',
-                                fontSize:'10px',fontWeight:'700',color:'#6b7280',
-                                textTransform:'uppercase',borderBottom:'1px solid #e2e8f0',
-                                whiteSpace:'nowrap'}}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Object.entries(analysis?.binSummary||{})
-                            .sort((a,b)=>['XS','S','M','L','XL','LONG'].indexOf(a[0])
-                                        -['XS','S','M','L','XL','LONG'].indexOf(b[0]))
-                            .map(([band,info])=>{
-                              const ov   = binOverrides[band] || {};
-                              const base = BIN_CATALOG[band] ? BIN_CATALOG[band].phys : null;
-                              const isPallet = band==='XL' || band==='L';
-                              const dimLocked = !base; // LONG has no fixed dims
-                              const bL = parseFloat(ov.L)||0;
-                              const bW = parseFloat(ov.W)||0;
-                              const bH = parseFloat(ov.H)||0;
-                              const volM3   = (bL*bW*bH)/1e9;
-                              const baseVol = base ? (base[0]*base[1]*base[2])/1e9 : 0;
-                              const volPct  = baseVol>0 ? Math.round(((volM3-baseVol)/baseVol)*100) : 0;
-                              const locsNow  = parseFloat(ov.locs)||0;
-                              const locsBase = info.locs||0;
-                              const locsDiff = locsNow - locsBase;
-                              const COLORS={XS:['#f1f5f9','#64748b'],S:['#eff6ff','#1d4ed8'],
-                                M:['#f5f3ff','#7c3aed'],L:['#f0fdf4','#166534'],
-                                XL:['#fef9c3','#854d0e'],LONG:['#fdf4ff','#9333ea']};
-                              const [bg,col]=COLORS[band]||['#f8fafc','#374151'];
-                              const inputS = {border:'1px solid #e2e8f0',borderRadius:'6px',
-                                padding:'5px 7px',fontSize:'12px',width:'82px',
-                                boxSizing:'border-box',fontFamily:'inherit',outline:'none'};
-                              return (
-                                <tr key={band} style={{borderBottom:'1px solid #f1f5f9'}}>
-                                  <td style={{padding:'7px 10px'}}>
-                                    <span style={{background:bg,color:col,fontWeight:'800',
-                                      fontSize:'12px',borderRadius:'6px',padding:'3px 9px'}}>
-                                      {band}
-                                    </span>
-                                  </td>
-                                  <td style={{padding:'7px 10px',color:'#374151'}}>
-                                    {info.name}
-                                    <span style={{marginLeft:'6px',fontSize:'10px',fontWeight:'700',
-                                      color:isPallet?'#854d0e':'#1d4ed8',
-                                      background:isPallet?'#fef9c3':'#eff6ff',
-                                      borderRadius:'99px',padding:'1px 7px'}}>
-                                      {isPallet?'PALLET':'BIN'}
-                                    </span>
-                                  </td>
-                                  <td style={{padding:'7px 10px'}}>
-                                    <input type="number" min="50" step="10" disabled={dimLocked}
-                                      value={ov.L||''}
-                                      onChange={e=>updateBinField(band,'L',e.target.value)}
-                                      style={{...inputS,background:dimLocked?'#f8fafc':'#fff'}}/>
-                                  </td>
-                                  <td style={{padding:'7px 10px'}}>
-                                    <input type="number" min="50" step="10" disabled={dimLocked}
-                                      value={ov.W||''}
-                                      onChange={e=>updateBinField(band,'W',e.target.value)}
-                                      style={{...inputS,background:dimLocked?'#f8fafc':'#fff'}}/>
-                                  </td>
-                                  <td style={{padding:'7px 10px'}}>
-                                    <input type="number" min="50" step="10" disabled={dimLocked}
-                                      value={ov.H||''}
-                                      onChange={e=>updateBinField(band,'H',e.target.value)}
-                                      style={{...inputS,background:dimLocked?'#f8fafc':'#fff'}}/>
-                                  </td>
-                                  <td style={{padding:'7px 10px'}}>
-                                    <input type="number" min="1" step="1"
-                                      value={ov.locs||''}
-                                      onChange={e=>updateBinField(band,'locs',e.target.value)}
-                                      style={{...inputS,width:'96px'}}/>
-                                    {locsDiff!==0 && (
-                                      <div style={{fontSize:'10px',fontWeight:'700',marginTop:'2px',
-                                        color:locsDiff>0?'#166534':'#be185d'}}>
-                                        {locsDiff>0?'+':''}{locsDiff.toLocaleString()} vs system
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td style={{padding:'7px 10px',color:'#6b7280',whiteSpace:'nowrap'}}>
-                                    {volM3>0?volM3.toFixed(3):'—'} m³
-                                    {volPct!==0 && (
-                                      <div style={{fontSize:'10px',fontWeight:'700',
-                                        color:volPct>0?'#d97706':'#166534'}}>
-                                        {volPct>0?'+':''}{volPct}% vs default
-                                      </div>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                        </tbody>
-                      </table>
+                        <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
+                          <thead>
+                            <tr style={{background:'#f8fafc'}}>
+                              {['Bin','Container Type','Size','Length (mm)','Width (mm)','Height (mm)','Qty (locations)','Volume',''].map((h,hi)=>(
+                                <th key={hi} style={{padding:'7px 10px',textAlign:'left',
+                                  fontSize:'10px',fontWeight:'700',color:'#6b7280',
+                                  textTransform:'uppercase',borderBottom:'1px solid #e2e8f0',
+                                  whiteSpace:'nowrap'}}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {Object.entries(analysis?.binSummary||{})
+                              .sort((a,b)=>['XS','S','M','L','XL','LONG'].indexOf(a[0])
+                                          -['XS','S','M','L','XL','LONG'].indexOf(b[0]))
+                              .map(([band,info])=>{
+                                const variants = binOverrides[band] || [];
+                                const base = BIN_CATALOG[band] ? BIN_CATALOG[band].phys : null;
+                                const isPallet  = band==='XL' || band==='L';
+                                const dimLocked = !base;
+                                const COLORS={XS:['#f1f5f9','#64748b'],S:['#eff6ff','#1d4ed8'],
+                                  M:['#f5f3ff','#7c3aed'],L:['#f0fdf4','#166534'],
+                                  XL:['#fef9c3','#854d0e'],LONG:['#fdf4ff','#9333ea']};
+                                const [bg,col]=COLORS[band]||['#f8fafc','#374151'];
+                                const inputS={border:'1px solid #e2e8f0',borderRadius:'6px',
+                                  padding:'5px 7px',fontSize:'12px',width:'82px',
+                                  boxSizing:'border-box',fontFamily:'inherit',outline:'none'};
+                                const totalQty = variants.reduce((s2,v)=>s2+(parseFloat(v.locs)||0),0);
+                                const baseQty  = info.locs||0;
+                                return variants.map((ov,vi)=>{
+                                  const bL=parseFloat(ov.L)||0;
+                                  const bW=parseFloat(ov.W)||0;
+                                  const bH=parseFloat(ov.H)||0;
+                                  const volM3=(bL*bW*bH)/1e9;
+                                  const baseVol=base?(base[0]*base[1]*base[2])/1e9:0;
+                                  const volPct=baseVol>0?Math.round(((volM3-baseVol)/baseVol)*100):0;
+                                  const isFirst=vi===0;
+                                  return (
+                                    <tr key={band+'-'+vi} style={{
+                                      borderBottom: vi===variants.length-1
+                                        ? '1px solid #e2e8f0' : '1px dashed #f1f5f9'}}>
+                                      <td style={{padding:'7px 10px',verticalAlign:'top'}}>
+                                        {isFirst && (
+                                          <span style={{background:bg,color:col,fontWeight:'800',
+                                            fontSize:'12px',borderRadius:'6px',padding:'3px 9px'}}>
+                                            {band}
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td style={{padding:'7px 10px',color:'#374151',verticalAlign:'top'}}>
+                                        {isFirst && (<>
+                                          {info.name}
+                                          <span style={{marginLeft:'6px',fontSize:'10px',fontWeight:'700',
+                                            color:isPallet?'#854d0e':'#1d4ed8',
+                                            background:isPallet?'#fef9c3':'#eff6ff',
+                                            borderRadius:'99px',padding:'1px 7px'}}>
+                                            {isPallet?'PALLET':'BIN'}
+                                          </span>
+                                          {totalQty!==baseQty && (
+                                            <div style={{fontSize:'10px',fontWeight:'700',marginTop:'3px',
+                                              color:totalQty>baseQty?'#166534':'#be185d'}}>
+                                              total {totalQty.toLocaleString()} vs {baseQty.toLocaleString()} system
+                                            </div>
+                                          )}
+                                        </>)}
+                                      </td>
+                                      <td style={{padding:'7px 10px'}}>
+                                        <input type="text" value={ov.label||''}
+                                          placeholder={'Size '+(vi+1)}
+                                          onChange={e=>updateBinField(band,vi,'label',e.target.value)}
+                                          style={{...inputS,width:'88px',fontWeight:'700',color:col}}/>
+                                      </td>
+                                      <td style={{padding:'7px 10px'}}>
+                                        <input type="number" min="50" step="10" disabled={dimLocked}
+                                          value={ov.L||''}
+                                          onChange={e=>updateBinField(band,vi,'L',e.target.value)}
+                                          style={{...inputS,background:dimLocked?'#f8fafc':'#fff'}}/>
+                                      </td>
+                                      <td style={{padding:'7px 10px'}}>
+                                        <input type="number" min="50" step="10" disabled={dimLocked}
+                                          value={ov.W||''}
+                                          onChange={e=>updateBinField(band,vi,'W',e.target.value)}
+                                          style={{...inputS,background:dimLocked?'#f8fafc':'#fff'}}/>
+                                      </td>
+                                      <td style={{padding:'7px 10px'}}>
+                                        <input type="number" min="50" step="10" disabled={dimLocked}
+                                          value={ov.H||''}
+                                          onChange={e=>updateBinField(band,vi,'H',e.target.value)}
+                                          style={{...inputS,background:dimLocked?'#f8fafc':'#fff'}}/>
+                                      </td>
+                                      <td style={{padding:'7px 10px'}}>
+                                        <input type="number" min="1" step="1"
+                                          value={ov.locs||''}
+                                          onChange={e=>updateBinField(band,vi,'locs',e.target.value)}
+                                          style={{...inputS,width:'96px'}}/>
+                                      </td>
+                                      <td style={{padding:'7px 10px',color:'#6b7280',whiteSpace:'nowrap'}}>
+                                        {volM3>0?volM3.toFixed(3):'-'} m³
+                                        {volPct!==0 && (
+                                          <div style={{fontSize:'10px',fontWeight:'700',
+                                            color:volPct>0?'#d97706':'#166534'}}>
+                                            {volPct>0?'+':''}{volPct}% vs default
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td style={{padding:'7px 10px',whiteSpace:'nowrap'}}>
+                                        {variants.length>1 && (
+                                          <button onClick={()=>removeBinVariant(band,vi)}
+                                            title="Remove this size"
+                                            style={{border:'1px solid #fecdd3',background:'#fff1f2',
+                                              color:'#be185d',borderRadius:'6px',padding:'3px 8px',
+                                              fontSize:'11px',fontWeight:'700',cursor:'pointer',
+                                              fontFamily:'inherit'}}>×</button>
+                                        )}
+                                        {isFirst && variants.length<MAX_BIN_VARIANTS && !dimLocked && (
+                                          <button onClick={()=>addBinVariant(band)}
+                                            title="Add another size for this bin"
+                                            style={{marginLeft:'4px',border:'1px dashed #c4b5fd',
+                                              background:'#f5f3ff',color:'#7c3aed',borderRadius:'6px',
+                                              padding:'3px 8px',fontSize:'11px',fontWeight:'700',
+                                              cursor:'pointer',fontFamily:'inherit'}}>+ size</button>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                });
+                              })}
+                          </tbody>
+                        </table>
                     </div>
 
                     <div style={{background:'#eff6ff',border:'1px solid #93c5fd',
                       borderRadius:'8px',padding:'8px 12px',fontSize:'11px',
                       color:'#1d4ed8',marginTop:'10px'}}>
-                      <strong>How this works:</strong> larger bins hold more stock per location but
-                      fit fewer per bay. Changing the location count scales the bays and floor area
-                      for that bin type. Click <strong>Apply</strong> to rebuild the rack
-                      configuration and warehouse size from your edits.
+                      <strong>How this works:</strong> each size becomes its own rack
+                      configuration and its own block in the floor plan, sized from the
+                      dimensions you enter. Use <strong>+ size</strong> to define up to
+                      {' '}{MAX_BIN_VARIANTS} different sizes per container type and split the
+                      quantity between them. Click <strong>Apply</strong> to rebuild the rack
+                      configuration and warehouse layout.
                     </div>
 
                     <div style={{display:'flex',gap:'8px',marginTop:'10px'}}>
