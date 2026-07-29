@@ -2870,6 +2870,8 @@ function exportDXF(analysis, design, params, rackConfig) {
     ['RACKS_DRIVEIN',    8],
     ['RACKS_CANTILEVER', 6],
     ['RACKS_GROUND',    30],
+    ['BAY_OUTLINE',    253],   // light grey — individual bay divisions
+    ['BAY_NUMBER',       7],   // bay numbering text (turn off to declutter)
     ['CROSS_AISLE',     52],
     ['SECTION',         42],
     ['STAGING',          3],
@@ -2952,10 +2954,41 @@ function exportDXF(analysis, design, params, rackConfig) {
     if (z.label) txt('TEXT', z.x+0.4, z.y+0.9, 0.55, z.label);
   });
 
-  // ── RACK ROWS (exactly as drawn) ──────────────────────────────────────────
-  (fp.allRackRows||[]).forEach(r => {
-    rect(RACK_LAYER[baseRackOf(r.dom)] || 'RACKS_SHELVING',
-         r.x, r.y, r.x+r.w, r.y+r.h);
+  // ── RACK ROWS — ONE POLYLINE PER BAY ──────────────────────────────────────
+  // Each row from the layout is a column segment holding bayCount bays stacked
+  // along Y. Emit every bay as its own closed polyline so the CAD file is at
+  // bay level, plus the column outline on its own layer for the overall frame.
+  const rows = fp.allRackRows || [];
+  let totalBays = 0;
+  rows.forEach(r => { totalBays += Math.max(1, parseInt(r.bayCount)||1); });
+  // Bay numbers are useful but explode file size on very large plans
+  const wantBayNumbers = totalBays <= 12000;
+
+  rows.forEach(r => {
+    const layer  = RACK_LAYER[baseRackOf(r.dom)] || 'RACKS_SHELVING';
+    const nBays  = Math.max(1, parseInt(r.bayCount)||1);
+    const rowTop = r.y, rowBot = r.y + r.h;
+    // Prefer the layout's real bay pitch; fall back to an even split
+    let bh = parseFloat(r.bayHm);
+    if (!(bh > 0) || bh > r.h) bh = r.h / nBays;
+
+    // Column outline (the frame that used to be the only entity)
+    rect('BAY_OUTLINE', r.x, rowTop, r.x + r.w, rowBot);
+
+    for (let k = 0; k < nBays; k++) {
+      const y1 = rowTop + k * bh;
+      let   y2 = y1 + bh;
+      if (k === nBays - 1 || y2 > rowBot) y2 = rowBot;  // last bay absorbs rounding
+      if (y2 - y1 < 0.02) break;
+      rect(layer, r.x, y1, r.x + r.w, y2);
+
+      if (wantBayNumbers && r.bayStart != null) {
+        const th = Math.min(0.32, Math.max(0.12, Math.min(bh, r.w) * 0.34));
+        txt('BAY_NUMBER', r.x + r.w/2, (y1 + y2)/2 + th*0.35, th,
+            String(r.bayStart + k), 1);
+      }
+      if (y2 >= rowBot - 0.001) break;
+    }
   });
 
   // ── AISLES ────────────────────────────────────────────────────────────────
@@ -3007,6 +3040,7 @@ function exportDXF(analysis, design, params, rackConfig) {
     'Envelope: ' + WW.toFixed(2) + ' m x ' + WL.toFixed(2) + ' m',
     'Gross area: ' + Math.round(WW*WL) + ' sq m',
     'Rack area: ' + rackArea.toFixed(1) + ' sq m',
+    'Bays drawn: ' + totalBays + (wantBayNumbers ? ' (numbered)' : ' (numbers omitted - too many)'),
     'Clear height: ' + (params.clearH||'-') + ' m',
     'Aisle width: ' + (params.aisleW||'-') + ' m',
     'Units: METRES (1 unit = 1 m)',
