@@ -39,19 +39,27 @@ function baseBinOf(key) {
 // pipeline off binSummary. Returns the originals when nothing is multi-size.
 function expandBinVariants(analysis, binOverrides) {
   const bs = (analysis && analysis.binSummary) || {};
-  let multi = false;
+  // Rebuild when any band has multiple sizes OR has been zeroed out, so the
+  // returned summary always reflects the user's edits.
+  // Any explicit override makes the rebuild authoritative: quantities, extra
+  // sizes and zero-exclusions all land in the returned summary, so no caller
+  // has to re-derive them from scale factors.
+  let needs = false;
   Object.keys(bs).forEach(function(k){
     const a = binOverrides ? binOverrides[k] : null;
-    if (Array.isArray(a) && a.length > 1) multi = true;
+    if (Array.isArray(a) && a.length) needs = true;
   });
-  if (!multi) return { analysis, binOverrides };
+  if (!needs) return { analysis, binOverrides };
 
   const bs2 = {}, ov2 = {};
   Object.keys(bs).forEach(function(k){
     const vs = binVariantsFor(k, binOverrides, bs[k].locs || 0);
-    if (vs.length <= 1) {
-      bs2[k] = bs[k];
-      if (binOverrides && binOverrides[k]) ov2[k] = binOverrides[k];
+    if (!vs.length) return;                       // zeroed out -> drop the band
+    if (vs.length === 1) {
+      const v0 = vs[0];
+      bs2[k] = { ...bs[k], locs: v0.locs };       // honour the edited quantity
+      ov2[k] = [{ L:v0.phys?v0.phys[0]:'', W:v0.phys?v0.phys[1]:'',
+                  H:v0.phys?v0.phys[2]:'', locs:v0.locs, label:v0.label }];
       return;
     }
     vs.forEach(function(v, i){
@@ -84,7 +92,7 @@ function binVariantsFor(binKey, binOverrides, fallbackLocs) {
       const W = parseFloat(ov.W) || (base ? base[1] : 0);
       const H = parseFloat(ov.H) || (base ? base[2] : 0);
       const n = parseFloat(ov.locs) || 0;
-      if (n <= 0) return;
+      if (n <= 0) return;   // quantity 0 means "exclude this size"
       out.push({
         idx: i,
         label: ov.label || ('Size ' + (i + 1)),
@@ -92,8 +100,12 @@ function binVariantsFor(binKey, binOverrides, fallbackLocs) {
         locs: n,
       });
     });
-    if (out.length) return out;
+    // An explicit override is authoritative. If the user zeroed every size we
+    // must return an EMPTY list so the band is dropped — falling back to the
+    // system quantity here would silently ignore the edit.
+    return out;
   }
+  // No override defined for this band at all -> use the system-generated figure
   return [{ idx:0, label:'Size 1', phys:base, locs: fallbackLocs || 0 }];
 }
 
@@ -110,12 +122,13 @@ function binLocScales(analysis, binOverrides) {
   if (!binOverrides) return scales;
   Object.keys(binOverrides).forEach(function(k){
     const arr = binOverrides[k];
-    if (!Array.isArray(arr)) return;
+    if (!Array.isArray(arr) || !arr.length) return;
     let want = 0;
     arr.forEach(function(v){ want += parseFloat(v.locs) || 0; });
     const orig = (analysis && analysis.binSummary && analysis.binSummary[k])
       ? (analysis.binSummary[k].locs || 0) : 0;
-    if (want > 0 && orig > 0) scales[k] = want / orig;
+    // Record the scale even when it is 0 — that means "exclude this band".
+    if (orig > 0) scales[k] = want / orig;
   });
   return scales;
 }
@@ -4019,7 +4032,8 @@ function calcForwardReserve(analysis, forwardRacks, reserveRacks, forwardDays, p
     const [bL,bW,bH]=ph;
     const frRaw=binInfo.locs||0;
     const frSc=frLocScales[binKey];
-    const totalLocs=frSc?Math.max(1,Math.round(frRaw*frSc)):frRaw;
+    const totalLocs = (frSc===undefined) ? frRaw
+      : (frSc<=0 ? 0 : Math.max(1, Math.round(frRaw*frSc)));
     if(!totalLocs) return;
 
     // Estimate forward locations from slotted velocity data
@@ -4334,7 +4348,9 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params, binOverri
     }
     const rawLocs=binInfo.locs||0;
     const uSc=uLocScales[binKey];
-    const totalLocs=uSc?Math.max(1,Math.round(rawLocs*uSc)):rawLocs;
+    // uSc may legitimately be 0 (band excluded) — test for presence, not truthiness
+    const totalLocs = (uSc===undefined) ? rawLocs
+      : (uSc<=0 ? 0 : Math.max(1, Math.round(rawLocs*uSc)));
     if(!totalLocs) return;
 
     const isLongBin = longBins.has(binKey) || binKey==='LONG';
@@ -4656,6 +4672,7 @@ export default function WarehouseDesignerTool() {
   const [binOverrides,  setBinOverrides]  = useState(null); // {XS:{L,W,H,locs}, ...}
   const [binEditsOpen,  setBinEditsOpen]  = useState(true);
   const [binEditsDirty, setBinEditsDirty] = useState(false);
+  const [binEditsError, setBinEditsError] = useState('');
   const [viewMode3D, setViewMode3D] = useState('3d'); // '2d' | '3d'
   const [udViewMode,  setUdViewMode]  = useState('2d'); // user defined — default 2D (no WebGL risk)
   const [planZoom,    setPlanZoom]    = useState(1);    // floor plan zoom level
@@ -4961,11 +4978,23 @@ export default function WarehouseDesignerTool() {
   // Re-run rack generation using the edited bin sizes / counts
   const applyBinEdits = () => {
     if (!analysis) return;
+    // Guard: at least one container must have a non-zero quantity
+    let totalWanted = 0;
+    Object.keys(analysis?.binSummary||{}).forEach(k=>{
+      binVariantsFor(k, binOverrides, analysis.binSummary[k].locs||0)
+        .forEach(v=>{ totalWanted += v.locs||0; });
+    });
+    if (totalWanted <= 0) {
+      setBinEditsError('Every container quantity is 0 — set a quantity for at least one bin or pallet size.');
+      return false;
+    }
+    setBinEditsError('');
     const rc = generateRackConfig(analysis, params, binOverrides);
     setRackConfig(rc);
     setDesign(syncDesignLevels(calcWarehouseSize(analysis, params, rackAreasFromConfig(rc)), rc));
     setConfigConfirmed(false);
     setBinEditsDirty(false);
+    return true;
   };
 
   // Restore every bin back to the system-generated values
@@ -4980,6 +5009,7 @@ export default function WarehouseDesignerTool() {
       }];
     });
     setBinOverrides(seeded);
+    setBinEditsError('');
     const rc = generateRackConfig(analysis, params);
     setRackConfig(rc);
     setDesign(syncDesignLevels(calcWarehouseSize(analysis, params, rackAreasFromConfig(rc)), rc));
@@ -5605,14 +5635,18 @@ export default function WarehouseDesignerTool() {
                                   const inS={border:'1px solid #e2e8f0',borderRadius:'5px',
                                     padding:'4px 6px',fontSize:'11px',width:'66px',
                                     boxSizing:'border-box',fontFamily:'inherit',outline:'none'};
+                                  const bandQty=variants.reduce((s2,v)=>s2+(parseFloat(v.locs)||0),0);
                                   return variants.map((ov,vi)=>{
                                     const bL=parseFloat(ov.L)||0;
                                     const bW=parseFloat(ov.W)||0;
                                     const bH=parseFloat(ov.H)||0;
                                     const vol=(bL*bW*bH)/1e9;
+                                    const excluded=(parseFloat(ov.locs)||0)<=0;
                                     return (
                                       <tr key={band+'-'+vi} style={{borderBottom:
-                                        vi===variants.length-1?'1px solid #e2e8f0':'1px dashed #f1f5f9'}}>
+                                        vi===variants.length-1?'1px solid #e2e8f0':'1px dashed #f1f5f9',
+                                        background:excluded?'#fafafa':'transparent',
+                                        opacity:excluded?0.55:1}}>
                                         <td style={{padding:'5px 7px',verticalAlign:'top'}}>
                                           {vi===0&&(<>
                                             <span style={{background:bg,color:col,fontWeight:'800',
@@ -5620,6 +5654,10 @@ export default function WarehouseDesignerTool() {
                                             <div style={{fontSize:'9px',color:'#9ca3af',marginTop:'2px'}}>
                                               {info.name}
                                             </div>
+                                            {bandQty<=0&&(
+                                              <div style={{fontSize:'9px',fontWeight:'700',color:'#be185d',
+                                                marginTop:'2px'}}>EXCLUDED</div>
+                                            )}
                                           </>)}
                                         </td>
                                         <td style={{padding:'5px 7px'}}>
@@ -5647,10 +5685,15 @@ export default function WarehouseDesignerTool() {
                                             style={{...inS,background:dimLocked?'#f8fafc':'#fff'}}/>
                                         </td>
                                         <td style={{padding:'5px 7px'}}>
-                                          <input type="number" min="1" step="1"
-                                            value={ov.locs||''}
+                                          <input type="number" min="0" step="1"
+                                            value={ov.locs===0?'0':(ov.locs||'')}
                                             onChange={e=>updateBinField(band,vi,'locs',e.target.value)}
-                                            style={{...inS,width:'78px'}}/>
+                                            title="Set 0 to exclude this size from the design"
+                                            style={{...inS,width:'78px',
+                                              borderColor:excluded?'#fecdd3':'#e2e8f0',
+                                              background:excluded?'#fff1f2':'#fff',
+                                              color:excluded?'#be185d':'inherit',
+                                              fontWeight:excluded?'700':'400'}}/>
                                         </td>
                                         <td style={{padding:'5px 7px',color:'#6b7280',whiteSpace:'nowrap',fontSize:'10px'}}>
                                           {vol>0?vol.toFixed(3):'-'}
@@ -5678,6 +5721,17 @@ export default function WarehouseDesignerTool() {
                             </tbody>
                           </table>
                         </div>
+                        <div style={{fontSize:'10px',color:'#6b7280',marginTop:'6px'}}>
+                          Set a quantity to <strong>0</strong> to exclude that container size
+                          from the rack design entirely.
+                        </div>
+                        {binEditsError&&(
+                          <div style={{fontSize:'10px',fontWeight:'700',color:'#be185d',
+                            background:'#fff1f2',border:'1px solid #fecdd3',borderRadius:'6px',
+                            padding:'5px 8px',marginTop:'8px'}}>
+                            ⚠ {binEditsError}
+                          </div>
+                        )}
                         {binEditsDirty&&(
                           <div style={{fontSize:'10px',fontWeight:'700',color:'#d97706',
                             background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'6px',
@@ -5694,7 +5748,7 @@ export default function WarehouseDesignerTool() {
                       </div>
                     )}
 
-                    <button onClick={()=>{ applyBinEdits(); setUdStep(2); }}
+                    <button onClick={()=>{ if(applyBinEdits()!==false) setUdStep(2); }}
                       style={{width:'100%',padding:'10px',borderRadius:'9px',cursor:'pointer',
                         fontFamily:'inherit',fontSize:'13px',fontWeight:'700',border:'none',
                         background:'linear-gradient(135deg,#7c3aed,#6d28d9)',color:'#fff'}}>
