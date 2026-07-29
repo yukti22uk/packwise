@@ -5,7 +5,6 @@
 // Step 4: Inventory data (current stock)
 // Outputs: SKU slotting, rack recommendations, warehouse sizing, SVG floor plan
 import { useState, useEffect, useRef, useMemo } from 'react';
-import * as THREE from 'three';
 import * as XLSX from 'xlsx';
 import PptxGenJS from 'pptxgenjs';
 import { S } from '../components/styles.jsx';
@@ -1994,7 +1993,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   };
 }
 
-function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, zoom=1,
+function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false,
   measureOn=false, measurePts=[], measurements=[], onMeasurePoint, snapOn=true }) {
   if (!design?.wW || !design?.wL) return null;
 
@@ -2088,7 +2087,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
   const mDist = (a,b) => Math.sqrt(Math.pow(b.x-a.x,2) + Math.pow(b.y-a.y,2));
 
   return (
-    <svg width={SVG_W*zoom} height={SVG_H*zoom}
+    <svg width={SVG_W} height={SVG_H}
       viewBox={`0 0 ${SVG_W} ${SVG_H}`}
       id={fullscreen?'fs-plan-svg':undefined}
       onClick={handleMeasureClick}
@@ -2824,842 +2823,165 @@ function downloadRackLocations(cfg, analysis) {
 }
 
 // ─── 3D ROTATABLE WAREHOUSE MODEL (Three.js) ────────────────────────────────
-function Warehouse3DModel({ analysis, design, params, rackConfig }) {
-  const mountRef    = useRef(null);
-  const cleanupRef  = useRef(null);
-
-  useEffect(() => {
-    if (!mountRef.current || !design) return;
-    const {
-      wW, wL, zoneAreas={}, receivingArea=80, dispatchArea=80,
-      mheArea=0, officeArea=50, totalDocks=4, inboundDocks=2, outboundDocks=2,
-    } = design;
-    const { dockSide, aisleW:aisleWP, clearH:clearHP, dockPitch } = params;
-    const clearH = parseFloat(clearHP)||9;
-    const aisleM = parseFloat(aisleWP)||3.0;
-    const pitch  = parseFloat(dockPitch)||4.5;
-
-    const container = mountRef.current;
-    const W=container.clientWidth, H=Math.max(480,container.clientHeight||480);
-
-    // ── SCENE ──────────────────────────────────────────────────────────────
-    const scene    = new THREE.Scene();
-    scene.background = new THREE.Color(0xdbeafe);
-    scene.fog = new THREE.FogExp2(0xdbeafe, 0.006);
-
-    const renderer = new THREE.WebGLRenderer({ antialias:true });
-    renderer.setPixelRatio(window.devicePixelRatio||1);
-    renderer.setSize(W, H);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    container.appendChild(renderer.domElement);
-
-    const camera = new THREE.PerspectiveCamera(50, W/H, 0.1, 2000);
-    const center = new THREE.Vector3(wW/2, clearH*0.3, wL/2);
-    const diag   = Math.sqrt(wW*wW + wL*wL);
-
-    // Orbit state
-    const orbit = { theta:Math.PI*0.55, phi:1.05, radius:diag*1.1, down:false, lx:0, ly:0 };
-
-    const updateCam = () => {
-      const ph=Math.max(0.18,Math.min(1.45,orbit.phi));
-      camera.position.set(
-        center.x + orbit.radius*Math.sin(ph)*Math.sin(orbit.theta),
-        center.y + orbit.radius*Math.cos(ph),
-        center.z + orbit.radius*Math.sin(ph)*Math.cos(orbit.theta)
-      );
-      camera.lookAt(center);
-    };
-    updateCam();
-
-    // ── LIGHTING ───────────────────────────────────────────────────────────
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-    const sun = new THREE.DirectionalLight(0xfffaed, 1.0);
-    sun.position.set(wW*1.5, clearH*4, -wL*0.3);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048,2048);
-    sun.shadow.camera.left=-diag; sun.shadow.camera.right=diag;
-    sun.shadow.camera.top=diag;   sun.shadow.camera.bottom=-diag;
-    scene.add(sun);
-    const fill = new THREE.DirectionalLight(0xadd8e6, 0.35);
-    fill.position.set(-wW, clearH*2, wL*1.5);
-    scene.add(fill);
-
-    // ── HELPERS ────────────────────────────────────────────────────────────
-    const addMesh = (geo, mat, x, y, z, castShadow=true) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, z);
-      if (castShadow) { m.castShadow=true; m.receiveShadow=true; }
-      scene.add(m); return m;
-    };
-    const box = (w,h,d,col,opacity=1,wireframe=false) => new THREE.Mesh(
-      new THREE.BoxGeometry(w,h,d),
-      new THREE.MeshPhongMaterial({color:col, opacity, transparent:opacity<1,
-        wireframe, side:THREE.DoubleSide})
-    );
-    const addBox = (x,y,z,w,h,d,col,op=1,shadow=true) => {
-      const m = box(w,h,d,col,op);
-      m.position.set(x+w/2, y+h/2, z+d/2);
-      if(shadow){m.castShadow=true;m.receiveShadow=true;}
-      scene.add(m); return m;
-    };
-    const edges = (geo, col=0x000000, op=0.25) => new THREE.LineSegments(
-      new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({color:col,opacity:op,transparent:true})
-    );
-
-    // ── FLOOR ──────────────────────────────────────────────────────────────
-    const floorGeo = new THREE.PlaneGeometry(wW, wL);
-    const floorM   = addMesh(floorGeo, new THREE.MeshPhongMaterial({color:0xcfd8e3,side:THREE.DoubleSide}),
-      wW/2, 0, wL/2, false);
-    floorM.rotation.x=-Math.PI/2; floorM.receiveShadow=true;
-
-    const grid = new THREE.GridHelper(Math.max(wW,wL)*2, 30, 0xaaaaaa, 0xcccccc);
-    grid.position.set(wW/2, 0.01, wL/2); scene.add(grid);
-
-    // ── ZONE FLOORS ────────────────────────────────────────────────────────
-    const ZCOL={golden:0xa7f3d0, mid:0xfef08a, reserve:0xfed7aa, bulk:0xe2e8f0, long:0xede9fe};
-    const stagingH = Math.max(4,(receivingArea||80)/wW);
-    const supportH = Math.max(2,((officeArea||50)+(mheArea||0))/wW);
-    const availH   = Math.max(4,wL-stagingH-supportH);
-    const ZORD=['golden','mid','reserve','bulk','long'];
-    const RD_MAP={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
-
-    // ── Build rack-type → zone mapping from rackConfig ──────────────────────
-    // This is the key fix: derive zone assignment from rackConfig, not just slotted data
-    const RACK_DEFAULT_ZONE={
-      shelving:'golden', liveStorage:'golden',
-      selective:'reserve', doubleDeep:'reserve',
-      driveIn:'bulk', cantilever:'long', ground:'bulk'
-    };
-    const zoneRackTypes={}; // zone → [{rack, cfg}]
-    const zoneRackH={};     // zone → max rack height
-
-    (rackConfig||[]).forEach(cfg=>{
-      // Find which zone this rack type appears in via slotted data
-      const slottedZone=(analysis?.slotted||[]).find(s=>s.rack===cfg.rack)?.zone
-        || RACK_DEFAULT_ZONE[cfg.rack]||'golden';
-      if(!zoneRackTypes[slottedZone]) zoneRackTypes[slottedZone]=[];
-      if(!zoneRackTypes[slottedZone].find(r=>r.rack===cfg.rack))
-        zoneRackTypes[slottedZone].push({rack:cfg.rack, cfg});
-      // Track rack height per zone
-      const rh=['shelving','liveStorage'].includes(cfg.rack)
-        ? (parseFloat(cfg.tierHeight)||cfg.shelfH||2200)*(parseInt(cfg.tiers)||1)/1000
-        : (cfg.levels||4)*1.5+0.3;
-      zoneRackH[slottedZone]=Math.max(zoneRackH[slottedZone]||0, rh);
-    });
-
-    // Fill zones with no rackConfig using slotted dominant
-    const getDom=(zone)=>{
-      if(zoneRackTypes[zone]?.length) return zoneRackTypes[zone][0].rack;
-      const m={};
-      (analysis?.slotted||[]).filter(s=>s.zone===zone).forEach(r=>{m[r.rack]=(m[r.rack]||0)+1;});
-      return Object.entries(m).sort((a,b)=>b[1]-a[1])[0]?.[0]||'shelving';
-    };
-
-    // Compute zone heights — two passes:
-    // Pass 1: minimum height per rack type (each type needs at least 1 full row slot)
-    const MIN_ROWS=1; // show at least 1 rack row per configured type
-    const minZoneH={};
-    ZORD.forEach(z=>{
-      const racks=zoneRackTypes[z]||[];
-      if(!racks.length){ minZoneH[z]=0; return; }
-      // Each rack type needs its own sub-zone with >=1 row
-      minZoneH[z]=racks.reduce((sum,{rack:dom})=>{
-        const rd=RD_MAP[dom]||0.6;
-        const slot=rd+(parseFloat(aisleWP)||3.0);
-        return sum + slot*MIN_ROWS;
-      },0);
-    });
-
-    // Pass 2: allocate proportionally from zoneAreas, but ALWAYS enforce minimums,
-    //         then RESCALE everything to fit within availH (so zones never go out of bounds)
-    const rawTotZA=Object.values(zoneAreas).reduce((s,a)=>s+a,0)||1;
-    const totalMin=ZORD.reduce((s,z)=>s+minZoneH[z],0);
-    const spare=Math.max(0, availH-totalMin);
-
-    const rawH={};
-    ZORD.forEach(z=>{
-      rawH[z]=Math.max(minZoneH[z], ((zoneAreas[z]||0)/rawTotZA)*spare + minZoneH[z]);
-    });
-    // Rescale so total fits in availH (prevents zones rendering outside warehouse)
-    const rawTotal=Object.values(rawH).reduce((s,v)=>s+v,0)||availH;
-    const scale=availH/rawTotal;
-
-    let zCur=stagingH; const ZP={};
-    ZORD.forEach(z=>{
-      const h=(rawH[z]||0)*scale;
-      ZP[z]={z0:zCur, h:Math.max(0,h)};
-      zCur+=h;
-    });
-
-    const addFloorZone = (x,z,w,d,col) => {
-      const m=new THREE.Mesh(new THREE.PlaneGeometry(w,d), new THREE.MeshPhongMaterial({color:col,side:THREE.DoubleSide}));
-      m.rotation.x=-Math.PI/2; m.position.set(x+w/2,0.015,z+d/2); m.receiveShadow=true; scene.add(m);
-    };
-    ZORD.forEach(z=>{const{z0,h}=ZP[z];if(h>0.3) addFloorZone(0,z0,wW,h,ZCOL[z]||0xf1f5f9);});
-    addFloorZone(0,    0,    wW/2, stagingH, 0x93c5fd); // Receiving
-    addFloorZone(wW/2, 0,    wW/2, stagingH, 0xfde68a); // Dispatch
-    addFloorZone(0, wL-supportH, wW/2, supportH, 0xdbeafe); // Office
-    if(mheArea>0) addFloorZone(wW/2, wL-supportH, wW/2, supportH, 0xede9fe); // MHE
-
-    // Zone boundary lines
-    ZORD.forEach(z=>{
-      const{z0,h}=ZP[z];if(h<0.5) return;
-      const pts=[new THREE.Vector3(0,0.05,z0),new THREE.Vector3(wW,0.05,z0)];
-      const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
-        new THREE.LineBasicMaterial({color:0x94a3b8,opacity:0.5,transparent:true}));
-      scene.add(ln);
-    });
-
-    // ── WALLS (semi-transparent) ────────────────────────────────────────────
-    const wallMat = new THREE.MeshPhongMaterial({color:0xf1f5f9,opacity:0.22,transparent:true,side:THREE.DoubleSide});
-    const wallEdgeMat = new THREE.LineBasicMaterial({color:0x64748b,opacity:0.5,transparent:true});
-    [[wW/2,clearH/2,0,       wW,clearH,0.25],  // south  (z=0)
-     [wW/2,clearH/2,wL,      wW,clearH,0.25],  // north
-     [0,   clearH/2,wL/2,    0.25,clearH,wL],  // west
-     [wW,  clearH/2,wL/2,    0.25,clearH,wL],  // east
-    ].forEach(([cx,cy,cz,ww,hh,dd])=>{
-      const geo=new THREE.BoxGeometry(ww,hh,dd);
-      const m=new THREE.Mesh(geo,wallMat); m.position.set(cx,cy,cz); scene.add(m);
-      const e=edges(geo,0x64748b,0.4); e.position.copy(m.position); scene.add(e);
-    });
-
-    // Roof wireframe
-    [[wW/2,clearH,0],  [wW/2,clearH,wL],
-     [0,clearH,wL/2],  [wW,clearH,wL/2]].forEach(([cx,cy,cz])=>{
-      const pts=[new THREE.Vector3(cx-wW/2,cy,cz-wL/2),new THREE.Vector3(cx+wW/2,cy,cz-wL/2),
-                 new THREE.Vector3(cx+wW/2,cy,cz+wL/2),new THREE.Vector3(cx-wW/2,cy,cz+wL/2),
-                 new THREE.Vector3(cx-wW/2,cy,cz-wL/2)];
-      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
-        new THREE.LineBasicMaterial({color:0x94a3b8,opacity:0.4,transparent:true})));
-    });
-
-    // ── DOCK DOORS ─────────────────────────────────────────────────────────
-    const dockW=3.5, dockH=Math.min(4.5,clearH*0.55);
-    const doorMat=new THREE.MeshPhongMaterial({color:0x1d4ed8});
-    for(let d=0;d<totalDocks;d++){
-      const dx=(d+0.5)*(wW/totalDocks)-dockW/2;
-      [[dx,0,-0.15,0.2,dockH,0.3],[dx+dockW-0.2,0,-0.15,0.2,dockH,0.3],  // posts
-       [dx,dockH,-0.15,dockW,0.2,0.3]].forEach(([x,y,z,w,h,dd])=>{      // lintel
-        const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,dd),doorMat);
-        m.position.set(x+w/2,y+h/2,z); scene.add(m);
-      });
-      // Door number
-    }
-
-    // ── RACK ROWS — type-specific 3D geometry ──────────────────────────────
-    const RCOL={shelving:0x94a3b8,liveStorage:0x3b82f6,selective:0x475569,
-      driveIn:0x1e293b,doubleDeep:0x334155,cantilever:0x7c3aed};
-    const RD3={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5,ground:1.2};
-
-    const matCache={};
-    const getMat=(col,op=1,sh=30)=>{
-      const k=`${col}|${op}`;
-      if(!matCache[k]) matCache[k]=new THREE.MeshPhongMaterial(
-        {color:col,opacity:op,transparent:op<1,shininess:sh,side:THREE.DoubleSide});
-      return matCache[k];
-    };
-    const mkBox=(w,h,d,mat,x,y,z,cast=true)=>{
-      const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
-      m.position.set(x,y,z); if(cast){m.castShadow=true;m.receiveShadow=true;}
-      scene.add(m); return m;
-    };
-
-    // Warehouse storage south/north limits (racks must stay inside)
-    const storeSouth = stagingH + 0.3;
-    const storeNorth = wL - supportH - 0.3;
-
-    ZORD.forEach(zone=>{
-      const{z0,h}=ZP[zone]||{z0:0,h:0}; if(h<0.3) return;
-
-      // Rack types assigned to this zone
-      const zRacks=zoneRackTypes[zone]||[];
-      if(!zRacks.length){
-        const m={};
-        (analysis?.slotted||[]).filter(s=>s.zone===zone)
-          .forEach(r=>{m[r.rack]=(m[r.rack]||0)+1;});
-        const dom=Object.entries(m).sort((a,b)=>b[1]-a[1])[0]?.[0]||'shelving';
-        zRacks.push({rack:dom,cfg:null});
-      }
-
-      // Divide zone into non-overlapping sub-zones per rack type
-      const totalSlotW=zRacks.reduce((s,{rack:dom})=>s+(RD3[dom]||0.6)+aisleM,0)||1;
-      let subZ=z0;
-
-      zRacks.forEach(({rack:dom,cfg:zc})=>{
-        const rd=RD3[dom]||0.6;
-        const slot=rd+aisleM;
-        const subH=Math.max(slot,(slot/totalSlotW)*h);
-
-        // CAP rack height to clearH
-        const cfgRh=zc
-          ?(['shelving','liveStorage'].includes(dom)
-              ?(parseFloat(zc.tierHeight)||zc.shelfH||2200)*(parseInt(zc.tiers)||1)/1000
-              :(zc.levels||4)*1.5+0.3)
-          :(zoneRackH[zone]||3.5);
-        const rh=Math.min(clearH-0.25, cfgRh);
-
-        // Cross-aisle: leave a gap after half the rows (standard warehouse practice)
-        const maxRows=Math.max(1,Math.floor(subH/slot));
-        const crossAisleAfter=Math.floor(maxRows/2); // insert cross-aisle after this row
-
-        let rowIdx=0;
-        for(;;){
-          const rowZ=subZ+rowIdx*slot+(rowIdx>crossAisleAfter?aisleM:0)+aisleM*0.3;
-          // STRICT boundary: never render outside warehouse or sub-zone
-          if(rowZ+rd>Math.min(subZ+subH,storeNorth)-0.05) break;
-          if(rowIdx>=maxRows+1) break;
-
-          // Skip the cross-aisle slot itself (draw floor marker instead)
-          if(rowIdx===crossAisleAfter&&maxRows>2){
-            // Yellow cross-aisle floor stripe
-            const ca=new THREE.Mesh(
-              new THREE.PlaneGeometry(wW,aisleM*0.9),
-              new THREE.MeshPhongMaterial({color:0xfef08a,side:THREE.DoubleSide}));
-            ca.rotation.x=-Math.PI/2;
-            ca.position.set(wW/2,0.03,rowZ-rd+rd/2+aisleM/2);
-            scene.add(ca);
-            rowIdx++; continue;
-          }
-
-          // ── SELECTIVE PALLET RACK ────────────────────────────────────
-          if(dom==='selective'||dom==='doubleDeep'){
-            const bayW=2.7, nBays=Math.max(1,Math.floor((wW-0.4)/bayW));
-            const nLvl=Math.min(6,Math.floor(rh/1.5));
-            const depth=dom==='doubleDeep'?2:1;
-            const upMat=getMat(0xdc2626,1,40);
-            const bmMat=getMat(0xf59e0b,1,80);
-            const pMat =getMat(0xfbbf24,0.9,20);
-            const pbMat=getMat(0x78350f,1,10);
-
-            // Upright frames at bay boundaries
-            for(let b=0;b<=nBays;b++){
-              const fx=Math.min(b*bayW, wW-0.15); // clamp to warehouse width
-              [[fx,rowZ+0.06],[fx,rowZ+rd-0.06]].forEach(([px,pz])=>{
-                mkBox(0.12,rh,0.12,upMat,px,rh/2,pz);
-              });
-            }
-            // Beams + pallets per level
-            for(let lv=0;lv<nLvl;lv++){
-              const by=lv*1.5+0.3;
-              for(let b=0;b<nBays;b++){
-                const bx=b*bayW;
-                [rowZ+0.08, rowZ+rd-0.08].forEach(bz=>{
-                  mkBox(bayW,0.10,0.09,bmMat,bx+bayW/2,by,bz,false);
-                });
-                // FIX: pallet offsets within bay (not cumulative x)
-                for(let d=0;d<depth;d++){
-                  [0.30, bayW-1.40].forEach(palOff=>{
-                    mkBox(1.1,0.14,1.0,pbMat, bx+palOff, by+0.07, rowZ+0.12+d*1.15);
-                    mkBox(1.05,0.92,0.95,pMat, bx+palOff, by+0.07+0.14+0.46, rowZ+0.12+d*1.15);
-                  });
-                }
-              }
-            }
-          }
-
-          // ── DRIVE-IN RACK ─────────────────────────────────────────────
-          else if(dom==='driveIn'){
-            const laneW=2.7, nLanes=Math.max(1,Math.floor((wW-0.4)/laneW));
-            const nLvl=Math.min(4,Math.floor(rh/1.5));
-            const palDeep=Math.max(2,Math.round(rd/1.2));
-            const upMat =getMat(0xdc2626,1,20);
-            const railMat=getMat(0xf59e0b,1,60);
-            const pMat  =getMat(0xfbbf24,0.9,20);
-            const pbMat =getMat(0x78350f,1,10);
-
-            // Column frames at each lane boundary (front+mid+rear)
-            for(let ln=0;ln<=nLanes;ln++){
-              const fx=Math.min(ln*laneW, wW-0.15);
-              [rowZ+0.1, rowZ+rd/2, rowZ+rd-0.1].forEach(pz=>{
-                mkBox(0.15,rh,0.15,upMat,fx,rh/2,pz);
-              });
-            }
-            // Side rails + deep pallets per level
-            for(let lv=0;lv<nLvl;lv++){
-              const ry=lv*1.5+0.9;
-              const palH_each=rd/palDeep;
-              for(let ln=0;ln<nLanes;ln++){
-                const lx=ln*laneW;
-                // Guide rails both sides
-                mkBox(0.07,0.07,rd-0.2,railMat, lx+0.14,ry, rowZ+rd/2, false);
-                mkBox(0.07,0.07,rd-0.2,railMat, lx+laneW-0.14,ry, rowZ+rd/2, false);
-                // Pallets stored deep in lane
-                for(let d=0;d<palDeep;d++){
-                  const pz=rowZ+0.12+d*palH_each+palH_each/2;
-                  mkBox(laneW-0.35,0.13,palH_each-0.08,pbMat, lx+laneW/2,ry+0.065,pz);
-                  mkBox(laneW-0.45,0.9, palH_each-0.12,pMat,  lx+laneW/2,ry+0.065+0.13+0.45,pz);
-                }
-              }
-            }
-          }
-
-          // ── GROUND LOCATION ──────────────────────────────────────────────
-          else if(dom==='ground'){
-            const stackLayers=zc?.stackH||zc?.levels||1;
-            const itemH=(zc?.binDims?.[2]||300)/1000; // bin height in metres
-            const gW=2.0, nCols=Math.max(1,Math.floor((wW-0.4)/gW));
-            const gndMat=new THREE.MeshPhongMaterial({color:0x92400e,opacity:0.3,transparent:true});
-            // Ground footprint base
-            const gGeo=new THREE.BoxGeometry(wW-0.4,0.05,rd);
-            const gM=new THREE.Mesh(gGeo,gndMat);
-            gM.position.set(wW/2,0.025,rowZ+rd/2); scene.add(gM);
-            // Each ground pad column — stack layers shown as boxes
-            const itemMat=getMat(0x78350f,0.9,10);
-            const frameMat=new THREE.LineBasicMaterial({color:0xfbbf24});
-            for(let col=0;col<nCols;col++){
-              const cx=0.2+col*gW;
-              for(let lyr=0;lyr<stackLayers;lyr++){
-                const by=lyr*(itemH+0.03)+0.04;
-                const pad=new THREE.Mesh(new THREE.BoxGeometry(gW-0.15,itemH,rd-0.15),itemMat);
-                pad.position.set(cx+gW/2,by+itemH/2,rowZ+rd/2);
-                pad.castShadow=true; scene.add(pad);
-                // Yellow boundary frame per layer
-                const frame=new THREE.LineSegments(
-                  new THREE.EdgesGeometry(new THREE.BoxGeometry(gW-0.1,itemH+0.02,rd-0.1)),
-                  frameMat);
-                frame.position.copy(pad.position); scene.add(frame);
-              }
-            }
-          }
-
-          // ── CANTILEVER RACK ───────────────────────────────────────────
-          else if(dom==='cantilever'){
-            const spineSpacing=1.5, nSpines=Math.max(1,Math.floor((wW-0.4)/spineSpacing));
-            const nArms=Math.min(6,Math.floor(rh/0.7));
-            const armLen=(rd-0.2)/2;
-            const spMat =getMat(0x4c1d95,1,40);
-            const armMat=getMat(0x7c3aed,1,60);
-            const itMat =getMat(0xfb923c,0.85,20);
-            for(let sp=0;sp<nSpines;sp++){
-              const sx=Math.min(0.2+sp*spineSpacing, wW-0.2);
-              mkBox(0.2,rh,0.2,spMat,sx,rh/2,rowZ+rd/2);
-              mkBox(0.6,0.08,rd,getMat(0x4c1d95),sx,0.04,rowZ+rd/2);
-              for(let a=0;a<nArms;a++){
-                const ay=a*(rh/nArms)+0.4;
-                mkBox(0.08,0.08,armLen,armMat,sx,ay,rowZ+rd/2-armLen/2-0.1,false);
-                mkBox(0.08,0.08,armLen,armMat,sx,ay,rowZ+rd/2+armLen/2+0.1,false);
-                if(sp<nSpines-1){
-                  mkBox(spineSpacing,0.18,armLen*0.7,itMat,sx+spineSpacing/2,ay+0.09,rowZ+rd/2-armLen*0.35);
-                  mkBox(spineSpacing,0.18,armLen*0.7,itMat,sx+spineSpacing/2,ay+0.09,rowZ+rd/2+armLen*0.35);
-                }
-              }
-            }
-          }
-
-          // ── SHELVING / LIVE STORAGE ───────────────────────────────────
-          else {
-            const rGeo=new THREE.BoxGeometry(wW-0.4,rh,rd);
-            const rMat2=new THREE.MeshPhongMaterial(
-              {color:RCOL[dom]||0x94a3b8,opacity:0.65,transparent:true,shininess:20});
-            const rM=new THREE.Mesh(rGeo,rMat2);
-            rM.position.set(wW/2,rh/2,rowZ+rd/2);
-            rM.castShadow=true; rM.receiveShadow=true; scene.add(rM);
-            // Edge wireframe — must use position.copy(), not Object.assign
-            const eL=new THREE.LineSegments(
-              new THREE.EdgesGeometry(rGeo),
-              new THREE.LineBasicMaterial({color:0x000000,opacity:0.18,transparent:true}));
-            eL.position.copy(rM.position);
-            scene.add(eL);
-            // Uprights
-            const ps=1.8,np=Math.floor((wW-0.4)/ps)+1,pMat=getMat(0x334155);
-            for(let p=0;p<np;p++){
-              const px=0.2+p*ps; if(px>wW-0.2) break;
-              [[px,rowZ+0.05],[px,rowZ+rd-0.05]].forEach(([x,z])=>
-                mkBox(0.08,rh,0.08,pMat,x,rh/2,z,false));
-            }
-            // Shelves
-            const ns=Math.min(8,Math.floor(rh/0.35)),shM=getMat(0xd1d5db);
-            for(let s=0;s<ns;s++)
-              mkBox(wW-0.5,0.04,rd-0.06,shM,wW/2,s*(rh/ns)+0.05,rowZ+rd/2,false);
-          }
-
-          rowIdx++;
-        } // end row loop
-
-        subZ+=subH; // advance sub-zone cursor — prevents overlap
-      }); // end zoneRacks.forEach
-    }); // end ZORD.forEach
-
-    // ── STAGING PALLETS ─────────────────────────────────────────────────────
-    const palW=1.0, palH=0.15, stockH=0.75;
-    const palMat  =new THREE.MeshPhongMaterial({color:0x78350f,shininess:20});
-    const stockColors=[0xd97706,0xf59e0b];
-    const pRows=Math.min(3,Math.floor(stagingH/1.4));
-    const pCols=Math.min(10,Math.floor(wW/2/1.4));
-    [0,1].forEach(side=>{
-      const startX=side*(wW/2);
-      for(let r=0;r<pRows;r++) for(let c=0;c<pCols;c++){
-        const px=startX+0.3+c*1.35, pz=0.3+r*1.35;
-        if(px+palW>startX+wW/2-0.2||pz>stagingH-0.4) continue;
-        // Pallet base
-        const pm=new THREE.Mesh(new THREE.BoxGeometry(palW,palH,palW),palMat);
-        pm.position.set(px+palW/2,palH/2,pz+palW/2); pm.castShadow=true; scene.add(pm);
-        // Stock
-        const sm=new THREE.Mesh(new THREE.BoxGeometry(palW-0.05,stockH,palW-0.05),
-          new THREE.MeshPhongMaterial({color:stockColors[side],shininess:40}));
-        sm.position.set(px+palW/2,palH+stockH/2,pz+palW/2); sm.castShadow=true; scene.add(sm);
-      }
-    });
-
-    // ── OFFICE / MHE ───────────────────────────────────────────────────────
-    if(officeArea>0){
-      const om=addBox(0.5,0,wL-supportH+0.5,wW/2-1,Math.min(3,clearH*0.35),supportH-1,0x93c5fd,0.8);
-    }
-    if(mheArea>0){
-      const nMHE=Math.min(design.nMHE||2,4);
-      for(let m=0;m<nMHE;m++){
-        const mx=wW/2+0.5+m*3.5; if(mx+2.5>wW-0.5) break;
-        addBox(mx,0,wL-supportH+0.5,2.5,1.8,1.5,0x818cf8,0.9);
-        addBox(mx+0.2,1.8,wL-supportH+0.6,0.3,0.5,0.3,0x312e81);
-      }
-    }
-
-    // ── COLUMN LABELS via canvas textures ─────────────────────────────────
-    const makeLabel=(text,col='#1e293b')=>{
-      const cv=document.createElement('canvas'); cv.width=256; cv.height=64;
-      const ctx=cv.getContext('2d'); ctx.fillStyle='rgba(255,255,255,0.85)';
-      ctx.roundRect(2,2,252,60,8); ctx.fill();
-      ctx.fillStyle=col; ctx.font='bold 22px sans-serif'; ctx.textAlign='center';
-      ctx.fillText(text,128,38);
-      const tex=new THREE.CanvasTexture(cv);
-      const m=new THREE.Mesh(new THREE.PlaneGeometry(4,1),new THREE.MeshBasicMaterial({map:tex,transparent:true,side:THREE.DoubleSide}));
-      return m;
-    };
-    const ZONE_LABEL_COL={golden:'#166534',mid:'#854d0e',reserve:'#9a3412',bulk:'#374151',long:'#6b21a8'};
-    ZORD.forEach(z=>{
-      const{z0,h}=ZP[z]; if(h<2) return;
-      const lbl=makeLabel(ZONE_DEFS[z]?.label||z, ZONE_LABEL_COL[z]||'#374151');
-      lbl.position.set(wW/2, 0.5, z0+h/2); lbl.rotation.x=-Math.PI/2; scene.add(lbl);
-    });
-    const recLbl=makeLabel('RECEIVING','#1d4ed8');
-    recLbl.position.set(wW/4,0.5,stagingH/2); recLbl.rotation.x=-Math.PI/2; scene.add(recLbl);
-    const disLbl=makeLabel('DISPATCH','#d97706');
-    disLbl.position.set(wW*3/4,0.5,stagingH/2); disLbl.rotation.x=-Math.PI/2; scene.add(disLbl);
-
-    // ── ANIMATE ────────────────────────────────────────────────────────────
-    let rafId; const animate=()=>{ rafId=requestAnimationFrame(animate); renderer.render(scene,camera); };
-    animate();
-
-    // ── CONTROLS ───────────────────────────────────────────────────────────
-    const el=renderer.domElement;
-    const down=e=>{orbit.down=true;orbit.lx=e.clientX;orbit.ly=e.clientY;};
-    const up  =()=>{orbit.down=false;};
-    const move=e=>{
-      if(!orbit.down) return;
-      orbit.theta-=(e.clientX-orbit.lx)*0.007;
-      orbit.phi  -=(e.clientY-orbit.ly)*0.007;
-      orbit.lx=e.clientX; orbit.ly=e.clientY; updateCam();
-    };
-    const wheel=e=>{ orbit.radius=Math.max(8,Math.min(400,orbit.radius+e.deltaY*0.08)); updateCam(); e.preventDefault(); };
-    let lt0=0,lt1=0;
-    const tstart=e=>{lt0=e.touches[0].clientX;lt1=e.touches[0].clientY;};
-    const tmove =e=>{
-      orbit.theta-=(e.touches[0].clientX-lt0)*0.007;
-      orbit.phi  -=(e.touches[0].clientY-lt1)*0.007;
-      lt0=e.touches[0].clientX;lt1=e.touches[0].clientY; updateCam(); e.preventDefault();
-    };
-    el.addEventListener('mousedown',down); el.addEventListener('mouseup',up);
-    el.addEventListener('mouseleave',up);  el.addEventListener('mousemove',move);
-    el.addEventListener('wheel',wheel,{passive:false});
-    el.addEventListener('touchstart',tstart,{passive:true}); el.addEventListener('touchmove',tmove,{passive:false});
-    const onResize=()=>{ const w=container.clientWidth,h=480; renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix(); };
-    window.addEventListener('resize',onResize);
-
-    cleanupRef.current=()=>{
-      cancelAnimationFrame(rafId);
-      ['mousedown','mouseup','mouseleave','mousemove'].forEach(ev=>el.removeEventListener(ev,ev==='mousedown'?down:ev==='mousemove'?move:up));
-      el.removeEventListener('wheel',wheel);
-      el.removeEventListener('touchstart',tstart); el.removeEventListener('touchmove',tmove);
-      window.removeEventListener('resize',onResize);
-      renderer.dispose();
-      if(container.contains(el)) container.removeChild(el);
-    };
-    return cleanupRef.current;
-  }, [design, analysis, params, rackConfig]);
-
-  if (!design) return null;
-  return (
-    <div style={{position:'relative'}}>
-      <div ref={mountRef} style={{width:'100%',height:'480px',borderRadius:'10px',
-        overflow:'hidden',cursor:'grab',background:'#0f172a'}}/>
-      {/* Controls hint */}
-      <div style={{position:'absolute',top:'10px',right:'10px',
-        background:'rgba(255,255,255,0.88)',backdropFilter:'blur(4px)',
-        borderRadius:'8px',padding:'7px 12px',fontSize:'11px',color:'#374151',
-        lineHeight:'1.8',boxShadow:'0 2px 8px rgba(0,0,0,0.12)'}}>
-        🖱 <strong>Drag</strong> to rotate<br/>
-        ⚲ <strong>Scroll</strong> to zoom<br/>
-        📱 <strong>Touch drag</strong> on mobile
-      </div>
-      {/* Legend */}
-      <div style={{position:'absolute',bottom:'10px',left:'10px',
-        background:'rgba(255,255,255,0.88)',backdropFilter:'blur(4px)',
-        borderRadius:'8px',padding:'7px 12px',fontSize:'10px',
-        display:'flex',flexWrap:'wrap',gap:'8px',maxWidth:'420px',
-        boxShadow:'0 2px 8px rgba(0,0,0,0.12)'}}>
-        {[['#94a3b8','Shelving'],['#475569','Pallet Rack'],['#1e293b','Drive-in'],
-          ['#7c3aed','Cantilever'],['#93c5fd','Receiving'],['#fde68a','Dispatch'],['#818cf8','MHE']
-        ].map(([col,lbl])=>(
-          <span key={lbl} style={{display:'inline-flex',alignItems:'center',gap:'4px'}}>
-            <span style={{width:'10px',height:'10px',borderRadius:'2px',
-              background:col,display:'inline-block',flexShrink:0}}/>
-            <span style={{color:'#374151'}}>{lbl}</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ─── DXF FLOOR PLAN EXPORT ────────────────────────────────────────────────────
 // Generates AutoCAD DXF (Drawing Exchange Format).
 // Open in AutoCAD → File → Open → .dxf → then Save As → .dwg
 // Supported by all CAD tools: AutoCAD, FreeCAD, LibreCAD, Rhino, SolidWorks.
+// ─── DXF EXPORT (AutoCAD R2000 / AC1015 ASCII) ───────────────────────────────
+// Built from buildFloorPlanLayout output so the CAD file matches the drawn plan
+// exactly: same envelope, same rack positions, same aisles and staging bands.
+// Units are METRES (INSUNITS=6), Y is flipped so north sits at the top in CAD.
 function exportDXF(analysis, design, params, rackConfig) {
-  const { wW, wL, zoneAreas={}, receivingArea=80, dispatchArea=80,
-    officeArea=50, mheArea=0, totalDocks=4, totalGrossArea=0 } = design;
-  const { aisleW:aisleWP } = params;
-  const aisleM = parseFloat(aisleWP)||3.0;
-  const MFT    = 3.2808;
+  let fp;
+  try {
+    fp = buildFloorPlanLayout(design, params, rackConfig || [], analysis, false);
+  } catch (err) {
+    alert('Could not build the layout for DXF export: ' + err.message);
+    return;
+  }
+  if (!fp || !(fp.actualWW > 0)) { alert('No layout available to export.'); return; }
 
-  // DXF is a list of (group-code, value) pairs — one per line
-  const L = [];
-  const d = (...pairs) => pairs.forEach(p => L.push(String(p)));
-  const n = v => v.toFixed(4);
+  const WW = fp.actualWW, WL = fp.actualWL;
+  const L  = [];
+  const d  = (...pairs) => pairs.forEach(v => L.push(String(v)));
+  const n  = v => (isFinite(v) ? v : 0).toFixed(4);
+  // CAD Y axis points up; plan Y points down. Flip so the drawing reads correctly.
+  const fy = y => WL - y;
 
-  // ── HEADER ─────────────────────────────────────────────────────────────
+  const LAYERS = [
+    ['0',                7],
+    ['WALLS',            7],   // white
+    ['RACKS_SHELVING',   5],   // blue
+    ['RACKS_PALLET',     1],   // red
+    ['RACKS_DRIVEIN',    8],   // dark grey
+    ['RACKS_CANTILEVER', 6],   // magenta
+    ['RACKS_GROUND',    30],   // orange
+    ['CROSS_AISLE',     52],   // dark yellow
+    ['SECTION_AISLE',   42],
+    ['STAGING',          3],   // green
+    ['SUPPORT',          4],   // cyan
+    ['DOCKS',            2],   // yellow
+    ['TEXT',             7],
+    ['DIMS',             9],
+  ];
+  const RACK_LAYER = {
+    shelving:'RACKS_SHELVING', liveStorage:'RACKS_SHELVING',
+    selective:'RACKS_PALLET',  doubleDeep:'RACKS_PALLET',
+    driveIn:'RACKS_DRIVEIN',   cantilever:'RACKS_CANTILEVER',
+    ground:'RACKS_GROUND',
+  };
+
+  // ── HEADER ────────────────────────────────────────────────────────────────
   d('0','SECTION','2','HEADER');
-  d('9','$ACADVER','1','AC1015');      // AutoCAD 2000 compatible
-  d('9','$INSUNITS','70','6');         // 6 = metres
-  d('9','$LUNITS','70','2');           // decimal
-  d('9','$LUPREC','70','3');           // 3 decimal places
-  d('9','$MEASUREMENT','70','1');      // 1 = metric
-  d('9','$EXTMIN','10',n(0),'20',n(0),'30','0.0');
-  d('9','$EXTMAX','10',n(wW+6),'20',n(wL+6),'30','0.0');
+  d('9','$ACADVER','1','AC1015');
+  d('9','$INSUNITS','70','6');        // metres
+  d('9','$MEASUREMENT','70','1');     // metric
+  d('9','$LUNITS','70','2');
+  d('9','$LUPREC','70','3');
+  d('9','$EXTMIN','10',n(-2),'20',n(-2),'30','0.0');
+  d('9','$EXTMAX','10',n(WW+2),'20',n(WL+2),'30','0.0');
   d('0','ENDSEC');
 
-  // ── LAYER TABLE ─────────────────────────────────────────────────────────
-  const LAYERS = [
-    ['BOUNDARY',      7  ],   // white/black — warehouse outline
-    ['ZONES',         3  ],   // green
-    ['ZONE_RECV',     5  ],   // blue
-    ['ZONE_DISP',     2  ],   // yellow
-    ['ZONE_SUPPORT',  4  ],   // cyan
-    ['RACKS_SHELVING',251],   // light gray
-    ['RACKS_SELECTIVE',1 ],   // red — upright frames
-    ['RACKS_DRIVEIN', 8  ],   // dark gray
-    ['RACKS_CANTILEVER',6],   // magenta
-    ['PALLETS',       30 ],   // orange
-    ['CROSS_AISLE',   52 ],   // yellow-green
-    ['DOCKS',         5  ],   // blue
-    ['DIMENSIONS',    7  ],   // white
-    ['TEXT',          7  ],   // white
-  ];
+  // ── TABLES ────────────────────────────────────────────────────────────────
   d('0','SECTION','2','TABLES','0','TABLE','2','LAYER','70',String(LAYERS.length));
-  LAYERS.forEach(([name,col])=>{
+  LAYERS.forEach(([name,col]) => {
     d('0','LAYER','2',name,'70','0','62',String(col),'6','CONTINUOUS');
   });
-  d('0','ENDTABLE','0','ENDSEC');
+  d('0','ENDTAB','0','ENDSEC');
 
-  // ── ENTITIES ────────────────────────────────────────────────────────────
+  // ── ENTITY HELPERS ────────────────────────────────────────────────────────
+  const rect = (layer,x1,y1,x2,y2) => {
+    d('0','LWPOLYLINE','8',layer,'90','4','70','1');
+    d('10',n(x1),'20',n(fy(y1)));
+    d('10',n(x2),'20',n(fy(y1)));
+    d('10',n(x2),'20',n(fy(y2)));
+    d('10',n(x1),'20',n(fy(y2)));
+  };
+  const line = (layer,x1,y1,x2,y2) => {
+    d('0','LINE','8',layer,'10',n(x1),'20',n(fy(y1)),'30','0.0',
+      '11',n(x2),'21',n(fy(y2)),'31','0.0');
+  };
+  // hj: 0 left, 1 centre
+  const txt = (layer,x,y,h,str,hj=0) => {
+    d('0','TEXT','8',layer,'10',n(x),'20',n(fy(y)),'30','0.0','40',n(h),
+      '1',String(str==null?'':str).replace(/\n/g,' '));
+    if (hj) { d('72','1','11',n(x),'21',n(fy(y)),'31','0.0'); }
+  };
+
   d('0','SECTION','2','ENTITIES');
 
-  // Helpers
-  const rect2D = (layer, x1,y1,x2,y2,col=null) => {
-    d('0','LWPOLYLINE','8',layer,'90','4','70','1');
-    if(col) d('62',String(col));
-    [[x1,y1],[x2,y1],[x2,y2],[x1,y2]].forEach(([x,y])=>d('10',n(x),'20',n(y)));
-  };
-  const line2D = (layer,x1,y1,x2,y2,col=null) => {
-    d('0','LINE','8',layer);
-    if(col) d('62',String(col));
-    d('10',n(x1),'20',n(y1),'30','0.0','11',n(x2),'21',n(y2),'31','0.0');
-  };
-  const txt = (layer,x,y,h,str,hj=0) => {
-    d('0','TEXT','8',layer,'10',n(x),'20',n(y),'30','0.0','40',n(h),'1',String(str));
-    if(hj){ d('72',String(hj),'11',n(x),'21',n(y),'31','0.0'); }
-  };
-  const dimH = (x1,x2,y,label) => {
-    const mx=(x1+x2)/2;
-    line2D('DIMENSIONS',x1,y,x2,y); // dimension line
-    line2D('DIMENSIONS',x1,y-0.4,x1,y+0.4); // tick
-    line2D('DIMENSIONS',x2,y-0.4,x2,y+0.4); // tick
-    txt('DIMENSIONS',mx,y+0.5,0.5,label,1);
-  };
-  const dimV = (x,y1,y2,label) => {
-    line2D('DIMENSIONS',x,y1,x,y2);
-    line2D('DIMENSIONS',x-0.4,y1,x+0.4,y1);
-    line2D('DIMENSIONS',x-0.4,y2,x+0.4,y2);
-    txt('DIMENSIONS',x+0.7,(y1+y2)/2,0.4,label);
-  };
+  // ── SHELL ─────────────────────────────────────────────────────────────────
+  rect('WALLS',0,0,WW,WL);
 
-  // ── WAREHOUSE OUTLINE ──────────────────────────────────────────────────
-  rect2D('BOUNDARY',0,0,wW,wL,7);
-
-  // ── ZONE LAYOUT ────────────────────────────────────────────────────────
-  const stagingH = Math.max(4,(receivingArea||80)/wW);
-  const supportH = Math.max(2,((officeArea||50)+(mheArea||0))/wW);
-  const totZA    = Object.values(zoneAreas).reduce((s,a)=>s+a,0)||1;
-  const availH   = Math.max(4,wL-stagingH-supportH);
-  const ZORD=['golden','mid','reserve','bulk','long'];
-  const ZCOL={golden:83,mid:52,reserve:30,bulk:9,long:6};
-  const ZLBL={golden:'Golden Zone (VF/F)',mid:'Mid-Level (M)',
-    reserve:'Reserve (S)',bulk:'Bulk (VS)',long:'Long Goods'};
-  let yCur=stagingH; const ZH={};
-  ZORD.forEach(z=>{
-    const h=((zoneAreas[z]||0)/totZA)*availH;
-    ZH[z]={y0:yCur,h:Math.max(0,h)}; yCur+=h;
+  // ── SECTION BANDS + LABELS ────────────────────────────────────────────────
+  (fp.zoneRects||[]).forEach(z => {
+    rect('SECTION_AISLE', z.x, z.y, z.x+z.w, z.y+z.h);
+    if (z.label) txt('TEXT', z.x+0.4, z.y+0.9, 0.55, z.label);
   });
 
-  ZORD.forEach(z=>{
-    const{y0,h}=ZH[z]; if(h<0.1) return;
-    rect2D('ZONES',0,y0,wW,y0+h,ZCOL[z]);
-    txt('TEXT',wW/2,y0+h/2+0.3,Math.min(1.2,h*0.25),ZLBL[z]||z,1);
-    txt('TEXT',wW/2,y0+h/2-0.5,Math.min(0.7,h*0.12),
-      `${(h*wW).toFixed(0)}m²  (${Math.round(h*wW*10.7639).toLocaleString()} sq ft)`,1);
+  // ── RACK ROWS (exactly as drawn) ──────────────────────────────────────────
+  (fp.allRackRows||[]).forEach(r => {
+    const layer = RACK_LAYER[baseRackOf(r.dom)] || 'RACKS_SHELVING';
+    rect(layer, r.x, r.y, r.x+r.w, r.y+r.h);
   });
 
-  // Staging
-  rect2D('ZONE_RECV',0,0,wW/2,stagingH,5);
-  rect2D('ZONE_DISP',wW/2,0,wW,stagingH,2);
-  txt('TEXT',wW/4,stagingH/2+0.3,0.7,'RECEIVING / GRN',1);
-  txt('TEXT',wW*3/4,stagingH/2+0.3,0.7,'DISPATCH',1);
-  txt('TEXT',wW/4,stagingH/2-0.5,0.5,
-    `${receivingArea}m²  (${Math.round(receivingArea*10.7639).toLocaleString()} sq ft)`,1);
-  txt('TEXT',wW*3/4,stagingH/2-0.5,0.5,
-    `${dispatchArea}m²  (${Math.round(dispatchArea*10.7639).toLocaleString()} sq ft)`,1);
-
-  // Support (north)
-  rect2D('ZONE_SUPPORT',0,wL-supportH,wW/2,wL,4);
-  rect2D('ZONE_SUPPORT',wW/2,wL-supportH,wW,wL,4);
-  txt('TEXT',wW/4,wL-supportH/2,0.6,'OFFICE / WELFARE',1);
-  txt('TEXT',wW*3/4,wL-supportH/2,0.6,'MHE CHARGING',1);
-
-  // ── RACK ROWS ──────────────────────────────────────────────────────────
-  const RACK_DZ={shelving:'golden',liveStorage:'golden',selective:'reserve',
-    doubleDeep:'reserve',driveIn:'bulk',cantilever:'long'};
-  const RD2={shelving:0.6,liveStorage:1.5,selective:1.1,driveIn:6.6,doubleDeep:2.4,cantilever:2.5};
-  const RACK_LAYER={shelving:'RACKS_SHELVING',liveStorage:'RACKS_SHELVING',
-    selective:'RACKS_SELECTIVE',doubleDeep:'RACKS_SELECTIVE',
-    driveIn:'RACKS_DRIVEIN',cantilever:'RACKS_CANTILEVER',ground:'RACKS_SHELVING'};
-
-  const z2R={};
-  (rackConfig||[]).forEach(cfg=>{
-    const zone=(analysis?.slotted||[]).find(s=>s.rack===cfg.rack)?.zone
-      || RACK_DZ[cfg.rack]||'golden';
-    if(!z2R[zone]) z2R[zone]=[];
-    if(!z2R[zone].find(r=>r.rack===cfg.rack)) z2R[zone].push({rack:cfg.rack,cfg});
+  // ── AISLES ────────────────────────────────────────────────────────────────
+  (fp.allCrossAisles||[]).forEach(a => {
+    rect('CROSS_AISLE', a.x, a.y, a.x+a.w, a.y+a.h);
+  });
+  (fp.sectionCrossAisles||[]).forEach(a => {
+    rect('CROSS_AISLE', a.x, a.y, a.x+a.w, a.y+a.h);
+    if (a.label) txt('TEXT', a.x+a.w/2, a.y+a.h/2, 0.45, a.label, 1);
   });
 
-  ZORD.forEach(zone=>{
-    const{y0,h}=ZH[zone]; if(h<0.3) return;
-    const zRacks=z2R[zone]||[{rack:'shelving',cfg:null}];
-    const totalSlot=zRacks.reduce((s,{rack:dom})=>s+(RD2[dom]||0.6)+aisleM,0)||1;
-    let subY=y0;
-
-    zRacks.forEach(({rack:dom})=>{
-      const rd=RD2[dom]||0.6, slot=rd+aisleM;
-      const subH=Math.max(slot,(slot/totalSlot)*h);
-      const nRows=Math.max(1,Math.floor(subH/slot));
-      const crossAfter=Math.floor(nRows/2);
-      const layer=RACK_LAYER[dom]||'RACKS_SHELVING';
-
-      for(let i=0;i<nRows;i++){
-        const extra=(nRows>2&&i>=crossAfter)?aisleM:0;
-        const ry=subY+i*slot+extra+aisleM/2;
-        if(ry+rd>subY+subH-0.05) break;
-
-        // Cross aisle stripe
-        if(nRows>2&&i===crossAfter){
-          rect2D('CROSS_AISLE',0,ry-aisleM,wW,ry,52);
-          txt('TEXT',wW/2,ry-aisleM/2,0.4,'CROSS AISLE',1);
-        }
-
-        if(dom==='selective'||dom==='doubleDeep'){
-          rect2D(layer,0,ry,wW,ry+rd);
-          const bayW=2.7, nB=Math.floor(wW/bayW);
-          for(let b=0;b<=nB;b++) line2D(layer,b*bayW,ry,b*bayW,ry+rd,1); // upright columns
-          // Pallet positions — 2 per bay
-          for(let b=0;b<nB;b++){
-            const bx=b*bayW;
-            rect2D('PALLETS',bx+0.15,ry+0.05,bx+1.30,ry+rd-0.05,30);
-            rect2D('PALLETS',bx+1.40,ry+0.05,bx+bayW-0.15,ry+rd-0.05,30);
-          }
-          txt('TEXT',wW/2,ry+rd/2,0.3,dom==='doubleDeep'?'DOUBLE-DEEP RACK':'SELECTIVE PALLET RACK',1);
-
-        } else if(dom==='driveIn'){
-          rect2D(layer,0,ry,wW,ry+rd);
-          const laneW=2.7, nL=Math.floor(wW/laneW);
-          for(let ln=0;ln<=nL;ln++) line2D(layer,ln*laneW,ry,ln*laneW,ry+rd,8); // lane dividers
-          const palDeep=Math.floor(rd/1.2);
-          for(let ln=0;ln<nL;ln++){
-            for(let p=0;p<palDeep;p++){
-              const pz=ry+(p/palDeep)*(rd-0.1);
-              rect2D('PALLETS',ln*laneW+0.2,pz+0.05,(ln+1)*laneW-0.2,pz+1.05,30);
-            }
-          }
-          txt('TEXT',wW/2,ry+rd/2,0.3,'DRIVE-IN RACK',1);
-          line2D(layer,wW/2-2,ry-0.5,wW/2+2,ry-0.5,8);
-          txt('TEXT',wW/2,ry-0.7,0.3,'ENTRY ↔',1);
-
-        } else if(dom==='cantilever'){
-          rect2D(layer,0,ry,wW,ry+rd);
-          line2D(layer,0,ry+rd/2,wW,ry+rd/2,6); // spine
-          const ssp=1.5, nSp=Math.floor(wW/ssp);
-          for(let sp=0;sp<=nSp;sp++){
-            const sx=sp*ssp;
-            line2D(layer,sx,ry,sx,ry+rd,6); // spine post
-            line2D(layer,sx,ry+rd/2,sx,ry+0.15,6); // front arm
-            line2D(layer,sx,ry+rd/2,sx,ry+rd-0.15,6); // rear arm
-          }
-          txt('TEXT',wW/2,ry+rd/2,0.3,'CANTILEVER RACK',1);
-
-        } else if(dom==='ground'){
-          // Ground locations — floor-level pads with yellow boundary
-          rect2D(layer,0,ry,wW,ry+rd,30);
-          const padW=2.0, nPads=Math.floor(wW/padW);
-          for(let p=0;p<nPads;p++){
-            const px=p*padW;
-            rect2D(layer,px+0.05,ry+0.05,px+padW-0.05,ry+rd-0.05,2);
-          }
-          txt('TEXT',wW/2,ry+rd/2,0.3,'GROUND STORAGE',1);
-        } else {
-          // Shelving / live storage
-          rect2D(layer,0.4,ry,wW-0.4,ry+rd);
-          const bw=dom==='liveStorage'?1.5:0.9, nB2=Math.floor((wW-0.8)/bw);
-          for(let b=1;b<nB2;b++) line2D(layer,0.4+b*bw,ry,0.4+b*bw,ry+rd);
-        }
-      }
-      subY+=subH;
-    });
+  // ── STAGING + SUPPORT ─────────────────────────────────────────────────────
+  (fp.stagingRects||[]).forEach(s => {
+    rect('STAGING', s.x, s.y, s.x+s.w, s.y+s.h);
+    if (s.label)    txt('TEXT', s.x+s.w/2, s.y+s.h/2,     0.6, s.label, 1);
+    if (s.subLabel) txt('TEXT', s.x+s.w/2, s.y+s.h/2+0.9, 0.4, s.subLabel, 1);
+  });
+  (fp.supportRects||[]).forEach(s => {
+    rect('SUPPORT', s.x, s.y, s.x+s.w, s.y+s.h);
+    if (s.label) txt('TEXT', s.x+s.w/2, s.y+s.h/2, 0.55, s.label, 1);
   });
 
-  // ── DOCK DOORS ─────────────────────────────────────────────────────────
-  for(let d2=0;d2<totalDocks;d2++){
-    const dx=(d2+0.5)*(wW/totalDocks)-1.75;
-    line2D('DOCKS',dx,0,dx,-0.5);
-    line2D('DOCKS',dx+3.5,0,dx+3.5,-0.5);
-    line2D('DOCKS',dx,-0.5,dx+3.5,-0.5);
-    txt('DOCKS',dx+1.75,-0.8,0.4,`D${d2+1}`,1);
-  }
+  // ── DOCK DOORS ────────────────────────────────────────────────────────────
+  const DW_ = fp.doorW || 3.5;
+  (fp.dockDoors||[]).forEach(dr => {
+    if (dr.side === 'south' || dr.side === 'north') {
+      rect('DOCKS', dr.x, dr.y-0.25, dr.x+DW_, dr.y+0.25);
+      txt('DOCKS', dr.x+DW_/2, dr.y + (dr.side==='south'?1.1:-0.7), 0.45, dr.label, 1);
+    } else {
+      rect('DOCKS', dr.x-0.25, dr.y, dr.x+0.25, dr.y+DW_);
+      txt('DOCKS', dr.x-1.6, dr.y+DW_/2, 0.45, dr.label);
+    }
+  });
 
-  // ── DIMENSION LINES ─────────────────────────────────────────────────────
-  dimH(0,wW,-3.5,`${wW}m  (${(wW*MFT).toFixed(0)} ft)`);
-  dimV(-4.5,0,wL,`${wL}m  (${(wL*MFT).toFixed(0)} ft)`);
-  // Staging heights on right
-  dimV(wW+3,0,stagingH,`Staging: ${stagingH.toFixed(1)}m`);
-  let dimYc=stagingH;
-  ZORD.forEach(z=>{ const{h}=ZH[z]; if(h<0.3) return; dimV(wW+3,dimYc,dimYc+h,`${h.toFixed(1)}m`); dimYc+=h; });
-  dimV(wW+3,wL-supportH,wL,`Support: ${supportH.toFixed(1)}m`);
+  // ── OVERALL DIMENSION LINES ───────────────────────────────────────────────
+  const off = 1.4;
+  line('DIMS', 0, -off, WW, -off);
+  line('DIMS', 0, -off-0.3, 0, -off+0.3);
+  line('DIMS', WW, -off-0.3, WW, -off+0.3);
+  txt('DIMS', WW/2, -off-0.5, 0.7, WW.toFixed(2)+' m', 1);
 
-  // ── TITLE BLOCK ─────────────────────────────────────────────────────────
-  line2D('TEXT',0,wL+2,wW,wL+2);
-  txt('TEXT',wW/2,wL+3.0,1.0,'WAREHOUSE LAYOUT — FLOOR PLAN',1);
-  txt('TEXT',wW/2,wL+2.2,0.55,
-    `${wW}m × ${wL}m  |  ${totalGrossArea}m² gross  (${Math.round(totalGrossArea*10.7639).toLocaleString()} sq ft)`,1);
-  txt('TEXT',0,wL+1.5,0.4,`Scale: 1:1  |  Units: Metres  |  Generated: ${new Date().toLocaleDateString()}`);
-  txt('TEXT',wW,wL+1.5,0.4,'DensiCube Warehouse Designer',1);
+  line('DIMS', WW+off, 0, WW+off, WL);
+  line('DIMS', WW+off-0.3, 0, WW+off+0.3, 0);
+  line('DIMS', WW+off-0.3, WL, WW+off+0.3, WL);
+  txt('DIMS', WW+off+0.5, WL/2, 0.7, WL.toFixed(2)+' m');
+
+  // ── TITLE BLOCK ───────────────────────────────────────────────────────────
+  const rackArea = (rackConfig||[]).reduce((s,cf)=>s+(parseFloat(cf.area)||0),0);
+  const info = [
+    'DENSICUBE WAREHOUSE LAYOUT',
+    'Envelope: ' + WW.toFixed(2) + ' m x ' + WL.toFixed(2) + ' m',
+    'Gross area: ' + Math.round(WW*WL).toLocaleString() + ' m2',
+    'Rack area: ' + rackArea.toFixed(1) + ' m2',
+    'Clear height: ' + (params.clearH||'-') + ' m',
+    'Aisle width: ' + (params.aisleW||'-') + ' m',
+    'Units: METRES   Generated: ' + new Date().toLocaleDateString(),
+  ];
+  info.forEach((t,i) => txt('TEXT', 0, WL + 3.2 + (info.length-i)*0.95, i===0?0.85:0.55, t));
 
   d('0','ENDSEC','0','EOF');
 
@@ -3667,9 +2989,9 @@ function exportDXF(analysis, design, params, rackConfig) {
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url;
-  a.download = `Warehouse_Plan_${wW}x${wL}m.dxf`;
+  a.download = 'Warehouse_Plan_' + WW.toFixed(1) + 'x' + WL.toFixed(1) + 'm.dxf';
   document.body.appendChild(a); a.click();
-  setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); },300);
+  setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 300);
 }
 
 
@@ -4820,9 +4142,7 @@ export default function WarehouseDesignerTool() {
   const [binEditsOpen,  setBinEditsOpen]  = useState(true);
   const [binEditsDirty, setBinEditsDirty] = useState(false);
   const [binEditsError, setBinEditsError] = useState('');
-  const [viewMode3D, setViewMode3D] = useState('3d'); // '2d' | '3d'
   const [udViewMode,  setUdViewMode]  = useState('2d'); // user defined — default 2D (no WebGL risk)
-  const [planZoom,    setPlanZoom]    = useState(1);    // floor plan zoom level
   // ── Dimension measuring tool ──
   const [measureOn,    setMeasureOn]    = useState(false);
   const [measurePts,   setMeasurePts]   = useState([]);   // in-progress point(s), metres
@@ -4830,21 +4150,9 @@ export default function WarehouseDesignerTool() {
   const [snapOn,       setSnapOn]       = useState(true);  // ortho lock + edge snapping
   const [floorPlanFS, setFloorPlanFS] = useState(false); // fullscreen 2D plan
   const plan2DRef   = useRef(null);
-  const planScrollRef = useRef(null); // for passive wheel zoom
-  const fsScrollRef   = useRef(null); // fullscreen scroll ref
-  // Attach non-passive wheel listeners for smooth zoom
-  useEffect(()=>{
-    const attachWheel = (ref) => {
-      const el = ref.current; if(!el) return;
-      const fn = (e) => { e.preventDefault();
-        setPlanZoom(z=>Math.max(0.3,Math.min(8,z*(e.deltaY<0?1.15:1/1.15)))); };
-      el.addEventListener('wheel', fn, {passive:false});
-      return ()=>el.removeEventListener('wheel', fn);
-    };
-    const d1 = attachWheel(planScrollRef);
-    const d2 = attachWheel(fsScrollRef);
-    return ()=>{ d1&&d1(); d2&&d2(); };
-  },[]);
+  const userPlanRefObj = useRef(null); // user-defined mode plan container
+  const planScrollRef = useRef(null); // plan scroll container
+  const fsScrollRef   = useRef(null); // fullscreen scroll container
   const [loading,   setLoading]   = useState(false);
   const [progress,  setProgress]  = useState(0);   // 0-100
   const [progressMsg,setProgressMsg]= useState('');
@@ -5251,9 +4559,13 @@ export default function WarehouseDesignerTool() {
   };
 
   // Download 2D floor plan as SVG or high-res PNG
-  const downloadPlan2D = (fmt='svg') => {
-    const svgEl = plan2DRef.current?.querySelector('svg');
-    if (!svgEl) return;
+  const downloadPlan2D = (fmt='svg', ref=null, scaleArg=2) => {
+    const host = (ref && ref.current) || plan2DRef.current
+      || userPlanRefObj.current || document.querySelector('#fs-plan-svg');
+    const svgEl = host
+      ? (host.tagName === 'svg' ? host : host.querySelector('svg'))
+      : null;
+    if (!svgEl) { alert('Plan not ready yet.'); return; }
     // Inject explicit font/style so exported file is self-contained
     const svgStr = new XMLSerializer().serializeToString(svgEl);
 
@@ -5270,7 +4582,7 @@ export default function WarehouseDesignerTool() {
       const vb   = svgEl.viewBox?.baseVal;
       const svgW = vb?.width  || 960;
       const svgH = vb?.height || 720;
-      const scale = 2;
+      const scale = scaleArg||2;
       const canvas = document.createElement('canvas');
       canvas.width  = svgW * scale;
       canvas.height = svgH * scale;
@@ -5288,7 +4600,7 @@ export default function WarehouseDesignerTool() {
           const pngUrl = URL.createObjectURL(pngBlob);
           const a = document.createElement('a');
           a.href = pngUrl;
-          a.download = `Warehouse_Plan_${design?.wW||''}x${design?.wL||''}m_2x.png`;
+          a.download = `Warehouse_Plan_${design?.wW||''}x${design?.wL||''}m_${scale}x.png`;
           document.body.appendChild(a); a.click();
           setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(pngUrl); }, 300);
         }, 'image/png');
@@ -6937,7 +6249,7 @@ export default function WarehouseDesignerTool() {
                     {label}
                   </button>))}
                 {udViewMode==='2d'&&(
-                  <button onClick={()=>{setFloorPlanFS(true);setPlanZoom(2);}}
+                  <button onClick={()=>setFloorPlanFS(true)}
                     style={{padding:'8px 12px',borderRadius:'8px',cursor:'pointer',
                       fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
                       border:'2px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
@@ -6946,19 +6258,8 @@ export default function WarehouseDesignerTool() {
                 )}
               </div>
               <div style={{...S.card,padding:'10px',marginBottom:'12px'}}>
-                {/* Zoom controls */}
+                {/* Plan tools */}
                 <div style={{display:'flex',gap:'5px',marginBottom:'6px',flexWrap:'wrap',alignItems:'center'}}>
-                  <span style={{fontSize:'11px',fontWeight:'600',color:'#374151'}}>Zoom:</span>
-                  {[0.5,1,1.5,2,3,4].map(z=>(
-                    <button key={z} onClick={()=>setPlanZoom(z)}
-                      style={{padding:'2px 7px',borderRadius:'5px',cursor:'pointer',
-                        fontFamily:'inherit',fontSize:'10px',fontWeight:'700',
-                        border:`1px solid ${planZoom===z?'#7c3aed':'#e2e8f0'}`,
-                        background:planZoom===z?'#f5f3ff':'#fff',
-                        color:planZoom===z?'#7c3aed':'#6b7280'}}>
-                      {z===1?'1×':`${z}×`}
-                    </button>
-                  ))}
                   <span style={{width:'1px',height:'16px',background:'#e2e8f0',margin:'0 3px'}}/>
                   <button onClick={toggleMeasure}
                     title="Click two points on the plan to measure the straight distance"
@@ -7000,13 +6301,40 @@ export default function WarehouseDesignerTool() {
                     </span>
                   )}
                 </div>
-                <div style={{overflow:'auto',maxHeight:'500px',border:'1px solid #e2e8f0',
-                  borderRadius:'6px',cursor:'grab'}}
-                  onWheel={e=>{e.preventDefault();
-                    setPlanZoom(z=>Math.max(0.3,Math.min(6,z*(e.deltaY<0?1.15:1/1.15))));}}>
+                <div ref={userPlanRefObj}
+                  style={{overflow:'auto',maxHeight:'500px',border:'1px solid #e2e8f0',
+                  borderRadius:'6px'}}>
                   <FloorPlanSVG analysis={analysis} design={userDesign} params={params}
-                    rackConfig={userRackConfig||rackConfig} zoom={planZoom} measureOn={measureOn} measurePts={measurePts}
+                    rackConfig={userRackConfig||rackConfig} measureOn={measureOn} measurePts={measurePts}
                     measurements={measurements} onMeasurePoint={onMeasurePoint} snapOn={snapOn}/>
+                </div>
+                {/* Plan downloads */}
+                <div style={{display:'flex',gap:'8px',marginTop:'10px',flexWrap:'wrap'}}>
+                  <button onClick={()=>downloadPlan2D('png',userPlanRefObj,2)}
+                    style={{padding:'7px 14px',borderRadius:'8px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                      background:'#eff6ff',border:'1px solid #93c5fd',color:'#1d4ed8'}}>
+                    ⬇ Download PNG
+                  </button>
+                  <button onClick={()=>downloadPlan2D('png',userPlanRefObj,4)}
+                    style={{padding:'7px 14px',borderRadius:'8px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                      background:'#eff6ff',border:'1px solid #93c5fd',color:'#1d4ed8'}}>
+                    ⬇ PNG (4× print)
+                  </button>
+                  <button onClick={()=>downloadPlan2D('svg',userPlanRefObj)}
+                    style={{padding:'7px 14px',borderRadius:'8px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                      background:'#f0fdf4',border:'1px solid #86efac',color:'#166534'}}>
+                    ⬇ Download SVG
+                  </button>
+                  <button onClick={()=>exportDXF(analysis,userDesign,params,userRackConfig||rackConfig)}
+                    title="AutoCAD DXF in metres — opens in AutoCAD, BricsCAD, LibreCAD, Revit, SketchUp"
+                    style={{padding:'7px 14px',borderRadius:'8px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                      background:'#fdf4ff',border:'1px solid #d8b4fe',color:'#7e22ce'}}>
+                    📐 Export CAD (DXF)
+                  </button>
                 </div>
               </div>
               {/* Warehouse size summary */}
@@ -7795,48 +7123,23 @@ export default function WarehouseDesignerTool() {
             <div style={S.card}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}}>
                 <div style={{fontWeight:'700',fontSize:'14px',color:'#0f172a'}}>
-                  {viewMode3D==='3d'?'🧊 3D Isometric View':'🗺 Plan View (Top)'}
+                  🗺 Plan View (Top)
                 </div>
                 <div style={{display:'flex',gap:'6px'}}>
-                  {[['2d','📐 Plan'],['3d','🧊 3D']].map(([m,l])=>(
-                    <button key={m} onClick={()=>setViewMode3D(m)}
-                      style={{padding:'5px 14px',borderRadius:'7px',cursor:'pointer',
-                        fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
-                        border:`2px solid ${viewMode3D===m?'#7c3aed':'#e2e8f0'}`,
-                        background:viewMode3D===m?'#f5f3ff':'#fff',
-                        color:viewMode3D===m?'#7c3aed':'#6b7280'}}>
-                      {l}
-                    </button>))}
-                  {viewMode3D==='2d'&&(
-                    <button onClick={()=>{setFloorPlanFS(true);setPlanZoom(2);}}
-                      title="View full screen (zoom 2×)"
-                      style={{padding:'5px 12px',borderRadius:'7px',cursor:'pointer',
-                        fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
-                        border:'2px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
-                      ⛶ Full Screen
-                    </button>
-                  )}
+                  <button onClick={()=>setFloorPlanFS(true)}
+                    title="View full screen"
+                    style={{padding:'5px 12px',borderRadius:'7px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                      border:'2px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
+                    ⛶ Full Screen
+                  </button>
                 </div>
               </div>
 
-              {viewMode3D==='3d'
-                ? <Warehouse3DModel analysis={analysis} design={design} params={params} rackConfig={rackConfig}/>
-                : (<>
-                    {/* Zoom controls */}
+              {(<>
+                    {/* Plan tools */}
                     <div style={{display:'flex',alignItems:'center',gap:'6px',
                       marginBottom:'6px',flexWrap:'wrap'}}>
-                      <span style={{fontSize:'11px',fontWeight:'600',color:'#374151'}}>Zoom:</span>
-                      {[0.5,1,1.5,2,3,4].map(z=>(
-                        <button key={z} onClick={()=>setPlanZoom(z)}
-                          style={{padding:'3px 8px',borderRadius:'6px',cursor:'pointer',
-                            fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
-                            border:`1px solid ${planZoom===z?'#7c3aed':'#e2e8f0'}`,
-                            background:planZoom===z?'#f5f3ff':'#fff',
-                            color:planZoom===z?'#7c3aed':'#6b7280'}}>
-                          {z===1?'1×':`${z}×`}
-                        </button>
-                      ))}
-                      <span style={{width:'1px',height:'16px',background:'#e2e8f0',margin:'0 2px'}}/>
                       <button onClick={toggleMeasure}
                         title="Click two points on the plan to measure the straight distance"
                         style={{padding:'3px 9px',borderRadius:'6px',cursor:'pointer',
@@ -7875,21 +7178,21 @@ export default function WarehouseDesignerTool() {
                         fontWeight:measureOn?'600':'400'}}>
                         {measureOn
                           ? (measurePts.length?'Now click the second point':'Click the first point')
-                          : 'Scroll inside plan to zoom · drag to pan'}
+                          : 'Scroll inside the plan to pan'}
                       </span>
                     </div>
-                    {/* Scrollable zoomable plan container */}
+                    {/* Scrollable plan container */}
                     <div ref={r=>{plan2DRef.current=r; planScrollRef.current=r;}}
                       style={{overflow:'auto',border:'1px solid #e2e8f0',borderRadius:'8px',
                         maxHeight:'600px',background:'#f8fafc',cursor:'grab'}}>
                       <FloorPlanSVG analysis={analysis} design={design} params={params}
-                        rackConfig={rackConfig} zoom={planZoom} measureOn={measureOn} measurePts={measurePts}
+                        rackConfig={rackConfig} measureOn={measureOn} measurePts={measurePts}
                     measurements={measurements} onMeasurePoint={onMeasurePoint} snapOn={snapOn}/>
                     </div>
                   </>)}
 
-              {/* Legend + Download (2D only) */}
-              {viewMode3D==='2d'&&(
+              {/* Legend + Download */}
+              {(
                 <div style={{marginTop:'12px'}}>
                   {/* Download buttons */}
                   <div style={{display:'flex',gap:'8px',marginBottom:'10px',flexWrap:'wrap'}}>
@@ -7899,20 +7202,27 @@ export default function WarehouseDesignerTool() {
                         background:'#f0fdf4',border:'1px solid #86efac',color:'#166534'}}>
                       ⬇ Download SVG
                     </button>
-                    <button onClick={()=>downloadPlan2D('png')}
+                    <button onClick={()=>downloadPlan2D('png',plan2DRef,2)}
                       style={{padding:'7px 16px',borderRadius:'8px',cursor:'pointer',
                         fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
                         background:'#eff6ff',border:'1px solid #93c5fd',color:'#1d4ed8'}}>
-                      ⬇ Download PNG (2×)
+                      ⬇ Download PNG
+                    </button>
+                    <button onClick={()=>downloadPlan2D('png',plan2DRef,4)}
+                      style={{padding:'7px 16px',borderRadius:'8px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                        background:'#eff6ff',border:'1px solid #93c5fd',color:'#1d4ed8'}}>
+                      ⬇ PNG (4× print)
                     </button>
                     <button onClick={()=>exportDXF(analysis,design,params,rackConfig)}
                       style={{padding:'7px 16px',borderRadius:'8px',cursor:'pointer',
                         fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
                         background:'#fef9c3',border:'1px solid #fde047',color:'#854d0e'}}>
-                      ⬇ Download DXF (AutoCAD)
+                      📐 Export CAD (DXF)
                     </button>
                     <span style={{fontSize:'11px',color:'#9ca3af',alignSelf:'center'}}>
-                      DXF opens in AutoCAD, FreeCAD, LibreCAD · Save as DWG in AutoCAD
+                      DXF is in metres on named layers · opens in AutoCAD, BricsCAD,
+                      LibreCAD, FreeCAD, Revit, SketchUp · save as DWG in AutoCAD
                     </span>
                   </div>
                   {/* Legend */}
@@ -8095,21 +7405,6 @@ export default function WarehouseDesignerTool() {
                 marginLeft:'12px'}}>{design.wW}m × {design.wL}m · {(design.wW*design.wL).toLocaleString()}m²</span>}
             </div>
             <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
-              {/* Zoom controls */}
-              <span style={{color:'#94a3b8',fontSize:'11px'}}>Zoom:</span>
-              {[0.5,1,1.5,2,3,4,6].map(z=>(
-                <button key={z} onClick={()=>setPlanZoom(z)}
-                  style={{padding:'4px 9px',borderRadius:'6px',cursor:'pointer',
-                    fontFamily:'inherit',fontSize:'11px',fontWeight:'700',border:'none',
-                    background:planZoom===z?'#7c3aed':'#1e293b',
-                    color:planZoom===z?'#fff':'#94a3b8'}}>
-                  {z===1?'1×':`${z}×`}
-                </button>
-              ))}
-              <button onClick={()=>setPlanZoom(z=>Math.min(8,z*1.3))}
-                style={{padding:'4px 8px',background:'#1e293b',color:'#94a3b8',
-                  border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'13px'}}>+</button>
-              <span style={{width:'1px',height:'18px',background:'#334155',margin:'0 4px'}}/>
               <button onClick={toggleMeasure}
                 title="Click two points on the plan to measure the straight distance"
                 style={{padding:'4px 10px',borderRadius:'6px',cursor:'pointer',border:'none',
@@ -8145,10 +7440,6 @@ export default function WarehouseDesignerTool() {
                   {measurePts.length?'2nd point…':'1st point…'}
                 </span>
               )}
-              <button onClick={()=>setPlanZoom(z=>Math.max(0.3,z/1.3))}
-                style={{padding:'4px 8px',background:'#1e293b',color:'#94a3b8',
-                  border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'13px'}}>−</button>
-              <span style={{color:'#475569',fontSize:'10px',marginRight:'8px'}}>scroll=zoom</span>
               {/* Download in fullscreen */}
               <button onClick={()=>{
                   // Find the actual <svg> element (not the wrapper div)
@@ -8167,7 +7458,24 @@ export default function WarehouseDesignerTool() {
                 style={{padding:'7px 16px',background:'#7c3aed',color:'#fff',border:'none',
                   borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
                   fontSize:'13px',fontWeight:'700'}}>
-                ⬇ Download SVG
+                ⬇ SVG
+              </button>
+              <button onClick={()=>{
+                  const host=document.getElementById('fs-plan-container');
+                  downloadPlan2D('png',{current:host},2);
+                }}
+                style={{padding:'7px 14px',background:'#1d4ed8',color:'#fff',border:'none',
+                  borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
+                  fontSize:'13px',fontWeight:'700'}}>
+                ⬇ PNG
+              </button>
+              <button onClick={()=>exportDXF(analysis,userDesign||design,params,
+                  userRackConfig||rackConfig)}
+                title="AutoCAD DXF in metres"
+                style={{padding:'7px 14px',background:'#7e22ce',color:'#fff',border:'none',
+                  borderRadius:'8px',cursor:'pointer',fontFamily:'inherit',
+                  fontSize:'13px',fontWeight:'700'}}>
+                📐 DXF
               </button>
               <button onClick={()=>setFloorPlanFS(false)}
                 style={{padding:'7px 16px',background:'#be185d',color:'#fff',border:'none',
@@ -8186,7 +7494,6 @@ export default function WarehouseDesignerTool() {
                 params={params}
                 rackConfig={userRackConfig||rackConfig}
                 fullscreen={true}
-                zoom={planZoom}
                 measureOn={measureOn} measurePts={measurePts}
                 measurements={measurements} onMeasurePoint={onMeasurePoint} snapOn={snapOn}/>
             </div>
