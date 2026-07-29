@@ -1378,6 +1378,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var X=m=>ML+m*sX, Y=m=>MT+m*sY, W=m=>m*sX, H=m=>m*sY;
 
   // ── AREA HEIGHTS ────────────────────────────────────────────────────────────
+  // Provisional band heights (recomputed from actualWW once the width is final)
   var recH    = Math.max(4,(receivingArea||0)/wW);
   var disH    = Math.max(4,(dispatchArea||0)/wW);
   var stagingH= Math.max(recH,disH);
@@ -1402,28 +1403,11 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var zH    = {};
   zoneOrder.forEach(z=>{ zH[z]=((zoneAreas[z]||0)/totZA)*zonesH; });
 
-  // Build zone rects (from north going south)
+  // Build zone rects (from north going south).
+  // NOTE: the vertical stack is laid out AFTER actualWW is known, because every
+  // staging/support band height is area/width and the width is rack-driven.
   var zoneRects=[], stagingRects=[], supportRects=[];
-
-  // Support area at NORTH (top)
   let cur=0;
-  if (officeArea>0) {
-    supportRects.push({ key:'office', x:0, y:cur, w:actualWW/2, h:offH,
-      label:'OFFICE / WELFARE', color:'#dbeafe', border:'#3b82f6', text:'#1d4ed8' });
-  }
-  if (mheH>0) {
-    supportRects.push({ key:'mhe', x:actualWW/2, y:cur, w:actualWW/2, h:offH+mheH,
-      label:'MHE CHARGING', color:'#fdf4ff', border:'#9333ea', text:'#6b21a8' });
-  }
-  cur+=supportH;
-
-  if (isBoth) {
-    // Dispatch at north (after support)
-    stagingRects.push({ key:'dispatch', x:0, y:cur, w:actualWW, h:disH,
-      label:'DISPATCH / PACKING', subLabel:`${dispatchArea}m² (${sqft(dispatchArea)})`,
-      color:'#fef3c7', border:'#d97706', text:'#92400e' });
-    cur+=disH;
-  }
 
   // Rack-type sections — each rack type gets its own dedicated band
   // (replaces velocity zones in the physical 2D layout)
@@ -1545,6 +1529,35 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       requiredW: sg.rtLayout.nCols * sg.rtSlot + 2*sg.rtPa + 0.6};  // full pa BOTH sides + margins
   });
 
+  // ── RE-DERIVE BAND HEIGHTS FROM THE FINAL WIDTH ───────────────────────────
+  // Every staging/support band is (area / warehouse width). The width is driven
+  // by the racks, so these must be recomputed once actualWW is final, otherwise
+  // the bands are too short and the rack sections overrun them.
+  recH     = Math.max(4,(receivingArea||0)/actualWW);
+  disH     = Math.max(4,(dispatchArea||0)/actualWW);
+  stagingH = Math.max(recH,disH);
+  offH     = Math.max(3,(officeArea||50)/actualWW);
+  mheH     = mheArea>0 ? Math.max(2,mheArea/actualWW) : 0;
+  supportH = offH + mheH;
+
+  // ── NORTH BANDS: office / MHE, then outbound staging when docks are on both ends
+  if (officeArea>0) {
+    supportRects.push({ key:'office', x:0, y:cur, w:actualWW/2, h:offH,
+      label:'OFFICE / WELFARE', color:'#dbeafe', border:'#3b82f6', text:'#1d4ed8' });
+  }
+  if (mheH>0) {
+    supportRects.push({ key:'mhe', x:actualWW/2, y:cur, w:actualWW/2, h:offH+mheH,
+      label:'MHE CHARGING', color:'#fdf4ff', border:'#9333ea', text:'#6b21a8' });
+  }
+  cur+=supportH;
+
+  if (isBoth) {
+    stagingRects.push({ key:'dispatch', x:0, y:cur, w:actualWW, h:disH,
+      label:'DISPATCH / PACKING', subLabel:`${dispatchArea}m² (${sqft(dispatchArea)})`,
+      color:'#fef3c7', border:'#d97706', text:'#92400e' });
+    cur+=disH;
+  }
+
   // ── BUILD zoneRects in RACK_ORDER (now all sectionLayouts are final) ─────
   RACK_ORDER.forEach(rt => {
     var sl=sectionLayouts[rt];
@@ -1585,8 +1598,10 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       label:'CROSS AISLE (Storage ↔ Staging)'});
     cur += SECTION_CA_W;
   }
-  // 1:1 scale: cur already tracks actual heights since display = actual
-  var layoutWL = cur + stagingH;
+  // 1:1 scale: cur already tracks actual heights since display = actual.
+  // Reserve exactly what the south staging branch below will push.
+  var southH  = isOne ? stagingH : isBoth ? recH : stagingH;
+  var layoutWL = cur + southH;
   actualWL = Math.max(wL, layoutWL);
 
   // WIDTH = strictly from non-ground rack requiredW.
@@ -1649,20 +1664,20 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   var dockDoors=[];
   var doorW=3.5;
   if (isOne) {
-    var sp=wW/(totalDocks+1);
-    for(let i=1;i<=totalDocks;i++) dockDoors.push({x:sp*i-doorW/2,y:wL,side:'south',label:`D${i}`});
+    var sp=actualWW/(totalDocks+1);
+    for(let i=1;i<=totalDocks;i++) dockDoors.push({x:sp*i-doorW/2,y:actualWL,side:'south',label:`D${i}`});
   } else if (isBoth) {
-    var ssp=wW/(inboundDocks+1);
-    for(let i=1;i<=inboundDocks;i++) dockDoors.push({x:ssp*i-doorW/2,y:wL,side:'south',label:`D${i}`});
-    var nsp=wW/(outboundDocks+1);
+    var ssp=actualWW/(inboundDocks+1);
+    for(let i=1;i<=inboundDocks;i++) dockDoors.push({x:ssp*i-doorW/2,y:actualWL,side:'south',label:`D${i}`});
+    var nsp=actualWW/(outboundDocks+1);
     for(let i=1;i<=outboundDocks;i++) dockDoors.push({x:nsp*i-doorW/2,y:0,side:'north',label:`D${inboundDocks+i}`});
   } else {
-    var eastW=Math.min(wW*0.3,14);
+    var eastW=Math.min(actualWW*0.3,14);
     var southN=inboundDocks, eastN=outboundDocks;
-    var ssp2=(wW-eastW)/(southN+1);
-    for(let i=1;i<=southN;i++) dockDoors.push({x:ssp2*i-doorW/2,y:wL,side:'south',label:`D${i}`});
-    var esp=wL/(eastN+1);
-    for(let i=1;i<=eastN;i++) dockDoors.push({x:wW,y:esp*i,side:'east',label:`D${southN+i}`});
+    var ssp2=(actualWW-eastW)/(southN+1);
+    for(let i=1;i<=southN;i++) dockDoors.push({x:ssp2*i-doorW/2,y:actualWL,side:'south',label:`D${i}`});
+    var esp=actualWL/(eastN+1);
+    for(let i=1;i<=eastN;i++) dockDoors.push({x:actualWW,y:esp*i,side:'east',label:`D${southN+i}`});
   }  // end dock config
 
   // ── RACK ROW HELPER ─────────────────────────────────────────────────────────
@@ -1757,6 +1772,23 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var nCols=Math.min(maxNcols, nColsMin);
     var bpf=totalBays>0?Math.max(minBpfZone,Math.ceil(totalBays/2/nCols)):bpfAtMax;
 
+    // ── HONOUR THE RESERVED SECTION GEOMETRY ────────────────────────────────
+    // computeSectionLayout already decided nCols/baysPerCol and the band height
+    // that `cur` advanced by. Drawing a different bpf here would push rows past
+    // the section into the next band (or into the staging area), so prefer the
+    // reserved values whenever they exist.
+    if(sl && sl.nCols>0)      nCols = sl.nCols;
+    if(sl && sl.baysPerCol>0) bpf   = sl.baysPerCol;
+
+    // Hard clamp: never draw taller than the band actually reserved.
+    if(zone.h>0 && bayHm>0){
+      var _avail = zone.h - 0.6;                       // top + bottom margin
+      var _nCA   = Math.floor(_avail/Math.max(1e-6,crossInterval)); // cross aisles inside
+      var _rowsH = Math.max(0, _avail - _nCA*CROSS_AISLE_W_M);
+      var _maxBpf= Math.max(1, Math.floor(_rowsH/bayHm + 1e-9));
+      if(bpf > _maxBpf) bpf = _maxBpf;
+    }
+
 
     // Rebuild cross aisles from actual bpf (ignore pre-computed crossYPositions)
     var crossYs=[];
@@ -1766,15 +1798,17 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
         _y+=bayHm; _s+=bayHm; _bc++;
         if(_s>=crossInterval&&_bc>=2&&(bpf-_b-1)>=2){
           crossYs.push(_y);
-          crossAisles.push({x:zone.x,y:zone.y+_y-CROSS_AISLE_W_M/2,
-            w:zone.w,h:CROSS_AISLE_W_M,isCrossAisle:true});
+          if(!(zone.h>0) || (_y+CROSS_AISLE_W_M/2)<=zone.h)
+            crossAisles.push({x:zone.x,y:zone.y+_y-CROSS_AISLE_W_M/2,
+              w:zone.w,h:CROSS_AISLE_W_M,isCrossAisle:true});
           _y+=CROSS_AISLE_W_M; _s=0; _bc=0;
         }
       }
     }
 
-    // Override zone height to exactly fit bpf bays + cross aisles
+    // Fit bpf bays + cross aisles, but never exceed the reserved band height
     var zoneH=_y+0.3;
+    if(zone.h>0 && zoneH>zone.h) zoneH=zone.h;
     var breakYs=[0,...crossYs,zoneH-0.3];
     let curX=zone.x+0.3+pa/2;   // +pa/2 shift → rx[0]=zone.x+0.3+pa (full picking aisle before col A)
     var globalBayNum=1;
@@ -1786,9 +1820,11 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
 
       // ── Pass 1: count actual drawn bays across all segments ──────────
       var actualBays=0;
+      var zoneBottom=zone.y+(zone.h>0?zone.h:zoneH)-0.3;  // never draw past the band
       for(let j2=0;j2<breakYs.length-1;j2++){
         var sy0=zone.y+breakYs[j2]+(j2>0?CROSS_AISLE_W_M/2:0.3);
         var ey0=zone.y+breakYs[j2+1]-(j2<breakYs.length-2?CROSS_AISLE_W_M/2:0);
+        if(ey0>zoneBottom) ey0=zoneBottom;
         if(ey0-sy0>=0.5) actualBays+=Math.max(1,Math.floor((ey0-sy0)/bayHm+1e-9));
       }
 
@@ -1802,6 +1838,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       for(let j=0;j<breakYs.length-1;j++){
         var sy=zone.y+breakYs[j]+(j>0?CROSS_AISLE_W_M/2:0.3);
         var ey=zone.y+breakYs[j+1]-(j<breakYs.length-2?CROSS_AISLE_W_M/2:0);
+        if(ey>zoneBottom) ey=zoneBottom;   // clamp to the reserved band
         if(ey-sy<0.5) continue;
         var segBays=Math.max(1,Math.floor((ey-sy)/bayHm+1e-9));
         rows.push({x:rx, y:sy, w:faceDepth, h:ey-sy, ...ri, dom, bayHm,
