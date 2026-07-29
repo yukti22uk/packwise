@@ -4,7 +4,7 @@
 // Step 3: Order / Pick data (for velocity)
 // Step 4: Inventory data (current stock)
 // Outputs: SKU slotting, rack recommendations, warehouse sizing, SVG floor plan
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import * as XLSX from 'xlsx';
 import PptxGenJS from 'pptxgenjs';
@@ -3689,13 +3689,30 @@ function exportExcel(analysis, design, params, rackConfig, binOverrides) {
     [],
     ['TOTAL GROSS FLOOR AREA','',wW*wL,toSqFt(wW*wL),'100%'],
     ['Warehouse Dimensions','',`${wW}m × ${wL}m`,`${(wW*3.281).toFixed(0)}ft × ${(wL*3.281).toFixed(0)}ft`,''],
+    ...(function(){
+      // Envelope actually produced by the floor plan (aisles, cross aisles, staging bands)
+      try {
+        const L = buildFloorPlanLayout(design, params, rackConfig||[], analysis, false);
+        if (!L || !(L.actualWW>0) || !(L.actualWL>0)) return [];
+        const lw = Math.round(L.actualWW*10)/10, ll = Math.round(L.actualWL*10)/10;
+        return [
+          [],
+          ['AS-DRAWN LAYOUT ENVELOPE'],
+          ['Layout Dimensions','',lw+'m × '+ll+'m',
+            (lw*3.281).toFixed(0)+'ft × '+(ll*3.281).toFixed(0)+'ft',''],
+          ['Layout Gross Floor Area','',Math.round(lw*ll),toSqFt(Math.round(lw*ll)),''],
+          ['Rack Area (sum of configs)','',
+            Math.round((rackConfig||[]).reduce((s,cf)=>s+(parseFloat(cf.area)||0),0)*10)/10,'',''],
+        ];
+      } catch(e) { return []; }
+    })(),
   ],[28,36,12,16,12]),'6. Area Summary');
 
   XLSX.writeFile(wb,`Warehouse_Design_${today.replace(/\//g,'-')}.xlsx`);
 }
 
 // ─── PPT EXPORT ───────────────────────────────────────────────────────────────
-function exportPPT(analysis, design, params) {
+function exportPPT(analysis, design, params, rackConfig) {
   const prs  = new PptxGenJS();
   const today= new Date().toLocaleDateString();
   const PINK ='BE185D', DARK='0F172A', WHITE='FFFFFF', GRAY='64748B',
@@ -3800,6 +3817,14 @@ function exportPPT(analysis, design, params) {
     ['Circulation (8% of racking)',design.circulationArea+'m²'],
     ['Total Gross Floor Area',design.totalGrossArea+'m²'],
     ['Recommended Dimensions',`${design.wW}m × ${design.wL}m`],
+    ...(function(){
+      try {
+        const L = buildFloorPlanLayout(design, params, rackConfig||[], analysis, false);
+        if (!L || !(L.actualWW>0) || !(L.actualWL>0)) return [];
+        const lw = Math.round(L.actualWW*10)/10, ll = Math.round(L.actualWL*10)/10;
+        return [['As-Drawn Layout',lw+'m × '+ll+'m ('+Math.round(lw*ll).toLocaleString()+'m²)']];
+      } catch(e) { return []; }
+    })(),
     ['Clear Height Input',`${params.clearH}m`],
     ['Pallet Rack Levels',design.palletLevels],
     ['Shelf Rack Levels',design.shelfLevels],
@@ -4856,6 +4881,39 @@ export default function WarehouseDesignerTool() {
     setLoading(false);
     setTimeout(() => { setProgress(0); setProgressMsg(''); }, 2000);
   };
+
+  // ── LAYOUT-DERIVED AREA SUMMARY ─────────────────────────────────────────
+  // The headline figures must match the drawn plan, not the pre-layout estimate:
+  // buildFloorPlanLayout resolves the real envelope (actualWW x actualWL) after
+  // rack geometry, band heights and aisle clearances are applied.
+  const summaryFromLayout = (dsn, rcfg) => {
+    if (!dsn) return null;
+    const cfgs = rcfg || [];
+    const rackArea = cfgs.reduce((s,cf)=>s+(parseFloat(cf.area)||0), 0);
+    let wWv = parseFloat(dsn.wW)||0, wLv = parseFloat(dsn.wL)||0, fromLayout = false;
+    try {
+      const L = buildFloorPlanLayout(dsn, params, cfgs, analysis, false);
+      if (L && L.actualWW > 0 && L.actualWL > 0) {
+        wWv = L.actualWW; wLv = L.actualWL; fromLayout = true;
+      }
+    } catch (err) { /* fall back to the design estimate */ }
+    return {
+      wW: Math.round(wWv*10)/10,
+      wL: Math.round(wLv*10)/10,
+      gross: Math.round(wWv*wLv),
+      rackArea: Math.round((rackArea || parseFloat(dsn.netRackArea) || 0)*10)/10,
+      fromLayout,
+    };
+  };
+  // params is a fresh object each render, so key the memo on its serialised value
+  // instead of its identity — otherwise the heavy layout build runs every render.
+  const paramsKey = JSON.stringify(params);
+  const udSummary  = useMemo(()=>summaryFromLayout(userDesign, userRackConfig),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [userDesign, userRackConfig, analysis, paramsKey]);
+  const sysSummary = useMemo(()=>summaryFromLayout(design, rackConfig),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [design, rackConfig, analysis, paramsKey]);
 
   // ── Bin / Pallet editor handlers ────────────────────────────────────────
   const updateBinField = (binKey, idx, field, val) => {
@@ -6685,9 +6743,9 @@ export default function WarehouseDesignerTool() {
               )}
               <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'12px'}}>
                 {[
-                  ['Gross Area', `${(userDesign.wW*userDesign.wL).toLocaleString()}m²`, '#eff6ff','#1d4ed8'],
-                  ['Dimensions', `${userDesign.wW}×${userDesign.wL}m`, '#f0fdf4','#166534'],
-                  ['Rack Area', `${userDesign.netRackArea||0}m²`, '#f5f3ff','#7c3aed'],
+                  ['Gross Area', `${(udSummary?.gross||0).toLocaleString()}m²`, '#eff6ff','#1d4ed8'],
+                  ['Dimensions', `${udSummary?.wW||0}×${udSummary?.wL||0}m`, '#f0fdf4','#166534'],
+                  ['Rack Area', `${(udSummary?.rackArea||0).toLocaleString()}m²`, '#f5f3ff','#7c3aed'],
                 ].map(([l,v,bg,col])=>(
                   <div key={l} style={{background:bg,borderRadius:'10px',padding:'12px',
                     textAlign:'center',border:`1px solid ${col}22`}}>
@@ -6697,6 +6755,14 @@ export default function WarehouseDesignerTool() {
                   </div>
                 ))}
               </div>
+              {udSummary && (
+                <div style={{fontSize:'10px',color:'#6b7280',marginTop:'-6px',marginBottom:'12px',
+                  textAlign:'center'}}>
+                  {udSummary.fromLayout
+                    ? 'Derived from the generated floor plan (includes aisles, cross aisles and staging bands)'
+                    : 'Estimated — generate the layout for exact dimensions'}
+                </div>
+              )}
               {/* Download */}
               <div style={{display:'flex',gap:'10px'}}>
                 <button onClick={()=>exportExcel(analysis,userDesign,params,userRackConfig,binOverrides)}
@@ -7645,6 +7711,31 @@ export default function WarehouseDesignerTool() {
                 </table>
               </div>
             </div>
+
+            {/* Layout-derived area summary */}
+            {sysSummary && (
+              <div style={{marginBottom:'12px'}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px'}}>
+                  {[
+                    ['Gross Area', `${(sysSummary.gross||0).toLocaleString()}m²`, '#eff6ff','#1d4ed8'],
+                    ['Dimensions', `${sysSummary.wW||0}×${sysSummary.wL||0}m`, '#f0fdf4','#166534'],
+                    ['Rack Area', `${(sysSummary.rackArea||0).toLocaleString()}m²`, '#f5f3ff','#7c3aed'],
+                  ].map(([l,v,bg,col])=>(
+                    <div key={l} style={{background:bg,borderRadius:'10px',padding:'12px',
+                      textAlign:'center',border:`1px solid ${col}22`}}>
+                      <div style={{fontSize:'16px',fontWeight:'800',color:col}}>{v}</div>
+                      <div style={{fontSize:'10px',color:'#6b7280',marginTop:'3px',
+                        fontWeight:'600',textTransform:'uppercase'}}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{fontSize:'10px',color:'#6b7280',marginTop:'6px',textAlign:'center'}}>
+                  {sysSummary.fromLayout
+                    ? 'Derived from the generated floor plan (includes aisles, cross aisles and staging bands)'
+                    : 'Estimated — generate the layout for exact dimensions'}
+                </div>
+              </div>
+            )}
 
             {/* Download buttons */}
             <div style={{display:'flex',gap:'12px'}}>
