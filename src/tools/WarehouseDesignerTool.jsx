@@ -1995,7 +1995,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
 }
 
 function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, zoom=1,
-  measureOn=false, measurePts=[], measurements=[], onMeasurePoint }) {
+  measureOn=false, measurePts=[], measurements=[], onMeasurePoint, snapOn=true }) {
   if (!design?.wW || !design?.wL) return null;
 
   let fp;
@@ -2027,6 +2027,39 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
   // zoom, viewBox scaling, CSS sizing and scroll offset in one step.
   const M_INV_X = px => (px - ML) / sX;
   const M_INV_Y = py => (py - MT) / sY;
+  // Snap candidates: every real edge in the plan, in metres.
+  // Built on click (not per render) so a 7,000-row plan costs nothing to draw.
+  const snapTargets = () => {
+    const xs = new Set([0, actualWW]);
+    const ys = new Set([0, actualWL]);
+    const addRect = r => {
+      if (!r) return;
+      if (r.x != null) { xs.add(+r.x.toFixed(3)); xs.add(+(r.x + (r.w||0)).toFixed(3)); }
+      if (r.y != null) { ys.add(+r.y.toFixed(3)); ys.add(+(r.y + (r.h||0)).toFixed(3)); }
+    };
+    (allRackRows||[]).forEach(addRect);
+    (allCrossAisles||[]).forEach(addRect);
+    (sectionCrossAisles||[]).forEach(addRect);
+    (zoneRects||[]).forEach(addRect);
+    (stagingRects||[]).forEach(addRect);
+    (supportRects||[]).forEach(addRect);
+    return { xs:[...xs], ys:[...ys] };
+  };
+
+  // Snap a raw point onto the nearest edge within ~6 SVG px
+  const snapPoint = (mx, my) => {
+    // ~6 screen px, but never more than 0.5m — on a long plan sY is small, so an
+    // uncapped tolerance would grab edges metres away and read the wrong feature.
+    const SNAP_MAX_M = 0.5;
+    const tolX = Math.min(6 / Math.max(1e-6, sX), SNAP_MAX_M);
+    const tolY = Math.min(6 / Math.max(1e-6, sY), SNAP_MAX_M);
+    const t = snapTargets();
+    let bx = mx, by = my, hitX = false, hitY = false, dbx = tolX, dby = tolY;
+    t.xs.forEach(v => { const d = Math.abs(v - mx); if (d < dbx) { dbx = d; bx = v; hitX = true; } });
+    t.ys.forEach(v => { const d = Math.abs(v - my); if (d < dby) { dby = d; by = v; hitY = true; } });
+    return { x:bx, y:by, snapped: hitX || hitY };
+  };
+
   const handleMeasureClick = (evt) => {
     if (!measureOn || !onMeasurePoint) return;
     const svgEl = evt.currentTarget;
@@ -2046,7 +2079,9 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
       ux = ((evt.clientX - r.left) / r.width)  * SVG_W;
       uy = ((evt.clientY - r.top)  / r.height) * SVG_H;
     }
-    onMeasurePoint({ x:+M_INV_X(ux).toFixed(3), y:+M_INV_Y(uy).toFixed(3) });
+    let mx = M_INV_X(ux), my = M_INV_Y(uy), snapped = false;
+    if (snapOn) { const s = snapPoint(mx, my); mx = s.x; my = s.y; snapped = s.snapped; }
+    onMeasurePoint({ x:+mx.toFixed(3), y:+my.toFixed(3), snapped });
   };
 
   // Straight-line distance between two points, in metres
@@ -2602,37 +2637,52 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
             const lbl=(dd*1000).toFixed(0)+'mm';
             const sub=dd.toFixed(2)+'m / '+(dd*3.2808).toFixed(1)+'ft';
             const boxW=Math.max(58, lbl.length*7+22);
+            // Axis-locked measurements draw green so it is obvious they are exact
+            const axis=b.ortho||null;
+            const CLR=axis?'#059669':'#be185d';
+            const CLR2=axis?'#047857':'#9f1239';
             return (
               <g key={'ms'+mi}>
                 <line x1={x1} y1={y1} x2={x2} y2={y2}
-                  stroke="#be185d" strokeWidth="1.6" strokeLinecap="round"/>
-                <line x1={x1} y1={y1} x2={x2} y2={y1}
-                  stroke="#be185d" strokeWidth="0.6" strokeDasharray="3,3" opacity="0.5"/>
-                <line x1={x2} y1={y1} x2={x2} y2={y2}
-                  stroke="#be185d" strokeWidth="0.6" strokeDasharray="3,3" opacity="0.5"/>
-                <circle cx={x1} cy={y1} r="4" fill="#fff" stroke="#be185d" strokeWidth="1.6"/>
-                <circle cx={x1} cy={y1} r="1.4" fill="#be185d"/>
-                <circle cx={x2} cy={y2} r="4" fill="#fff" stroke="#be185d" strokeWidth="1.6"/>
-                <circle cx={x2} cy={y2} r="1.4" fill="#be185d"/>
-                {Math.abs(dx)>0.05 && (
+                  stroke={CLR} strokeWidth="1.6" strokeLinecap="round"/>
+                {!axis && (<>
+                  <line x1={x1} y1={y1} x2={x2} y2={y1}
+                    stroke={CLR} strokeWidth="0.6" strokeDasharray="3,3" opacity="0.5"/>
+                  <line x1={x2} y1={y1} x2={x2} y2={y2}
+                    stroke={CLR} strokeWidth="0.6" strokeDasharray="3,3" opacity="0.5"/>
+                </>)}
+                {[[x1,y1,a],[x2,y2,b]].map(([cx,cy,pp],ci)=>(
+                  pp&&pp.snapped
+                    ? <rect key={ci} x={cx-3.6} y={cy-3.6} width="7.2" height="7.2"
+                        fill="#fff" stroke={CLR} strokeWidth="1.6"/>
+                    : <circle key={ci} cx={cx} cy={cy} r="4"
+                        fill="#fff" stroke={CLR} strokeWidth="1.6"/>
+                ))}
+                <circle cx={x1} cy={y1} r="1.4" fill={CLR}/>
+                <circle cx={x2} cy={y2} r="1.4" fill={CLR}/>
+                {!axis && Math.abs(dx)>0.05 && (
                   <text x={(x1+x2)/2} y={y1-3} textAnchor="middle" fontSize="6"
-                    fill="#be185d" opacity="0.85">
+                    fill={CLR} opacity="0.85">
                     {'dX '+(Math.abs(dx)*1000).toFixed(0)+'mm'}
                   </text>
                 )}
-                {Math.abs(dy)>0.05 && (
-                  <text x={x2+4} y={(y1+y2)/2} fontSize="6" fill="#be185d" opacity="0.85">
+                {!axis && Math.abs(dy)>0.05 && (
+                  <text x={x2+4} y={(y1+y2)/2} fontSize="6" fill={CLR} opacity="0.85">
                     {'dY '+(Math.abs(dy)*1000).toFixed(0)+'mm'}
                   </text>
                 )}
                 <g transform={'translate('+mx+','+my+') rotate('+ang+')'}>
                   <rect x={-boxW/2} y={-19} width={boxW} height="24" rx="4"
-                    fill="#ffffff" stroke="#be185d" strokeWidth="1" opacity="0.96"/>
+                    fill="#ffffff" stroke={CLR} strokeWidth="1" opacity="0.96"/>
                   <text x="0" y="-9" textAnchor="middle" fontSize="9.5"
-                    fontWeight="800" fill="#be185d">{lbl}</text>
-                  <text x="0" y="0" textAnchor="middle" fontSize="6.5" fill="#9f1239">{sub}</text>
+                    fontWeight="800" fill={CLR}>{lbl}</text>
+                  <text x="0" y="0" textAnchor="middle" fontSize="6.5" fill={CLR2}>{sub}</text>
+                  {axis && (
+                    <text x={boxW/2-7} y={-11} textAnchor="middle" fontSize="6"
+                      fontWeight="800" fill="#059669">{axis==='H'?'0°':'90°'}</text>
+                  )}
                 </g>
-                <text x={x1+6} y={y1-6} fontSize="7" fontWeight="800" fill="#be185d">{mi+1}</text>
+                <text x={x1+6} y={y1-6} fontSize="7" fontWeight="800" fill={CLR}>{mi+1}</text>
               </g>
             );
           })}
@@ -4777,6 +4827,7 @@ export default function WarehouseDesignerTool() {
   const [measureOn,    setMeasureOn]    = useState(false);
   const [measurePts,   setMeasurePts]   = useState([]);   // in-progress point(s), metres
   const [measurements, setMeasurements] = useState([]);   // completed [ptA, ptB] pairs
+  const [snapOn,       setSnapOn]       = useState(true);  // ortho lock + edge snapping
   const [floorPlanFS, setFloorPlanFS] = useState(false); // fullscreen 2D plan
   const plan2DRef   = useRef(null);
   const planScrollRef = useRef(null); // for passive wheel zoom
@@ -5035,10 +5086,29 @@ export default function WarehouseDesignerTool() {
 
   // ── Measuring tool handlers ─────────────────────────────────────────────
   // Two clicks make one measurement; the first click is held in measurePts.
+  // Ortho lock: if the second point is within ORTHO_TOL_DEG of horizontal or
+  // vertical, force it exactly onto that axis. Clicking a pixel-perfect 0/90
+  // line by hand is not realistic, so this is on by default.
+  const ORTHO_TOL_DEG = 8;
+  const applyOrtho = (a, b) => {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    if (!dx && !dy) return b;
+    const ang   = Math.abs(Math.atan2(dy, dx) * 180 / Math.PI); // 0..180
+    const fromH = Math.min(ang, 180 - ang);   // angular distance to horizontal
+    const fromV = Math.abs(ang - 90);         // angular distance to vertical
+    if (fromH <= ORTHO_TOL_DEG && fromH <= fromV)
+      return { ...b, y:a.y, ortho:'H' };      // lock horizontal
+    if (fromV <= ORTHO_TOL_DEG)
+      return { ...b, x:a.x, ortho:'V' };      // lock vertical
+    return b;
+  };
+
   const onMeasurePoint = (pt) => {
     setMeasurePts(prev => {
       if (!prev.length) return [pt];
-      setMeasurements(ms => [...ms, [prev[0], pt]]);
+      const a = prev[0];
+      const b = snapOn ? applyOrtho(a, pt) : pt;
+      setMeasurements(ms => [...ms, [a, b]]);
       return [];
     });
   };
@@ -6899,6 +6969,17 @@ export default function WarehouseDesignerTool() {
                       color:measureOn?'#be185d':'#6b7280'}}>
                     📏 Measure{measureOn?' ON':''}
                   </button>
+                  {measureOn&&(
+                    <button onClick={()=>setSnapOn(v=>!v)}
+                      title="Lock to 0°/90° and snap onto rack and wall edges"
+                      style={{padding:'2px 8px',borderRadius:'5px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'10px',fontWeight:'700',
+                        border:`1px solid ${snapOn?'#059669':'#e2e8f0'}`,
+                        background:snapOn?'#f0fdf4':'#fff',
+                        color:snapOn?'#059669':'#6b7280'}}>
+                      ⊥ Snap {snapOn?'ON':'OFF'}
+                    </button>
+                  )}
                   {(measurements.length>0||measurePts.length>0)&&(<>
                     <button onClick={undoMeasurement}
                       style={{padding:'2px 7px',borderRadius:'5px',cursor:'pointer',
@@ -6925,7 +7006,7 @@ export default function WarehouseDesignerTool() {
                     setPlanZoom(z=>Math.max(0.3,Math.min(6,z*(e.deltaY<0?1.15:1/1.15))));}}>
                   <FloorPlanSVG analysis={analysis} design={userDesign} params={params}
                     rackConfig={userRackConfig||rackConfig} zoom={planZoom} measureOn={measureOn} measurePts={measurePts}
-                    measurements={measurements} onMeasurePoint={onMeasurePoint}/>
+                    measurements={measurements} onMeasurePoint={onMeasurePoint} snapOn={snapOn}/>
                 </div>
               </div>
               {/* Warehouse size summary */}
@@ -7765,6 +7846,17 @@ export default function WarehouseDesignerTool() {
                           color:measureOn?'#be185d':'#6b7280'}}>
                         📏 Measure{measureOn?' ON':''}
                       </button>
+                      {measureOn&&(
+                        <button onClick={()=>setSnapOn(v=>!v)}
+                          title="Lock to 0°/90° and snap onto rack and wall edges"
+                          style={{padding:'3px 9px',borderRadius:'6px',cursor:'pointer',
+                            fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                            border:`1px solid ${snapOn?'#059669':'#e2e8f0'}`,
+                            background:snapOn?'#f0fdf4':'#fff',
+                            color:snapOn?'#059669':'#6b7280'}}>
+                          ⊥ Snap {snapOn?'ON':'OFF'}
+                        </button>
+                      )}
                       {(measurements.length>0||measurePts.length>0)&&(<>
                         <button onClick={undoMeasurement}
                           style={{padding:'3px 8px',borderRadius:'6px',cursor:'pointer',
@@ -7792,7 +7884,7 @@ export default function WarehouseDesignerTool() {
                         maxHeight:'600px',background:'#f8fafc',cursor:'grab'}}>
                       <FloorPlanSVG analysis={analysis} design={design} params={params}
                         rackConfig={rackConfig} zoom={planZoom} measureOn={measureOn} measurePts={measurePts}
-                    measurements={measurements} onMeasurePoint={onMeasurePoint}/>
+                    measurements={measurements} onMeasurePoint={onMeasurePoint} snapOn={snapOn}/>
                     </div>
                   </>)}
 
@@ -8026,6 +8118,16 @@ export default function WarehouseDesignerTool() {
                   color:measureOn?'#fff':'#94a3b8'}}>
                 📏 Measure{measureOn?' ON':''}
               </button>
+              {measureOn&&(
+                <button onClick={()=>setSnapOn(v=>!v)}
+                  title="Lock to 0°/90° and snap onto rack and wall edges"
+                  style={{padding:'4px 10px',borderRadius:'6px',cursor:'pointer',border:'none',
+                    fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                    background:snapOn?'#059669':'#1e293b',
+                    color:snapOn?'#fff':'#94a3b8'}}>
+                  ⊥ Snap {snapOn?'ON':'OFF'}
+                </button>
+              )}
               {(measurements.length>0||measurePts.length>0)&&(<>
                 <button onClick={undoMeasurement}
                   style={{padding:'4px 8px',borderRadius:'6px',cursor:'pointer',border:'none',
@@ -8086,7 +8188,7 @@ export default function WarehouseDesignerTool() {
                 fullscreen={true}
                 zoom={planZoom}
                 measureOn={measureOn} measurePts={measurePts}
-                measurements={measurements} onMeasurePoint={onMeasurePoint}/>
+                measurements={measurements} onMeasurePoint={onMeasurePoint} snapOn={snapOn}/>
             </div>
           </div>
         </div>
