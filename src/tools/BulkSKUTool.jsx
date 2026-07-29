@@ -49,9 +49,112 @@ function calcStackLayers(pL, pW, pH, sl, sw, sh, isLocked) {
 //  1. Each box fits the pallet in at least one orientation
 //  2. Combined height (separate layers per SKU) ≤ pallet height
 //  3. Combined floor area (each SKU's strip on pallet base) ≤ pallet area
-function calcMixedFitment(a,b,c,d){return{feasible:true,warning:null,totalH:0,totalFloor:0,oriented:[]};}
+function calcMixedFitment(palletSkus, pL, pW, pH) {
+  const perms = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
 
+  // Pass 1 — find ALL valid orientations for each SKU
+  const candidates = palletSkus.map(sku => {
+    const dims = [sku.sl, sku.sw, sku.sh];
+    if (!dims.every(d => d > 0)) return { ...sku, ok: false, reason: 'Missing dimensions', opts: [] };
 
+    const opts = [];
+    perms.forEach(([x,y,z]) => {
+      if (dims[z] > pH) return;
+      const acL = Math.floor(pL / dims[x]);
+      const acW = Math.floor(pW / dims[y]);
+      if (!acL || !acW) return;
+      opts.push({ perLayer: acL * acW, boxH: dims[z], footL: dims[x], footW: dims[y], acL, acW });
+    });
+
+    if (!opts.length) return { ...sku, ok: false,
+      reason: `Box ${dims.join('×')}mm can't fit pallet ${pL}×${pW}×${pH}mm`, opts: [] };
+
+    // Sort by perLayer desc so opts[0] = best throughput orientation
+    opts.sort((a,b) => b.perLayer - a.perLayer || a.boxH - b.boxH);
+    return { ...sku, ok: true, opts };
+  });
+
+  const bad = candidates.filter(o => !o.ok);
+  if (bad.length) return {
+    feasible: false,
+    reason: bad.map(b => `${b.name}: ${b.reason}`).join('; '),
+    warning: null, oriented: candidates,
+  };
+
+  // Pass 2 — choose orientations that minimise height spread
+  // Collect all unique heights available across all SKUs
+  const allHeights = [...new Set(candidates.flatMap(c => c.opts.map(o => o.boxH)))].sort((a,b)=>a-b);
+
+  // For each candidate target-height layer, pick the best-fitting orientation per SKU
+  // (must have perLayer ≥ 1; prefer max perLayer within ≤ 20% loss vs best)
+  let bestCombo = null, bestRatio = Infinity;
+
+  for (const targetH of allHeights) {
+    const oriented = candidates.map(c => {
+      // Prefer opts whose boxH == targetH, else closest below, else any
+      const exact   = c.opts.find(o => o.boxH === targetH);
+      const nearby  = c.opts.filter(o => Math.abs(o.boxH - targetH) / targetH <= 0.2)
+                            .sort((a,b) => b.perLayer - a.perLayer)[0];
+      const fallback = c.opts[0];  // highest perLayer
+      const chosen = exact || nearby || fallback;
+      const neededBoxes  = Math.max(1, Math.round((c.remainder||0) * (c.bpp||1)));
+      const layersNeeded = Math.ceil(neededBoxes / chosen.perLayer);
+      const heightNeeded = layersNeeded * chosen.boxH;
+      const floorFrac    = (chosen.footL * chosen.footW * Math.min(neededBoxes, chosen.perLayer)) / (pL * pW);
+      return { ...c, best: chosen, neededBoxes, layersNeeded, heightNeeded, floorFrac };
+    });
+
+    const totalH = oriented.reduce((s,o) => s + o.heightNeeded, 0);
+    if (totalH > pH) continue;   // this combo is too tall
+    const totalFloor = oriented.reduce((s,o) => s + o.floorFrac, 0);
+    if (totalFloor > 1.05) continue;
+
+    const hs = oriented.map(o => o.best.boxH);
+    const ratio = Math.max(...hs) / Math.min(...hs);
+    if (ratio < bestRatio) { bestRatio = ratio; bestCombo = oriented; }
+  }
+
+  // Fallback: no single target worked — use per-SKU best orientation
+  if (!bestCombo) {
+    bestCombo = candidates.map(c => {
+      const chosen = c.opts[0];
+      const neededBoxes  = Math.max(1, Math.round((c.remainder||0) * (c.bpp||1)));
+      const layersNeeded = Math.ceil(neededBoxes / chosen.perLayer);
+      const heightNeeded = layersNeeded * chosen.boxH;
+      const floorFrac    = (chosen.footL * chosen.footW * Math.min(neededBoxes, chosen.perLayer)) / (pL * pW);
+      return { ...c, best: chosen, neededBoxes, layersNeeded, heightNeeded, floorFrac };
+    });
+    bestRatio = (() => { const hs=bestCombo.map(o=>o.best.boxH); return Math.max(...hs)/Math.min(...hs); })();
+  }
+
+  const totalH    = bestCombo.reduce((s,o) => s + o.heightNeeded, 0);
+  const totalFloor= bestCombo.reduce((s,o) => s + o.floorFrac, 0);
+
+  // Height stability: warn only if even the best combo still has ratio > 1.5
+  const hs = bestCombo.map(o => o.best.boxH);
+  const hMin = Math.min(...hs), hMax = Math.max(...hs);
+  let warning = null;
+  if (hMax / hMin > 1.5) {
+    // Give actionable advice: show which SKU to rotate and to what height
+    const tallSku = bestCombo.find(o => o.best.boxH === hMax);
+    const shortSku = bestCombo.find(o => o.best.boxH === hMin);
+    const tallAlt  = tallSku?.opts?.filter(o => o.boxH <= hMin*1.5).sort((a,b)=>b.perLayer-a.perLayer)[0];
+    const shortAlt = shortSku?.opts?.filter(o => o.boxH >= hMax/1.5).sort((a,b)=>b.perLayer-a.perLayer)[0];
+    const tips = [];
+    if (tallAlt)  tips.push(`rotate "${tallSku.name}" to ${tallAlt.boxH}mm-high orientation (${tallAlt.perLayer} boxes/layer)`);
+    if (shortAlt) tips.push(`rotate "${shortSku.name}" to ${shortAlt.boxH}mm-high orientation`);
+    if (!tips.length) tips.push('consider separate pallets for these SKUs');
+    warning = `Layer-height mismatch: ${hMin}–${hMax}mm (${(hMax/hMin).toFixed(1)}× ratio). `
+            + `To improve: ${tips.join(' or ')}.`;
+  }
+
+  return {
+    feasible: true, warning,
+    totalH, totalFloor: +(totalFloor * 100).toFixed(1),
+    oriented: bestCombo,
+    heightRatio: +bestRatio.toFixed(2),
+  };
+}
 
 // ─── PALLET MIXING ALGORITHM ──────────────────────────────────────────────────
 function calcPalletMix(skus, pL, pW, pH, maxSkus, lockHeight=false, lockedSkus=new Set()) {
@@ -167,7 +270,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
         vQ = calcLockedBPP(cL, cW, cH, sl, sw, sh);
         // Build orient string for locked (H always vertical)
         const best = Math.floor(cL/sl)*Math.floor(cW/sw) >= Math.floor(cL/sw)*Math.floor(cW/sl)
-          ? (sl+'x'+sw+'x'+sh) : (sw+'x'+sl+'x'+sh);
+          ? `${sl}×${sw}×${sh}` : `${sw}×${sl}×${sh}`;
         orient = best;
       } else {
         const res = calcMixed(cL, cW, cH, sl, sw, sh);
@@ -746,7 +849,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               ? <span style={{background:r.heightLocked?'#ede9fe':'#eff6ff',
                                   color:r.heightLocked?'#6d28d9':'#1d4ed8',
                                   padding:'2px 8px',borderRadius:'99px',fontSize:'11px',fontWeight:'700'}}>
-                                  {r.stackLayers}{r.heightLocked?' [L]':''}
+                                  {r.stackLayers}{r.heightLocked?' 🔒':''}
                                 </span>
                               : <span style={{color:'#9ca3af'}}>—</span>}
                           </td>
@@ -830,23 +933,32 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               </div>
                             </td>
                             {/* Size fitment status */}
-                            <td style={{padding:'6px 10px',minWidth:'140px'}}>
+                            <td style={{padding:'6px 10px',minWidth:'160px'}}>
                               <div style={{background:fitBg,borderRadius:'7px',
                                 padding:'5px 8px',fontSize:'11px',color:fitCol,fontWeight:'600'}}>
                                 <div>
-                                  {!fitOk?'❌ Infeasible':fitWarn?'⚠️ Unstable':'✅ Compatible'}
+                                  {!fitOk?'❌ Infeasible'
+                                    :fitWarn?`⚠️ Unstable (${fit.heightRatio}× height ratio)`
+                                    :'✅ Compatible'}
                                 </div>
                                 {!fitOk&&fit.reason&&
-                                  <div style={{ ...S.error, marginTop:'8px' }}>
+                                  <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400'}}>
                                     {fit.reason}
                                   </div>}
                                 {fitWarn&&fit.warning&&
-                                  <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400'}}>
+                                  <div style={{fontSize:'10px',marginTop:'4px',fontWeight:'400',color:'#92400e',
+                                    background:'#fef3c7',borderRadius:'4px',padding:'4px 6px',lineHeight:'1.4'}}>
                                     {fit.warning}
                                   </div>}
-                                {fitOk&&!fitWarn&&fit.totalH!=null&&
-                                  <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400',color:'#166534'}}>
+                                {fitOk&&fit.oriented&&
+                                  <div style={{fontSize:'10px',marginTop:'3px',fontWeight:'400',
+                                    color:fitWarn?'#92400e':'#166534'}}>
                                     H: {fit.totalH}mm · Floor: {fit.totalFloor}%
+                                    {fit.oriented.map(o=>(
+                                      <span key={o.name} style={{display:'block',marginTop:'1px',color:'#374151'}}>
+                                        {o.name}: {o.best.boxH}mm/layer · {o.best.perLayer} boxes/layer
+                                      </span>
+                                    ))}
                                   </div>}
                               </div>
                             </td>
@@ -859,7 +971,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                   {s.name}
                                   <span style={{fontWeight:'400',color:'#9ca3af',marginLeft:'4px'}}>
                                     ({(s.remainder*100).toFixed(1)}%)
-                                    {s.sl&&s.sw&&s.sh?` ${s.sl}\u00d7${s.sw}\u00d7${s.sh}`:''}
+                                    {s.sl&&s.sw&&s.sh?` ${s.sl}×${s.sw}×${s.sh}`:''}
                                   </span>
                                 </span>))}
                             </td>
