@@ -2828,10 +2828,12 @@ function downloadRackLocations(cfg, analysis) {
 // Generates AutoCAD DXF (Drawing Exchange Format).
 // Open in AutoCAD → File → Open → .dxf → then Save As → .dwg
 // Supported by all CAD tools: AutoCAD, FreeCAD, LibreCAD, Rhino, SolidWorks.
-// ─── DXF EXPORT (AutoCAD R2000 / AC1015 ASCII) ───────────────────────────────
-// Built from buildFloorPlanLayout output so the CAD file matches the drawn plan
-// exactly: same envelope, same rack positions, same aisles and staging bands.
-// Units are METRES (INSUNITS=6), Y is flipped so north sits at the top in CAD.
+// ─── DXF EXPORT (AutoCAD R12 / AC1009 ASCII) ─────────────────────────────────
+// R12 is deliberate: it is the most permissive, most universally readable DXF
+// flavour. It needs no entity handles, no AcDb subclass markers and no OBJECTS
+// section, all of which R2000+ requires and whose absence makes readers report
+// "invalid drawing input". Geometry comes from buildFloorPlanLayout so the CAD
+// file matches the drawn plan. 1 unit = 1 metre. Y is flipped so north is up.
 function exportDXF(analysis, design, params, rackConfig) {
   let fp;
   try {
@@ -2846,22 +2848,33 @@ function exportDXF(analysis, design, params, rackConfig) {
   const L  = [];
   const d  = (...pairs) => pairs.forEach(v => L.push(String(v)));
   const n  = v => (isFinite(v) ? v : 0).toFixed(4);
-  // CAD Y axis points up; plan Y points down. Flip so the drawing reads correctly.
-  const fy = y => WL - y;
+  const fy = y => WL - y;                 // CAD Y is up, plan Y is down
+
+  // DXF R12 is a plain ASCII format — strip anything outside ASCII or it is
+  // rejected. Also map the few symbols the plan labels actually use.
+  const asc = (str) => String(str == null ? '' : str)
+    .replace(/\u00b2/g, '2').replace(/\u00b3/g, '3')
+    .replace(/\u00d7/g, 'x').replace(/\u2194/g, '<->')
+    .replace(/[\u2013\u2014]/g, '-').replace(/\u00b7/g, '.')
+    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"')
+    .replace(/\u00b0/g, 'deg')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[^\x20-\x7E]/g, '')
+    .trim();
 
   const LAYERS = [
     ['0',                7],
-    ['WALLS',            7],   // white
-    ['RACKS_SHELVING',   5],   // blue
-    ['RACKS_PALLET',     1],   // red
-    ['RACKS_DRIVEIN',    8],   // dark grey
-    ['RACKS_CANTILEVER', 6],   // magenta
-    ['RACKS_GROUND',    30],   // orange
-    ['CROSS_AISLE',     52],   // dark yellow
-    ['SECTION_AISLE',   42],
-    ['STAGING',          3],   // green
-    ['SUPPORT',          4],   // cyan
-    ['DOCKS',            2],   // yellow
+    ['WALLS',            7],
+    ['RACKS_SHELVING',   5],
+    ['RACKS_PALLET',     1],
+    ['RACKS_DRIVEIN',    8],
+    ['RACKS_CANTILEVER', 6],
+    ['RACKS_GROUND',    30],
+    ['CROSS_AISLE',     52],
+    ['SECTION',         42],
+    ['STAGING',          3],
+    ['SUPPORT',          4],
+    ['DOCKS',            2],
     ['TEXT',             7],
     ['DIMS',             9],
   ];
@@ -2872,41 +2885,60 @@ function exportDXF(analysis, design, params, rackConfig) {
     ground:'RACKS_GROUND',
   };
 
-  // ── HEADER ────────────────────────────────────────────────────────────────
+  // ── HEADER (R12 variables only) ───────────────────────────────────────────
   d('0','SECTION','2','HEADER');
-  d('9','$ACADVER','1','AC1015');
-  d('9','$INSUNITS','70','6');        // metres
-  d('9','$MEASUREMENT','70','1');     // metric
-  d('9','$LUNITS','70','2');
-  d('9','$LUPREC','70','3');
-  d('9','$EXTMIN','10',n(-2),'20',n(-2),'30','0.0');
-  d('9','$EXTMAX','10',n(WW+2),'20',n(WL+2),'30','0.0');
+  d('9','$ACADVER','1','AC1009');
+  d('9','$INSBASE','10','0.0','20','0.0','30','0.0');
+  d('9','$EXTMIN','10',n(-4),'20',n(-4),'30','0.0');
+  d('9','$EXTMAX','10',n(WW+8),'20',n(WL+14),'30','0.0');
+  d('9','$LIMMIN','10',n(-4),'20',n(-4));
+  d('9','$LIMMAX','10',n(WW+8),'20',n(WL+14));
   d('0','ENDSEC');
 
-  // ── TABLES ────────────────────────────────────────────────────────────────
-  d('0','SECTION','2','TABLES','0','TABLE','2','LAYER','70',String(LAYERS.length));
+  // ── TABLES: LTYPE must exist because every LAYER references CONTINUOUS,
+  //    and STYLE must exist because every TEXT references STANDARD ──────────
+  d('0','SECTION','2','TABLES');
+
+  d('0','TABLE','2','LTYPE','70','1');
+  d('0','LTYPE','2','CONTINUOUS','70','0','3','Solid line','72','65','73','0','40','0.0');
+  d('0','ENDTAB');
+
+  d('0','TABLE','2','LAYER','70',String(LAYERS.length));
   LAYERS.forEach(([name,col]) => {
     d('0','LAYER','2',name,'70','0','62',String(col),'6','CONTINUOUS');
   });
-  d('0','ENDTAB','0','ENDSEC');
+  d('0','ENDTAB');
 
-  // ── ENTITY HELPERS ────────────────────────────────────────────────────────
-  const rect = (layer,x1,y1,x2,y2) => {
-    d('0','LWPOLYLINE','8',layer,'90','4','70','1');
-    d('10',n(x1),'20',n(fy(y1)));
-    d('10',n(x2),'20',n(fy(y1)));
-    d('10',n(x2),'20',n(fy(y2)));
-    d('10',n(x1),'20',n(fy(y2)));
+  d('0','TABLE','2','STYLE','70','1');
+  d('0','STYLE','2','STANDARD','70','0','40','0.0','41','1.0','50','0.0',
+    '71','0','42','0.2','3','txt','4','');
+  d('0','ENDTAB');
+
+  d('0','ENDSEC');
+
+  // ── ENTITY HELPERS (R12: POLYLINE + VERTEX + SEQEND, no LWPOLYLINE) ───────
+  const poly = (layer, pts, closed=true) => {
+    if (!pts || pts.length < 2) return;
+    d('0','POLYLINE','8',layer,'66','1','70',closed?'1':'0',
+      '10','0.0','20','0.0','30','0.0');
+    pts.forEach(([px,py]) => {
+      d('0','VERTEX','8',layer,'10',n(px),'20',n(fy(py)),'30','0.0');
+    });
+    d('0','SEQEND','8',layer);
   };
+  const rect = (layer,x1,y1,x2,y2) =>
+    poly(layer, [[x1,y1],[x2,y1],[x2,y2],[x1,y2]], true);
   const line = (layer,x1,y1,x2,y2) => {
     d('0','LINE','8',layer,'10',n(x1),'20',n(fy(y1)),'30','0.0',
       '11',n(x2),'21',n(fy(y2)),'31','0.0');
   };
-  // hj: 0 left, 1 centre
+  // hj: 0 = left, 1 = centre
   const txt = (layer,x,y,h,str,hj=0) => {
-    d('0','TEXT','8',layer,'10',n(x),'20',n(fy(y)),'30','0.0','40',n(h),
-      '1',String(str==null?'':str).replace(/\n/g,' '));
-    if (hj) { d('72','1','11',n(x),'21',n(fy(y)),'31','0.0'); }
+    const s2 = asc(str);
+    if (!s2) return;
+    d('0','TEXT','8',layer,'10',n(x),'20',n(fy(y)),'30','0.0',
+      '40',n(h),'1',s2,'7','STANDARD');
+    if (hj) d('72','1','11',n(x),'21',n(fy(y)),'31','0.0');
   };
 
   d('0','SECTION','2','ENTITIES');
@@ -2914,36 +2946,34 @@ function exportDXF(analysis, design, params, rackConfig) {
   // ── SHELL ─────────────────────────────────────────────────────────────────
   rect('WALLS',0,0,WW,WL);
 
-  // ── SECTION BANDS + LABELS ────────────────────────────────────────────────
+  // ── SECTION BANDS ─────────────────────────────────────────────────────────
   (fp.zoneRects||[]).forEach(z => {
-    rect('SECTION_AISLE', z.x, z.y, z.x+z.w, z.y+z.h);
+    rect('SECTION', z.x, z.y, z.x+z.w, z.y+z.h);
     if (z.label) txt('TEXT', z.x+0.4, z.y+0.9, 0.55, z.label);
   });
 
   // ── RACK ROWS (exactly as drawn) ──────────────────────────────────────────
   (fp.allRackRows||[]).forEach(r => {
-    const layer = RACK_LAYER[baseRackOf(r.dom)] || 'RACKS_SHELVING';
-    rect(layer, r.x, r.y, r.x+r.w, r.y+r.h);
+    rect(RACK_LAYER[baseRackOf(r.dom)] || 'RACKS_SHELVING',
+         r.x, r.y, r.x+r.w, r.y+r.h);
   });
 
   // ── AISLES ────────────────────────────────────────────────────────────────
-  (fp.allCrossAisles||[]).forEach(a => {
-    rect('CROSS_AISLE', a.x, a.y, a.x+a.w, a.y+a.h);
-  });
+  (fp.allCrossAisles||[]).forEach(a => rect('CROSS_AISLE', a.x, a.y, a.x+a.w, a.y+a.h));
   (fp.sectionCrossAisles||[]).forEach(a => {
     rect('CROSS_AISLE', a.x, a.y, a.x+a.w, a.y+a.h);
     if (a.label) txt('TEXT', a.x+a.w/2, a.y+a.h/2, 0.45, a.label, 1);
   });
 
   // ── STAGING + SUPPORT ─────────────────────────────────────────────────────
-  (fp.stagingRects||[]).forEach(s => {
-    rect('STAGING', s.x, s.y, s.x+s.w, s.y+s.h);
-    if (s.label)    txt('TEXT', s.x+s.w/2, s.y+s.h/2,     0.6, s.label, 1);
-    if (s.subLabel) txt('TEXT', s.x+s.w/2, s.y+s.h/2+0.9, 0.4, s.subLabel, 1);
+  (fp.stagingRects||[]).forEach(s2 => {
+    rect('STAGING', s2.x, s2.y, s2.x+s2.w, s2.y+s2.h);
+    if (s2.label)    txt('TEXT', s2.x+s2.w/2, s2.y+s2.h/2,     0.6, s2.label, 1);
+    if (s2.subLabel) txt('TEXT', s2.x+s2.w/2, s2.y+s2.h/2+0.9, 0.4, s2.subLabel, 1);
   });
-  (fp.supportRects||[]).forEach(s => {
-    rect('SUPPORT', s.x, s.y, s.x+s.w, s.y+s.h);
-    if (s.label) txt('TEXT', s.x+s.w/2, s.y+s.h/2, 0.55, s.label, 1);
+  (fp.supportRects||[]).forEach(s2 => {
+    rect('SUPPORT', s2.x, s2.y, s2.x+s2.w, s2.y+s2.h);
+    if (s2.label) txt('TEXT', s2.x+s2.w/2, s2.y+s2.h/2, 0.55, s2.label, 1);
   });
 
   // ── DOCK DOORS ────────────────────────────────────────────────────────────
@@ -2958,34 +2988,38 @@ function exportDXF(analysis, design, params, rackConfig) {
     }
   });
 
-  // ── OVERALL DIMENSION LINES ───────────────────────────────────────────────
-  const off = 1.4;
+  // ── OVERALL DIMENSIONS ────────────────────────────────────────────────────
+  const off = 1.6;
   line('DIMS', 0, -off, WW, -off);
-  line('DIMS', 0, -off-0.3, 0, -off+0.3);
-  line('DIMS', WW, -off-0.3, WW, -off+0.3);
-  txt('DIMS', WW/2, -off-0.5, 0.7, WW.toFixed(2)+' m', 1);
+  line('DIMS', 0, -off-0.35, 0, -off+0.35);
+  line('DIMS', WW, -off-0.35, WW, -off+0.35);
+  txt('DIMS', WW/2, -off-0.6, 0.75, WW.toFixed(2)+' m', 1);
 
   line('DIMS', WW+off, 0, WW+off, WL);
-  line('DIMS', WW+off-0.3, 0, WW+off+0.3, 0);
-  line('DIMS', WW+off-0.3, WL, WW+off+0.3, WL);
-  txt('DIMS', WW+off+0.5, WL/2, 0.7, WL.toFixed(2)+' m');
+  line('DIMS', WW+off-0.35, 0, WW+off+0.35, 0);
+  line('DIMS', WW+off-0.35, WL, WW+off+0.35, WL);
+  txt('DIMS', WW+off+0.55, WL/2, 0.75, WL.toFixed(2)+' m');
 
   // ── TITLE BLOCK ───────────────────────────────────────────────────────────
-  const rackArea = (rackConfig||[]).reduce((s,cf)=>s+(parseFloat(cf.area)||0),0);
+  const rackArea = (rackConfig||[]).reduce((s2,cf)=>s2+(parseFloat(cf.area)||0),0);
   const info = [
     'DENSICUBE WAREHOUSE LAYOUT',
     'Envelope: ' + WW.toFixed(2) + ' m x ' + WL.toFixed(2) + ' m',
-    'Gross area: ' + Math.round(WW*WL).toLocaleString() + ' m2',
-    'Rack area: ' + rackArea.toFixed(1) + ' m2',
+    'Gross area: ' + Math.round(WW*WL) + ' sq m',
+    'Rack area: ' + rackArea.toFixed(1) + ' sq m',
     'Clear height: ' + (params.clearH||'-') + ' m',
     'Aisle width: ' + (params.aisleW||'-') + ' m',
-    'Units: METRES   Generated: ' + new Date().toLocaleDateString(),
+    'Units: METRES (1 unit = 1 m)',
+    'Generated: ' + new Date().toISOString().slice(0,10),
   ];
-  info.forEach((t,i) => txt('TEXT', 0, WL + 3.2 + (info.length-i)*0.95, i===0?0.85:0.55, t));
+  info.forEach((t,i) => txt('TEXT', 0, WL + 4 + (info.length-i)*1.0, i===0?0.9:0.55, t));
 
-  d('0','ENDSEC','0','EOF');
+  d('0','ENDSEC');
+  d('0','EOF');
 
-  const blob = new Blob([L.join('\n')], {type:'application/dxf'});
+  // CRLF line endings: what AutoCAD writes, and what strict readers expect
+  const blob = new Blob([L.join('\r\n') + '\r\n'],
+    {type:'application/dxf;charset=us-ascii'});
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url;
