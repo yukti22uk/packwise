@@ -68,7 +68,7 @@ function calcMixedFitment(palletSkus, pL, pW, pH) {
     });
 
     if (!best) return { ...sku, ok: false,
-      reason: `Box ${dims.join('×')}mm can’t fit pallet ${pL}×${pW}×${pH}mm` };
+      reason: `Box ${dims.join('×')}mm can't fit pallet ${pL}×${pW}×${pH}mm` };
 
     const neededBoxes  = Math.max(1, Math.round((sku.remainder||0) * (sku.bpp||1)));
     const layersNeeded = Math.ceil(neededBoxes / best.perLayer);
@@ -902,7 +902,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                   {!fitOk?'❌ Infeasible':fitWarn?'⚠️ Unstable':'✅ Compatible'}
                                 </div>
                                 {!fitOk&&fit.reason&&
-                                  <div style={{fontSize:'10px',marginTop:'2px',fontWeight:'400'}}>
+                                  <div style={{ ...S.error, marginTop:'8px' }}>
                                     {fit.reason}
                                   </div>}
                                 {fitWarn&&fit.warning&&
