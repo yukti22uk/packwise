@@ -924,7 +924,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                   {s.name}
                                   <span style={{fontWeight:'400',color:'#9ca3af',marginLeft:'4px'}}>
                                     ({(s.remainder*100).toFixed(1)}%)
-                                    {s.sl&&s.sw&&s.sh?' '+s.sl+'\u00D7'+s.sw+'\u00D7'+s.sh:''}
+                                    {s.sl&&s.sw&&s.sh?` ${s.sl}\u00d7${s.sw}\u00d7${s.sh}`:''}
                                   </span>
                                 </span>))}
                             </td>
