@@ -27,6 +27,44 @@ const BIN_CATALOG = {
 // Shape: { XL:[{L,W,H,locs,label}, {…}, {…}], M:[{…}] }
 const MAX_BIN_VARIANTS = 3;
 
+// Split a pseudo bin key like "XL#v2" back to its base bin band
+function baseBinOf(key) {
+  if (!key) return key;
+  const i = key.indexOf('#');
+  return i < 0 ? key : key.slice(0, i);
+}
+
+// Expand a binSummary so each size variant becomes its own pseudo bin band
+// ("XL#v1", "XL#v2", …). Used by the User-Defined flow, which keys its whole
+// pipeline off binSummary. Returns the originals when nothing is multi-size.
+function expandBinVariants(analysis, binOverrides) {
+  const bs = (analysis && analysis.binSummary) || {};
+  let multi = false;
+  Object.keys(bs).forEach(function(k){
+    const a = binOverrides ? binOverrides[k] : null;
+    if (Array.isArray(a) && a.length > 1) multi = true;
+  });
+  if (!multi) return { analysis, binOverrides };
+
+  const bs2 = {}, ov2 = {};
+  Object.keys(bs).forEach(function(k){
+    const vs = binVariantsFor(k, binOverrides, bs[k].locs || 0);
+    if (vs.length <= 1) {
+      bs2[k] = bs[k];
+      if (binOverrides && binOverrides[k]) ov2[k] = binOverrides[k];
+      return;
+    }
+    vs.forEach(function(v, i){
+      const key = k + '#v' + (i + 1);
+      bs2[key] = { ...bs[k], locs: v.locs,
+        name: (bs[k].name || k) + ' - ' + v.label };
+      ov2[key] = [{ L:v.phys?v.phys[0]:'', W:v.phys?v.phys[1]:'',
+                    H:v.phys?v.phys[2]:'', locs:v.locs, label:v.label }];
+    });
+  });
+  return { analysis: { ...analysis, binSummary: bs2 }, binOverrides: ov2 };
+}
+
 // Split a layout key like "selective__v2" back to its base rack type
 function baseRackOf(key) {
   if (!key) return key;
@@ -36,7 +74,8 @@ function baseRackOf(key) {
 
 // Resolve the list of size variants for a bin band
 function binVariantsFor(binKey, binOverrides, fallbackLocs) {
-  const base = BIN_CATALOG[binKey] ? BIN_CATALOG[binKey].phys : null;
+  const bk = baseBinOf(binKey);
+  const base = BIN_CATALOG[bk] ? BIN_CATALOG[bk].phys : null;
   const arr  = binOverrides ? binOverrides[binKey] : null;
   if (Array.isArray(arr) && arr.length) {
     const out = [];
@@ -61,7 +100,8 @@ function binVariantsFor(binKey, binOverrides, fallbackLocs) {
 // Primary (first) physical size for a band — used where a single size is needed
 function binPhysFor(binKey, binOverrides) {
   const v = binVariantsFor(binKey, binOverrides, 0);
-  return v[0] ? v[0].phys : (BIN_CATALOG[binKey] ? BIN_CATALOG[binKey].phys : null);
+  const bk = baseBinOf(binKey);
+  return v[0] ? v[0].phys : (BIN_CATALOG[bk] ? BIN_CATALOG[bk].phys : null);
 }
 
 // Total requested locations across all variants ÷ system-generated locations
@@ -4001,6 +4041,9 @@ function calcForwardReserve(analysis, forwardRacks, reserveRacks, forwardDays, p
 //   L/XL   → pallet racks (selective, doubleDeep, driveIn)
 //   LONG   → ground / cantilever
 function calcUserRackConfigFromSystemBins(analysis, userRacks, params, binOverrides) {
+  // Each size variant becomes its own pseudo bin band, so it gets its own config
+  const _x = expandBinVariants(analysis, binOverrides);
+  analysis = _x.analysis; binOverrides = _x.binOverrides;
   const uLocScales = binLocScales(analysis, binOverrides);
   if (!analysis?.binSummary || !Object.keys(analysis.binSummary).length) return null;
   const CLEAR    = 30;
@@ -4174,7 +4217,7 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params, binOverri
 
   // ── Helper: best fit in regular racks — preferred category first ─────────────
   const bestRegular = (bL,bW,bH,binKey) => {
-    const pref = BIN_PREFERRED_CATEGORY[binKey];
+    const pref = BIN_PREFERRED_CATEGORY[baseBinOf(binKey)];
     const preferredRacks = regularRacks.filter(rk=>
       pref==='manual' ? MANUAL_RACK_TYPES.has(rk.rackType) :
       pref==='pallet' ? PALLET_RACK_TYPES.has(rk.rackType) : false
@@ -4219,7 +4262,7 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params, binOverri
   Object.entries(analysis?.binSummary||{}).forEach(([binKey,binInfo])=>{
     // Resolve bin physical dimensions (skip LONG here — handled per-SKU in Pass 2)
     let bL, bW, bH;
-    if (binKey === 'LONG') {
+    if (baseBinOf(binKey) === 'LONG') {
       // LONG has no single phys → always goes to ground pass for per-SKU fitting
       bL=0; bW=0; bH=0;
     } else {
@@ -4268,7 +4311,7 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params, binOverri
       const regFit=bestRegular(bL,bW,bH,binKey);
       if(regFit){
         const fittedRackType = regFit.rk.rackType;
-        const binPref = BIN_PREFERRED_CATEGORY[binKey];
+        const binPref = BIN_PREFERRED_CATEGORY[baseBinOf(binKey)];
 
         // ── Pallet-ization: manual bin (XS/S/M/L) falling back to pallet rack ──
         // When no shelving is selected, bins are grouped onto pallets.
@@ -4312,7 +4355,7 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params, binOverri
       const rW=parseFloat(rk.bayW), rD=parseFloat(rk.bayD);
       const stackLayers=Math.max(1,parseInt(rk.levels)||1);
 
-      if(perSku && (binKey==='LONG'||longBins.has(binKey))){
+      if(perSku && (baseBinOf(binKey)==='LONG'||longBins.has(baseBinOf(binKey)))){
         // ── PER-SKU FITTING for LONG goods ─────────────────────────────────
         const longSkus=(analysis.slotted||[]).filter(s=>s.bin===binKey&&s.stock>0&&s.L>0&&s.W>0&&s.H>0);
         const fittedSkus=[], unfittedSkus=[];
@@ -4446,7 +4489,7 @@ function calcUserRackConfigFromSystemBins(analysis, userRacks, params, binOverri
       orientation:fc.orient,tiers:1,levels:fc.lvl,
       acrossW:fc.aw,acrossD:fc.ad,stackH:fc.stack,
       locsPerBay:fc.lpb,locsPerBayTotal:fc.lpb,
-      locs:totalLocs,baysNeeded:bays,area,feasible:true,zone:ZONE_MAP[binKey]||'golden',
+      locs:totalLocs,baysNeeded:bays,area,feasible:true,zone:ZONE_MAP[baseBinOf(binKey)]||'golden',
       // Pallet-ization metadata (when manual bins fall back to pallet rack)
       isPalletized:!!isPalletized,
       binsPerPallet:binsPerPallet||null,
@@ -5423,29 +5466,140 @@ export default function WarehouseDesignerTool() {
                     <div style={{fontSize:'11px',fontWeight:'700',color:'#059669',marginBottom:'8px'}}>
                       ✓ Bin types calculated from {(analysis.metrics?.totSKUs||0).toLocaleString()} SKUs
                     </div>
-                    <div style={{display:'flex',flexWrap:'wrap',gap:'7px',marginBottom:'12px'}}>
-                      {Object.entries(analysis?.binSummary||{})
-                        .sort((a,b)=>['XS','S','M','L','XL','LONG'].indexOf(a[0])-['XS','S','M','L','XL','LONG'].indexOf(b[0]))
-                        .map(([band,info])=>{
-                          const bc=BIN_CATALOG[band];
-                          const COLORS={XS:['#f1f5f9','#64748b'],S:['#eff6ff','#1d4ed8'],
-                            M:['#f5f3ff','#7c3aed'],L:['#f0fdf4','#166534'],
-                            XL:['#fef9c3','#854d0e'],LONG:['#fdf4ff','#9333ea']};
-                          const [bg,col]=COLORS[band]||['#f8fafc','#374151'];
-                          return(
-                            <div key={band} style={{background:bg,border:`1px solid ${col}33`,
-                              borderRadius:'8px',padding:'7px 10px',minWidth:'100px'}}>
-                              <div style={{fontWeight:'800',fontSize:'13px',color:col}}>{band}</div>
-                              <div style={{fontSize:'9px',color:col,opacity:0.8}}>{info.name}</div>
-                              {bc?.phys&&<div style={{fontSize:'9px',color:'#6b7280'}}>{bc.phys.join('×')}mm</div>}
-                              <div style={{fontSize:'11px',fontWeight:'700',color:'#0f172a',marginTop:'2px'}}>
-                                {(info.locs||0).toLocaleString()} locs
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                    <button onClick={()=>setUdStep(2)}
+
+                    {/* ── EDITABLE BIN / PALLET SIZES + QUANTITIES ──────────── */}
+                    {binOverrides && (
+                      <div style={{border:'2px solid #c4b5fd',borderRadius:'10px',
+                        background:'linear-gradient(180deg,#faf8ff,#fff)',
+                        padding:'10px',marginBottom:'12px'}}>
+                        <div style={{fontWeight:'800',fontSize:'12px',color:'#5b21b6',marginBottom:'2px'}}>
+                          ✏️ Edit sizes &amp; quantities
+                          <span style={{fontSize:'9px',fontWeight:'700',color:'#7c3aed',
+                            background:'#f5f3ff',border:'1px solid #c4b5fd',
+                            borderRadius:'99px',padding:'2px 7px',marginLeft:'7px'}}>OPTIONAL</span>
+                        </div>
+                        <div style={{fontSize:'10px',color:'#6b7280',marginBottom:'8px'}}>
+                          Change any dimension or quantity. Use <strong>+ size</strong> for up to
+                          3 different sizes per container type — each becomes its own rack
+                          configuration and its own block in the layout.
+                        </div>
+                        <div style={{overflowX:'auto'}}>
+                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                            <thead>
+                              <tr style={{background:'#f8fafc'}}>
+                                {['Bin','Size','L (mm)','W (mm)','H (mm)','Qty','Vol',''].map((h,hi)=>(
+                                  <th key={hi} style={{padding:'5px 7px',textAlign:'left',
+                                    fontSize:'9px',fontWeight:'700',color:'#6b7280',
+                                    textTransform:'uppercase',borderBottom:'1px solid #e2e8f0',
+                                    whiteSpace:'nowrap'}}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(analysis?.binSummary||{})
+                                .sort((a,b)=>['XS','S','M','L','XL','LONG'].indexOf(a[0])
+                                            -['XS','S','M','L','XL','LONG'].indexOf(b[0]))
+                                .map(([band,info])=>{
+                                  const variants=binOverrides[band]||[];
+                                  const base=BIN_CATALOG[band]?BIN_CATALOG[band].phys:null;
+                                  const dimLocked=!base;
+                                  const COLORS={XS:['#f1f5f9','#64748b'],S:['#eff6ff','#1d4ed8'],
+                                    M:['#f5f3ff','#7c3aed'],L:['#f0fdf4','#166534'],
+                                    XL:['#fef9c3','#854d0e'],LONG:['#fdf4ff','#9333ea']};
+                                  const [bg,col]=COLORS[band]||['#f8fafc','#374151'];
+                                  const inS={border:'1px solid #e2e8f0',borderRadius:'5px',
+                                    padding:'4px 6px',fontSize:'11px',width:'66px',
+                                    boxSizing:'border-box',fontFamily:'inherit',outline:'none'};
+                                  return variants.map((ov,vi)=>{
+                                    const bL=parseFloat(ov.L)||0;
+                                    const bW=parseFloat(ov.W)||0;
+                                    const bH=parseFloat(ov.H)||0;
+                                    const vol=(bL*bW*bH)/1e9;
+                                    return (
+                                      <tr key={band+'-'+vi} style={{borderBottom:
+                                        vi===variants.length-1?'1px solid #e2e8f0':'1px dashed #f1f5f9'}}>
+                                        <td style={{padding:'5px 7px',verticalAlign:'top'}}>
+                                          {vi===0&&(<>
+                                            <span style={{background:bg,color:col,fontWeight:'800',
+                                              fontSize:'11px',borderRadius:'5px',padding:'2px 7px'}}>{band}</span>
+                                            <div style={{fontSize:'9px',color:'#9ca3af',marginTop:'2px'}}>
+                                              {info.name}
+                                            </div>
+                                          </>)}
+                                        </td>
+                                        <td style={{padding:'5px 7px'}}>
+                                          <input type="text" value={ov.label||''}
+                                            placeholder={'Size '+(vi+1)}
+                                            onChange={e=>updateBinField(band,vi,'label',e.target.value)}
+                                            style={{...inS,width:'74px',fontWeight:'700',color:col}}/>
+                                        </td>
+                                        <td style={{padding:'5px 7px'}}>
+                                          <input type="number" min="50" step="10" disabled={dimLocked}
+                                            value={ov.L||''}
+                                            onChange={e=>updateBinField(band,vi,'L',e.target.value)}
+                                            style={{...inS,background:dimLocked?'#f8fafc':'#fff'}}/>
+                                        </td>
+                                        <td style={{padding:'5px 7px'}}>
+                                          <input type="number" min="50" step="10" disabled={dimLocked}
+                                            value={ov.W||''}
+                                            onChange={e=>updateBinField(band,vi,'W',e.target.value)}
+                                            style={{...inS,background:dimLocked?'#f8fafc':'#fff'}}/>
+                                        </td>
+                                        <td style={{padding:'5px 7px'}}>
+                                          <input type="number" min="50" step="10" disabled={dimLocked}
+                                            value={ov.H||''}
+                                            onChange={e=>updateBinField(band,vi,'H',e.target.value)}
+                                            style={{...inS,background:dimLocked?'#f8fafc':'#fff'}}/>
+                                        </td>
+                                        <td style={{padding:'5px 7px'}}>
+                                          <input type="number" min="1" step="1"
+                                            value={ov.locs||''}
+                                            onChange={e=>updateBinField(band,vi,'locs',e.target.value)}
+                                            style={{...inS,width:'78px'}}/>
+                                        </td>
+                                        <td style={{padding:'5px 7px',color:'#6b7280',whiteSpace:'nowrap',fontSize:'10px'}}>
+                                          {vol>0?vol.toFixed(3):'-'}
+                                        </td>
+                                        <td style={{padding:'5px 7px',whiteSpace:'nowrap'}}>
+                                          {variants.length>1&&(
+                                            <button onClick={()=>removeBinVariant(band,vi)} title="Remove this size"
+                                              style={{border:'1px solid #fecdd3',background:'#fff1f2',
+                                                color:'#be185d',borderRadius:'5px',padding:'2px 7px',
+                                                fontSize:'10px',fontWeight:'700',cursor:'pointer',
+                                                fontFamily:'inherit'}}>×</button>
+                                          )}
+                                          {vi===0&&variants.length<MAX_BIN_VARIANTS&&!dimLocked&&(
+                                            <button onClick={()=>addBinVariant(band)} title="Add another size"
+                                              style={{marginLeft:'3px',border:'1px dashed #c4b5fd',
+                                                background:'#f5f3ff',color:'#7c3aed',borderRadius:'5px',
+                                                padding:'2px 7px',fontSize:'10px',fontWeight:'700',
+                                                cursor:'pointer',fontFamily:'inherit'}}>+ size</button>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  });
+                                })}
+                            </tbody>
+                          </table>
+                        </div>
+                        {binEditsDirty&&(
+                          <div style={{fontSize:'10px',fontWeight:'700',color:'#d97706',
+                            background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'6px',
+                            padding:'5px 8px',marginTop:'8px'}}>
+                            ⚠ You have unapplied edits — they will be used when you proceed.
+                          </div>
+                        )}
+                        <button onClick={resetBinEdits}
+                          style={{marginTop:'8px',width:'100%',padding:'7px',borderRadius:'7px',
+                            border:'1px solid #e2e8f0',background:'#fff',color:'#6b7280',
+                            fontWeight:'700',fontSize:'11px',fontFamily:'inherit',cursor:'pointer'}}>
+                          ↺ Reset to system-generated sizes
+                        </button>
+                      </div>
+                    )}
+
+                    <button onClick={()=>{ applyBinEdits(); setUdStep(2); }}
                       style={{width:'100%',padding:'10px',borderRadius:'9px',cursor:'pointer',
                         fontFamily:'inherit',fontSize:'13px',fontWeight:'700',border:'none',
                         background:'linear-gradient(135deg,#7c3aed,#6d28d9)',color:'#fff'}}>
