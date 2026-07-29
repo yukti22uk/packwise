@@ -4549,7 +4549,7 @@ export default function WarehouseDesignerTool() {
   const [configConfirmed,setConfigConfirmed]=useState(false);
   // ── Bin / Pallet size + count editor (before rack selection) ──
   const [binOverrides,  setBinOverrides]  = useState(null); // {XS:{L,W,H,locs}, ...}
-  const [binEditsOpen,  setBinEditsOpen]  = useState(false);
+  const [binEditsOpen,  setBinEditsOpen]  = useState(true);
   const [binEditsDirty, setBinEditsDirty] = useState(false);
   const [viewMode3D, setViewMode3D] = useState('3d'); // '2d' | '3d'
   const [udViewMode,  setUdViewMode]  = useState('2d'); // user defined — default 2D (no WebGL risk)
@@ -4724,7 +4724,7 @@ export default function WarehouseDesignerTool() {
       });
       setBinOverrides(seeded);
       setBinEditsDirty(false);
-      setBinEditsOpen(false);
+      setBinEditsOpen(true);  // open so the step is visible after generating
 
       // ── Step 5: Generate rack config ─────────────────────────────────────
       setProgressMsg('Generating rack configuration…'); await tick();
@@ -6758,20 +6758,29 @@ export default function WarehouseDesignerTool() {
 
             {/* ── BIN / PALLET SIZE + COUNT EDITOR ─────────────────────── */}
             {analysis?.binSummary && Object.keys(analysis.binSummary).length > 0 && binOverrides && (
-              <div style={{...S.card, marginBottom:'12px'}}>
+              <div style={{...S.card, marginBottom:'12px',
+                border:'2px solid #c4b5fd', background:'linear-gradient(180deg,#faf8ff,#fff)'}}>
                 <div onClick={()=>setBinEditsOpen(o=>!o)}
                   style={{display:'flex',justifyContent:'space-between',
                     alignItems:'center',cursor:'pointer'}}>
-                  <div>
-                    <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a'}}>
-                      ✏️ Adjust Bin &amp; Pallet Sizes
-                      <span style={{fontSize:'11px',fontWeight:'400',color:'#6b7280',marginLeft:'8px'}}>
-                        Optional — edit before selecting racks
-                      </span>
-                    </div>
-                    <div style={{fontSize:'11px',color:'#6b7280',marginTop:'2px'}}>
-                      Define up to 3 sizes per container type with their own quantities -
-                      each becomes a separate rack configuration and layout block.
+                  <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                    <div style={{width:'26px',height:'26px',borderRadius:'50%',
+                      background:'#7c3aed',color:'#fff',display:'flex',
+                      alignItems:'center',justifyContent:'center',
+                      fontSize:'13px',fontWeight:'800',flexShrink:0}}>1</div>
+                    <div>
+                      <div style={{fontWeight:'800',fontSize:'14px',color:'#5b21b6'}}>
+                        ✏️ Edit Bin &amp; Pallet Sizes
+                        <span style={{fontSize:'10px',fontWeight:'700',color:'#7c3aed',
+                          background:'#f5f3ff',border:'1px solid #c4b5fd',
+                          borderRadius:'99px',padding:'2px 8px',marginLeft:'8px'}}>
+                          OPTIONAL
+                        </span>
+                      </div>
+                      <div style={{fontSize:'11px',color:'#6b7280',marginTop:'2px'}}>
+                        Change dimensions or quantities, or add up to 3 sizes per container type.
+                        Each size becomes its own rack configuration and layout block.
+                      </div>
                     </div>
                   </div>
                   <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
@@ -6959,8 +6968,14 @@ export default function WarehouseDesignerTool() {
             {rackConfig && (
               <div style={{...S.card, marginBottom:'12px'}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'4px'}}>
-                  <div style={{fontWeight:'700',fontSize:'14px',color:'#0f172a'}}>
-                    🗄 Rack Configuration
+                  <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                    <div style={{width:'26px',height:'26px',borderRadius:'50%',
+                      background:'#0f172a',color:'#fff',display:'flex',
+                      alignItems:'center',justifyContent:'center',
+                      fontSize:'13px',fontWeight:'800',flexShrink:0}}>2</div>
+                    <div style={{fontWeight:'800',fontSize:'14px',color:'#0f172a'}}>
+                      🗄 Rack Configuration
+                    </div>
                   </div>
                   <div style={{fontSize:'11px',color:configConfirmed?'#166534':'#d97706',
                     fontWeight:'700',background:configConfirmed?'#f0fdf4':'#fffbeb',
