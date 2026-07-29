@@ -1994,7 +1994,8 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   };
 }
 
-function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, zoom=1 }) {
+function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, zoom=1,
+  measureOn=false, measurePts=[], measurements=[], onMeasurePoint }) {
   if (!design?.wW || !design?.wL) return null;
 
   let fp;
@@ -2021,12 +2022,44 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
   const sqft = m2 => `${Math.round(m2*M2FT).toLocaleString()} sq ft`;
   const aisleM = parseFloat(params.aisleW)||3.0;
 
+  // ── MEASURE TOOL ──────────────────────────────────────────────────────────
+  // Convert a browser click to warehouse metres. getScreenCTM().inverse() handles
+  // zoom, viewBox scaling, CSS sizing and scroll offset in one step.
+  const M_INV_X = px => (px - ML) / sX;
+  const M_INV_Y = py => (py - MT) / sY;
+  const handleMeasureClick = (evt) => {
+    if (!measureOn || !onMeasurePoint) return;
+    const svgEl = evt.currentTarget;
+    let ux, uy;
+    try {
+      const ctm = svgEl.getScreenCTM();
+      if (!ctm) return;
+      const pt = svgEl.createSVGPoint
+        ? svgEl.createSVGPoint()
+        : new DOMPoint(0,0);
+      pt.x = evt.clientX; pt.y = evt.clientY;
+      const loc = pt.matrixTransform(ctm.inverse());
+      ux = loc.x; uy = loc.y;
+    } catch (err) {
+      // Fallback: bounding-box ratio against the viewBox
+      const r = svgEl.getBoundingClientRect();
+      ux = ((evt.clientX - r.left) / r.width)  * SVG_W;
+      uy = ((evt.clientY - r.top)  / r.height) * SVG_H;
+    }
+    onMeasurePoint({ x:+M_INV_X(ux).toFixed(3), y:+M_INV_Y(uy).toFixed(3) });
+  };
+
+  // Straight-line distance between two points, in metres
+  const mDist = (a,b) => Math.sqrt(Math.pow(b.x-a.x,2) + Math.pow(b.y-a.y,2));
+
   return (
     <svg width={SVG_W*zoom} height={SVG_H*zoom}
       viewBox={`0 0 ${SVG_W} ${SVG_H}`}
       id={fullscreen?'fs-plan-svg':undefined}
+      onClick={handleMeasureClick}
       style={{border:'1px solid #e2e8f0',borderRadius:'10px',background:'#ffffff',
-               width:'100%',height:'auto',display:'block'}}>
+               width:'100%',height:'auto',display:'block',
+               cursor:measureOn?'crosshair':'default'}}>
 
       <defs>
         <pattern id="palletPat" x="0" y="0" width={W(1.2)} height={H(1.2)} patternUnits="userSpaceOnUse">
@@ -2555,6 +2588,70 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false, 
       <text x={X(wW/2)} y={SVG_H-4} textAnchor="middle" fontSize="10" fontWeight="700" fill="#374151">
         {`Total gross area: ${(actualWW*actualWL).toLocaleString()}m²  (${Math.round(actualWW*actualWL*10.7639).toLocaleString()} sq ft)  ·  ${Math.round(actualWW*10)/10}×${Math.round(actualWL)}m  ·  ${dockSide==='one'?'One-side':'Opposite-side'} docks  ·  Derived from ${Object.keys(sectionLayouts).length} rack type sections`}
       </text>
+      {/* ── MEASUREMENT OVERLAY ─────────────────────────────────────────── */}
+      {(measurements.length>0 || measurePts.length>0) && (
+        <g id="measure-layer">
+          {measurements.map((mm,mi)=>{
+            const a=mm[0], b=mm[1];
+            const dd=mDist(a,b);
+            const x1=X(a.x), y1=Y(a.y), x2=X(b.x), y2=Y(b.y);
+            const mx=(x1+x2)/2, my=(y1+y2)/2;
+            const dx=b.x-a.x, dy=b.y-a.y;
+            let ang=Math.atan2(y2-y1,x2-x1)*180/Math.PI;
+            if(ang>90) ang-=180; else if(ang<-90) ang+=180;
+            const lbl=(dd*1000).toFixed(0)+'mm';
+            const sub=dd.toFixed(2)+'m / '+(dd*3.2808).toFixed(1)+'ft';
+            const boxW=Math.max(58, lbl.length*7+22);
+            return (
+              <g key={'ms'+mi}>
+                <line x1={x1} y1={y1} x2={x2} y2={y2}
+                  stroke="#be185d" strokeWidth="1.6" strokeLinecap="round"/>
+                <line x1={x1} y1={y1} x2={x2} y2={y1}
+                  stroke="#be185d" strokeWidth="0.6" strokeDasharray="3,3" opacity="0.5"/>
+                <line x1={x2} y1={y1} x2={x2} y2={y2}
+                  stroke="#be185d" strokeWidth="0.6" strokeDasharray="3,3" opacity="0.5"/>
+                <circle cx={x1} cy={y1} r="4" fill="#fff" stroke="#be185d" strokeWidth="1.6"/>
+                <circle cx={x1} cy={y1} r="1.4" fill="#be185d"/>
+                <circle cx={x2} cy={y2} r="4" fill="#fff" stroke="#be185d" strokeWidth="1.6"/>
+                <circle cx={x2} cy={y2} r="1.4" fill="#be185d"/>
+                {Math.abs(dx)>0.05 && (
+                  <text x={(x1+x2)/2} y={y1-3} textAnchor="middle" fontSize="6"
+                    fill="#be185d" opacity="0.85">
+                    {'dX '+(Math.abs(dx)*1000).toFixed(0)+'mm'}
+                  </text>
+                )}
+                {Math.abs(dy)>0.05 && (
+                  <text x={x2+4} y={(y1+y2)/2} fontSize="6" fill="#be185d" opacity="0.85">
+                    {'dY '+(Math.abs(dy)*1000).toFixed(0)+'mm'}
+                  </text>
+                )}
+                <g transform={'translate('+mx+','+my+') rotate('+ang+')'}>
+                  <rect x={-boxW/2} y={-19} width={boxW} height="24" rx="4"
+                    fill="#ffffff" stroke="#be185d" strokeWidth="1" opacity="0.96"/>
+                  <text x="0" y="-9" textAnchor="middle" fontSize="9.5"
+                    fontWeight="800" fill="#be185d">{lbl}</text>
+                  <text x="0" y="0" textAnchor="middle" fontSize="6.5" fill="#9f1239">{sub}</text>
+                </g>
+                <text x={x1+6} y={y1-6} fontSize="7" fontWeight="800" fill="#be185d">{mi+1}</text>
+              </g>
+            );
+          })}
+          {measurePts.map((pt,pi)=>(
+            <g key={'mp'+pi}>
+              <circle cx={X(pt.x)} cy={Y(pt.y)} r="5" fill="#fff"
+                stroke="#be185d" strokeWidth="1.6"/>
+              <circle cx={X(pt.x)} cy={Y(pt.y)} r="1.6" fill="#be185d"/>
+              <line x1={X(pt.x)-9} y1={Y(pt.y)} x2={X(pt.x)+9} y2={Y(pt.y)}
+                stroke="#be185d" strokeWidth="0.7" opacity="0.6"/>
+              <line x1={X(pt.x)} y1={Y(pt.y)-9} x2={X(pt.x)} y2={Y(pt.y)+9}
+                stroke="#be185d" strokeWidth="0.7" opacity="0.6"/>
+              <text x={X(pt.x)+8} y={Y(pt.y)-7} fontSize="7"
+                fontWeight="700" fill="#be185d">click 2nd point</text>
+            </g>
+          ))}
+        </g>
+      )}
+
     </svg>
   );
 }
@@ -4676,6 +4773,10 @@ export default function WarehouseDesignerTool() {
   const [viewMode3D, setViewMode3D] = useState('3d'); // '2d' | '3d'
   const [udViewMode,  setUdViewMode]  = useState('2d'); // user defined — default 2D (no WebGL risk)
   const [planZoom,    setPlanZoom]    = useState(1);    // floor plan zoom level
+  // ── Dimension measuring tool ──
+  const [measureOn,    setMeasureOn]    = useState(false);
+  const [measurePts,   setMeasurePts]   = useState([]);   // in-progress point(s), metres
+  const [measurements, setMeasurements] = useState([]);   // completed [ptA, ptB] pairs
   const [floorPlanFS, setFloorPlanFS] = useState(false); // fullscreen 2D plan
   const plan2DRef   = useRef(null);
   const planScrollRef = useRef(null); // for passive wheel zoom
@@ -4931,6 +5032,24 @@ export default function WarehouseDesignerTool() {
   const sysSummary = useMemo(()=>summaryFromLayout(design, rackConfig),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [design, rackConfig, analysis, paramsKey]);
+
+  // ── Measuring tool handlers ─────────────────────────────────────────────
+  // Two clicks make one measurement; the first click is held in measurePts.
+  const onMeasurePoint = (pt) => {
+    setMeasurePts(prev => {
+      if (!prev.length) return [pt];
+      setMeasurements(ms => [...ms, [prev[0], pt]]);
+      return [];
+    });
+  };
+  const clearMeasurements = () => { setMeasurements([]); setMeasurePts([]); };
+  const undoMeasurement = () => {
+    if (measurePts.length) { setMeasurePts([]); return; }
+    setMeasurements(ms => ms.slice(0, -1));
+  };
+  const toggleMeasure = () => {
+    setMeasureOn(v => { if (v) setMeasurePts([]); return !v; });
+  };
 
   // ── Bin / Pallet editor handlers ────────────────────────────────────────
   const updateBinField = (binKey, idx, field, val) => {
@@ -6770,13 +6889,43 @@ export default function WarehouseDesignerTool() {
                       {z===1?'1×':`${z}×`}
                     </button>
                   ))}
+                  <span style={{width:'1px',height:'16px',background:'#e2e8f0',margin:'0 3px'}}/>
+                  <button onClick={toggleMeasure}
+                    title="Click two points on the plan to measure the straight distance"
+                    style={{padding:'2px 8px',borderRadius:'5px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'10px',fontWeight:'700',
+                      border:`1px solid ${measureOn?'#be185d':'#e2e8f0'}`,
+                      background:measureOn?'#fff1f2':'#fff',
+                      color:measureOn?'#be185d':'#6b7280'}}>
+                    📏 Measure{measureOn?' ON':''}
+                  </button>
+                  {(measurements.length>0||measurePts.length>0)&&(<>
+                    <button onClick={undoMeasurement}
+                      style={{padding:'2px 7px',borderRadius:'5px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'10px',fontWeight:'700',
+                        border:'1px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
+                      ↶ Undo
+                    </button>
+                    <button onClick={clearMeasurements}
+                      style={{padding:'2px 7px',borderRadius:'5px',cursor:'pointer',
+                        fontFamily:'inherit',fontSize:'10px',fontWeight:'700',
+                        border:'1px solid #fecdd3',background:'#fff1f2',color:'#be185d'}}>
+                      ✕ Clear ({measurements.length})
+                    </button>
+                  </>)}
+                  {measureOn&&(
+                    <span style={{fontSize:'10px',color:'#be185d',fontWeight:'600'}}>
+                      {measurePts.length?'now click the second point':'click the first point'}
+                    </span>
+                  )}
                 </div>
                 <div style={{overflow:'auto',maxHeight:'500px',border:'1px solid #e2e8f0',
                   borderRadius:'6px',cursor:'grab'}}
                   onWheel={e=>{e.preventDefault();
                     setPlanZoom(z=>Math.max(0.3,Math.min(6,z*(e.deltaY<0?1.15:1/1.15))));}}>
                   <FloorPlanSVG analysis={analysis} design={userDesign} params={params}
-                    rackConfig={userRackConfig||rackConfig} zoom={planZoom}/>
+                    rackConfig={userRackConfig||rackConfig} zoom={planZoom} measureOn={measureOn} measurePts={measurePts}
+                    measurements={measurements} onMeasurePoint={onMeasurePoint}/>
                 </div>
               </div>
               {/* Warehouse size summary */}
@@ -7606,8 +7755,35 @@ export default function WarehouseDesignerTool() {
                           {z===1?'1×':`${z}×`}
                         </button>
                       ))}
-                      <span style={{fontSize:'10px',color:'#9ca3af',marginLeft:'4px'}}>
-                        Scroll inside plan to zoom · drag to pan
+                      <span style={{width:'1px',height:'16px',background:'#e2e8f0',margin:'0 2px'}}/>
+                      <button onClick={toggleMeasure}
+                        title="Click two points on the plan to measure the straight distance"
+                        style={{padding:'3px 9px',borderRadius:'6px',cursor:'pointer',
+                          fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                          border:`1px solid ${measureOn?'#be185d':'#e2e8f0'}`,
+                          background:measureOn?'#fff1f2':'#fff',
+                          color:measureOn?'#be185d':'#6b7280'}}>
+                        📏 Measure{measureOn?' ON':''}
+                      </button>
+                      {(measurements.length>0||measurePts.length>0)&&(<>
+                        <button onClick={undoMeasurement}
+                          style={{padding:'3px 8px',borderRadius:'6px',cursor:'pointer',
+                            fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                            border:'1px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
+                          ↶ Undo
+                        </button>
+                        <button onClick={clearMeasurements}
+                          style={{padding:'3px 8px',borderRadius:'6px',cursor:'pointer',
+                            fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                            border:'1px solid #fecdd3',background:'#fff1f2',color:'#be185d'}}>
+                          ✕ Clear ({measurements.length})
+                        </button>
+                      </>)}
+                      <span style={{fontSize:'10px',color:measureOn?'#be185d':'#9ca3af',marginLeft:'4px',
+                        fontWeight:measureOn?'600':'400'}}>
+                        {measureOn
+                          ? (measurePts.length?'Now click the second point':'Click the first point')
+                          : 'Scroll inside plan to zoom · drag to pan'}
                       </span>
                     </div>
                     {/* Scrollable zoomable plan container */}
@@ -7615,7 +7791,8 @@ export default function WarehouseDesignerTool() {
                       style={{overflow:'auto',border:'1px solid #e2e8f0',borderRadius:'8px',
                         maxHeight:'600px',background:'#f8fafc',cursor:'grab'}}>
                       <FloorPlanSVG analysis={analysis} design={design} params={params}
-                        rackConfig={rackConfig} zoom={planZoom}/>
+                        rackConfig={rackConfig} zoom={planZoom} measureOn={measureOn} measurePts={measurePts}
+                    measurements={measurements} onMeasurePoint={onMeasurePoint}/>
                     </div>
                   </>)}
 
@@ -7840,6 +8017,32 @@ export default function WarehouseDesignerTool() {
               <button onClick={()=>setPlanZoom(z=>Math.min(8,z*1.3))}
                 style={{padding:'4px 8px',background:'#1e293b',color:'#94a3b8',
                   border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'13px'}}>+</button>
+              <span style={{width:'1px',height:'18px',background:'#334155',margin:'0 4px'}}/>
+              <button onClick={toggleMeasure}
+                title="Click two points on the plan to measure the straight distance"
+                style={{padding:'4px 10px',borderRadius:'6px',cursor:'pointer',border:'none',
+                  fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                  background:measureOn?'#be185d':'#1e293b',
+                  color:measureOn?'#fff':'#94a3b8'}}>
+                📏 Measure{measureOn?' ON':''}
+              </button>
+              {(measurements.length>0||measurePts.length>0)&&(<>
+                <button onClick={undoMeasurement}
+                  style={{padding:'4px 8px',borderRadius:'6px',cursor:'pointer',border:'none',
+                    fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                    background:'#1e293b',color:'#94a3b8'}}>↶</button>
+                <button onClick={clearMeasurements}
+                  style={{padding:'4px 8px',borderRadius:'6px',cursor:'pointer',border:'none',
+                    fontFamily:'inherit',fontSize:'11px',fontWeight:'700',
+                    background:'#1e293b',color:'#fb7185'}}>
+                  ✕ {measurements.length}
+                </button>
+              </>)}
+              {measureOn&&(
+                <span style={{fontSize:'11px',color:'#fb7185',fontWeight:'600'}}>
+                  {measurePts.length?'2nd point…':'1st point…'}
+                </span>
+              )}
               <button onClick={()=>setPlanZoom(z=>Math.max(0.3,z/1.3))}
                 style={{padding:'4px 8px',background:'#1e293b',color:'#94a3b8',
                   border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'13px'}}>−</button>
@@ -7881,7 +8084,9 @@ export default function WarehouseDesignerTool() {
                 params={params}
                 rackConfig={userRackConfig||rackConfig}
                 fullscreen={true}
-                zoom={planZoom}/>
+                zoom={planZoom}
+                measureOn={measureOn} measurePts={measurePts}
+                measurements={measurements} onMeasurePoint={onMeasurePoint}/>
             </div>
           </div>
         </div>
