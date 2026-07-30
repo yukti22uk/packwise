@@ -212,9 +212,11 @@ function RackElevationSVG({ cfg, W: svgW=260, H: svgH=190 }) {
   const clearMm = cfg.clearance||50;
   const binD    = cfg.binDims; // [L,W,H] mm
   const acrossW = cfg.acrossW || 2;
-  const palLevH = 1500; // pallet + beam mm
+  const palLevH = 1500; // vertical pitch between pallet levels, mm
+  // Level 1 stands on the slab, so the top load is at (levels-1) pitches + one
+  // pallet height — not levels × pitch.
   const totalHmm= rack==='selective'||rack==='driveIn'||rack==='doubleDeep'
-    ? palLevH*levels + 400
+    ? (levels-1)*palLevH + 1200 + 300
     : tierHmm * tiers + 200;
 
   // Colours
@@ -319,33 +321,41 @@ function RackElevationSVG({ cfg, W: svgW=260, H: svgH=190 }) {
 
   // ── SELECTIVE PALLET RACK (front elevation) ───────────────────────────────
   if (rack==='selective') {
-    const palH=1200, beamH=200, palW=1200;
+    const palH=1200, beamH=100;
+    const nAcross = Math.max(1, parseInt(acrossW)||2);
+    // Top of the highest load: level 1 is on the floor, so only (levels-1) pitches
+    const topMm = (levels-1)*palLevH + palH;
     return (
       <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} style={{display:'block'}}>
         <rect width={svgW} height={svgH} fill="#f8fafc" rx="6"/>
-        {/* Upright frames (double line) */}
+        {/* Upright frames — no centre post, the bay is one clear opening */}
         {[0, bayWmm].map((x,i)=>(
-          <g key={i}>
-            <rect x={px(x)-(i>0?upW:0)} y={py(palLevH*levels+100)} width={upW} height={ph(palLevH*levels+100)} fill={STEEL}/>
-          </g>
+          <rect key={i} x={px(x)-(i>0?upW:0)} y={py(topMm+100)}
+            width={upW} height={ph(topMm+100)} fill={STEEL}/>
         ))}
-        <rect x={px(bayWmm/2)-upW/2} y={py(palLevH*levels+100)} width={upW} height={ph(palLevH*levels+100)} fill={STEEL} opacity="0.5"/>
-        {/* Beam levels + pallets */}
+        {/* Levels: level 1 stands ON THE FLOOR, upper levels sit on beams */}
         {Array.from({length:levels},(_,lev)=>{
-          const beamY=lev*palLevH, palY=beamY+beamH;
+          const palY   = lev*palLevH;   // bottom of the pallet, mm above floor
+          const onFloor = lev===0;
           return (
             <g key={lev}>
-              {/* Beam */}
-              <rect x={px(0)} y={py(beamY+beamH)-ph(beamH)} width={pw(bayWmm)} height={ph(beamH)} fill={BEAM} rx="1"/>
-              {/* 2 pallets per level */}
-              {[0,1].map(p=>{
-                const pxStart=px(40+p*(bayWmm/2-20));
+              {/* Beam only where the pallet is carried by steel, not by the slab */}
+              {!onFloor && (
+                <rect x={px(0)} y={py(palY)} width={pw(bayWmm)}
+                  height={ph(beamH)} fill={BEAM} rx="1"/>
+              )}
+              {Array.from({length:nAcross},(_,pi)=>{
+                const slot = bayWmm/nAcross;
+                const pWmm = slot*0.82;
+                const x0   = px(slot*pi + (slot-pWmm)/2);
                 return(
-                  <g key={p}>
-                    {/* Pallet board */}
-                    <rect x={pxStart} y={py(palY+palH)-ph(120)} width={pw(palW*0.85)} height={ph(120)} fill='#92400e' rx="1"/>
-                    {/* Load on pallet */}
-                    <rect x={pxStart+1} y={py(palY+palH)-ph(120)-ph(palH-200)} width={pw(palW*0.85)-2} height={ph(palH-200)} fill={PALLET} rx="2" opacity="0.85"/>
+                  <g key={pi}>
+                    {/* Pallet board sits on the floor (or on the beam) */}
+                    <rect x={x0} y={py(palY+140)} width={pw(pWmm)}
+                      height={ph(140)} fill='#92400e' rx="1"/>
+                    {/* Load stacked on the pallet */}
+                    <rect x={x0+1} y={py(palY+palH)} width={pw(pWmm)-2}
+                      height={ph(palH-140)} fill={PALLET} rx="2" opacity="0.85"/>
                   </g>
                 );
               })}
@@ -354,9 +364,9 @@ function RackElevationSVG({ cfg, W: svgW=260, H: svgH=190 }) {
         })}
         <line x1={px(0)} y1={py(0)} x2={px(bayWmm)} y2={py(0)} stroke={GROUND} strokeWidth="2.5"/>
         {dimW(px(0),px(bayWmm),MT-4,`${(bayWmm/1000).toFixed(1)}m`)}
-        {dimH(px(bayWmm)+10,py(0),px(bayWmm)+10,py(palLevH*levels),`${(palLevH*levels/1000).toFixed(1)}m`)}
+        {dimH(px(bayWmm)+10,py(0),px(bayWmm)+10,py(topMm),`${(topMm/1000).toFixed(2)}m`)}
         <text x={svgW/2} y={svgH-6} textAnchor="middle" fontSize="8" fontWeight="700" fill={LABEL}>
-          Selective Pallet Rack — {levels} beam levels
+          Selective Pallet Rack — {levels} levels (L1 on floor) · {nAcross}/level
         </text>
       </svg>
     );
@@ -364,9 +374,10 @@ function RackElevationSVG({ cfg, W: svgW=260, H: svgH=190 }) {
 
   // ── DRIVE-IN RACK (side elevation — shows depth) ──────────────────────────
   if (rack==='driveIn') {
-    const depthMm=cfg.bayD||6600, palW=1100, palH=1200, beamH=150;
+    const depthMm=cfg.bayD||6600, palW=1100, palH=1200, beamH=120;
     const nDeep=Math.max(1,Math.round(depthMm/palW));
-    const sideX=DW/depthMm, totalSideH=palLevH*levels+300;
+    const topMmDI=(levels-1)*palLevH+palH;
+    const sideX=DW/depthMm, totalSideH=topMmDI+300;
     const sideY=DH/(totalSideH||1);
     const sx=mm=>ML+mm*sideX, sy=mm=>MT+(totalSideH-mm)*sideY;
 
@@ -376,27 +387,35 @@ function RackElevationSVG({ cfg, W: svgW=260, H: svgH=190 }) {
         {/* Side columns */}
         <rect x={sx(0)} y={sy(totalSideH-300)} width={pw(60)} height={ph(totalSideH-300)} fill={STEEL}/>
         <rect x={sx(depthMm)-pw(60)} y={sy(totalSideH-300)} width={pw(60)} height={ph(totalSideH-300)} fill={STEEL}/>
-        {/* Levels */}
-        {Array.from({length:levels},(_,lev)=>(
+        {/* Levels — level 1 stands on the slab, upper levels on rail beams */}
+        {Array.from({length:levels},(_,lev)=>{
+          const palY=lev*palLevH, onFloor=lev===0;
+          return (
           <g key={lev}>
-            {/* Rail beams (side view: horizontal lines) */}
-            <rect x={sx(60)} y={sy(lev*palLevH+beamH)-ph(beamH)} width={sx(depthMm-60)-sx(60)} height={ph(beamH)} fill={BEAM} rx="1" opacity="0.7"/>
-            {/* Pallets deep */}
+            {!onFloor && (
+              <rect x={sx(60)} y={sy(palY)} width={sx(depthMm-60)-sx(60)}
+                height={ph(beamH)} fill={BEAM} rx="1" opacity="0.7"/>
+            )}
             {Array.from({length:nDeep},(_,d)=>(
               <g key={d}>
-                <rect x={sx(d*palW+70)+1} y={sy(lev*palLevH+palH+beamH)-ph(palH)} width={sx((d+1)*palW+70)-sx(d*palW+70)-2} height={ph(palH)} fill={PALLET} rx="1" opacity="0.8"/>
-                <rect x={sx(d*palW+70)} y={sy(lev*palLevH+beamH)-ph(beamH/2)} width={sx((d+1)*palW+70)-sx(d*palW+70)} height={ph(beamH/2)} fill='#92400e' rx="0"/>
+                {/* Pallet board on floor / beam */}
+                <rect x={sx(d*palW+70)} y={sy(palY+140)}
+                  width={sx((d+1)*palW+70)-sx(d*palW+70)} height={ph(140)} fill='#92400e'/>
+                {/* Load */}
+                <rect x={sx(d*palW+70)+1} y={sy(palY+palH)}
+                  width={sx((d+1)*palW+70)-sx(d*palW+70)-2} height={ph(palH-140)}
+                  fill={PALLET} rx="1" opacity="0.8"/>
               </g>
             ))}
-          </g>
-        ))}
+          </g>);
+        })}
         {/* Loading arrow */}
         <text x={sx(depthMm/2)} y={sy(-60)} textAnchor="middle" fontSize="8" fill="#1d4ed8" fontWeight="700">← LOAD / UNLOAD</text>
         <line x1={sx(0)} y1={sy(0)} x2={sx(depthMm)} y2={sy(0)} stroke={GROUND} strokeWidth="2.5"/>
         {dimW(sx(0),sx(depthMm),MT-4,`${(depthMm/1000).toFixed(1)}m deep (${nDeep} pallets)`)}
-        {dimH(sx(depthMm)+10,sy(0),sx(depthMm)+10,sy(palLevH*levels),`${(palLevH*levels/1000).toFixed(1)}m`)}
+        {dimH(sx(depthMm)+10,sy(0),sx(depthMm)+10,sy(topMmDI),`${(topMmDI/1000).toFixed(2)}m`)}
         <text x={svgW/2} y={svgH-6} textAnchor="middle" fontSize="8" fontWeight="700" fill={LABEL}>
-          Drive-In Rack — {nDeep} deep × {levels} levels (LIFO)
+          Drive-In Rack — {nDeep} deep × {levels} levels, L1 on floor (LIFO)
         </text>
       </svg>
     );
@@ -404,8 +423,9 @@ function RackElevationSVG({ cfg, W: svgW=260, H: svgH=190 }) {
 
   // ── DOUBLE-DEEP RACK (side elevation) ────────────────────────────────────
   if (rack==='doubleDeep') {
-    const depthMm=cfg.bayD||2400, palW=1100, palH=1200, beamH=150;
-    const sideX=DW/depthMm, totalSideH=palLevH*levels+300;
+    const depthMm=cfg.bayD||2400, palW=1100, palH=1200, beamH=120;
+    const topMmDD=(levels-1)*palLevH+palH;
+    const sideX=DW/depthMm, totalSideH=topMmDD+300;
     const sideY=DH/(totalSideH||1);
     const sx=mm=>ML+mm*sideX, sy=mm=>MT+(totalSideH-mm)*sideY;
 
@@ -414,27 +434,34 @@ function RackElevationSVG({ cfg, W: svgW=260, H: svgH=190 }) {
         <rect width={svgW} height={svgH} fill="#f8fafc" rx="6"/>
         <rect x={sx(0)} y={sy(totalSideH-300)} width={pw(60)} height={ph(totalSideH-300)} fill={STEEL}/>
         <rect x={sx(depthMm)-pw(60)} y={sy(totalSideH-300)} width={pw(60)} height={ph(totalSideH-300)} fill={STEEL}/>
-        {Array.from({length:levels},(_,lev)=>(
+        {Array.from({length:levels},(_,lev)=>{
+          const palY=lev*palLevH, onFloor=lev===0;
+          return (
           <g key={lev}>
-            <rect x={sx(60)} y={sy(lev*palLevH+beamH)-ph(beamH)} width={sx(depthMm-60)-sx(60)} height={ph(beamH)} fill={BEAM} rx="1" opacity="0.7"/>
+            {!onFloor && (
+              <rect x={sx(60)} y={sy(palY)} width={sx(depthMm-60)-sx(60)}
+                height={ph(beamH)} fill={BEAM} rx="1" opacity="0.7"/>
+            )}
             {[0,1].map(d=>(
               <g key={d}>
-                <rect x={sx(d*palW+70)+1} y={sy(lev*palLevH+palH+beamH)-ph(palH)}
-                  width={sx((d+1)*palW+70)-sx(d*palW+70)-2} height={ph(palH)}
+                {/* Board on floor / beam */}
+                <rect x={sx(d*palW+70)} y={sy(palY+140)}
+                  width={sx((d+1)*palW+70)-sx(d*palW+70)} height={ph(140)} fill='#92400e'/>
+                {/* Load */}
+                <rect x={sx(d*palW+70)+1} y={sy(palY+palH)}
+                  width={sx((d+1)*palW+70)-sx(d*palW+70)-2} height={ph(palH-140)}
                   fill={d===0?PALLET:'#f59e0b'} rx="1" opacity="0.85"/>
-                <rect x={sx(d*palW+70)} y={sy(lev*palLevH+beamH)-ph(beamH/2)}
-                  width={sx((d+1)*palW+70)-sx(d*palW+70)} height={ph(beamH/2)} fill='#92400e'/>
               </g>
             ))}
-          </g>
-        ))}
+          </g>);
+        })}
         {/* Reach truck arm indicator */}
         <rect x={sx(0)-20} y={sy(palLevH/2+palH)} width={20} height={ph(100)} fill="#64748b" rx="2"/>
         <text x={sx(0)-10} y={sy(palLevH/2+palH)+ph(50)} textAnchor="middle" fontSize="7" fill="#64748b"
           transform={`rotate(-90,${sx(0)-10},${sy(palLevH/2+palH)+ph(50)})`}>REACH</text>
         <line x1={sx(0)} y1={sy(0)} x2={sx(depthMm)} y2={sy(0)} stroke={GROUND} strokeWidth="2.5"/>
         {dimW(sx(0),sx(depthMm),MT-4,`${(depthMm/1000).toFixed(1)}m (2 pallets deep)`)}
-        {dimH(sx(depthMm)+10,sy(0),sx(depthMm)+10,sy(palLevH*levels),`${(palLevH*levels/1000).toFixed(1)}m`)}
+        {dimH(sx(depthMm)+10,sy(0),sx(depthMm)+10,sy(topMmDD),`${(topMmDD/1000).toFixed(2)}m`)}
         <text x={svgW/2} y={svgH-6} textAnchor="middle" fontSize="8" fontWeight="700" fill={LABEL}>
           Double-Deep — 2 pallets deep × {levels} levels
         </text>
