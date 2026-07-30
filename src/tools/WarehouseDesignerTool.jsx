@@ -1352,6 +1352,82 @@ function calcWarehouseSize(analysis, params, customRackAreas, customZoneAreas) {
 
 // ─── SVG FLOOR PLAN ───────────────────────────────────────────────────────────
 // Module-level section layout calculator (outside FloorPlanSVG to avoid minifier TDZ)
+// ─── AREA OPTIMISER ──────────────────────────────────────────────────────────
+// Total footprint = W x L. Column count trades width against length, and the
+// cross-aisle spacing may sit anywhere inside its allowed band. This searches
+// both, subject to every layout constraint, and returns the minimum-area plan.
+//
+// Allowed storage run between cross aisles (metres). The optimiser will use the
+// widest spacing in range when that saves area, but never exceeds it.
+const RACK_LABELS_UI = {
+  shelving:'Shelving', liveStorage:'Flow/Live Storage',
+  selective:'Selective Pallet Rack', doubleDeep:'Double-Deep Rack',
+  driveIn:'Drive-In Rack', cantilever:'Cantilever Rack', ground:'Ground Storage',
+};
+const CROSS_AISLE_RANGE = {
+  shelving:[12,15], liveStorage:[12,15],
+  selective:[25,30], doubleDeep:[25,30], driveIn:[25,30],
+  cantilever:[25,30], ground:[25,30],
+};
+
+// Geometry of one section for a given column count and aisle spacing
+function optSectionGeom(bays, nCols, bayH, interval, minBpf) {
+  if (nCols < 3 || !(bayH > 0)) return null;
+  const bpf = Math.max(minBpf, Math.ceil(bays/2/nCols));
+  let y = 0.3, run = 0, since = 0, nCA = 0;
+  for (let b = 0; b < bpf; b++) {
+    y += bayH; run += bayH; since++;
+    if (run >= interval && since >= 2 && (bpf-b-1) >= 2) {
+      y += CROSS_AISLE_W_M; run = 0; since = 0; nCA++;
+    }
+  }
+  return { bpf, nCA, height: y + 0.3, capacity: nCols*bpf*2 };
+}
+// Columns that fit in width W keeping a FULL picking aisle on both sides
+const optColsFor  = (W, slot, pa) => Math.floor((W - 2*pa - 0.6) / slot);
+const optWidthFor = (n, slot, pa) => n*slot + 2*pa + 0.6;
+
+// Evaluate one candidate warehouse width
+function optEvaluate(W, specs, bands) {
+  let L = 0; const out = [];
+  for (const s of specs) {
+    let nCols = optColsFor(W, s.slot, s.pa);
+    if (nCols < 3) return null;                       // section cannot fit
+    // Never let a row fall below the minimum number of bays
+    nCols = Math.min(nCols, Math.max(3, Math.floor(s.bays/2/s.minBpf)));
+    let best = null;
+    for (let iv = s.ca[1]; iv >= s.ca[0]-1e-9; iv -= 0.5) {
+      const r = optSectionGeom(s.bays, nCols, s.bayH, iv, s.minBpf);
+      if (r && (!best || r.height < best.height)) best = { ...r, interval:+iv.toFixed(1) };
+    }
+    if (!best) return null;
+    out.push({ rt:s.rt, nCols, ...best });
+    L += best.height + SECTION_CA_W;
+  }
+  // Staging / support bands are area/width, so a narrower plan lengthens them
+  L += bands.reduce((t,a) => t + Math.max(a.min, a.area / W), 0);
+  return { W:+W.toFixed(2), L, area: W*L, sections: out };
+}
+
+// Within a fixed column count the area only grows with W, so every optimum sits
+// exactly on a breakpoint — enumerate those rather than sweeping blindly.
+function optimiseWarehouseWidth(specs, bands) {
+  if (!specs.length) return null;
+  const set = new Set();
+  for (const s of specs) {
+    const maxN = Math.max(3, Math.floor(s.bays/2/s.minBpf));
+    for (let n = 3; n <= Math.min(maxN, 400); n++) {
+      set.add(+optWidthFor(n, s.slot, s.pa).toFixed(2));
+    }
+  }
+  let best = null;
+  for (const W of [...set].sort((a,b)=>a-b)) {
+    const r = optEvaluate(W, specs, bands);
+    if (r && (!best || r.area < best.area)) best = r;
+  }
+  return best;
+}
+
 // Module-level constants (outside FloorPlanSVG to avoid minifier TDZ)
 const CROSS_AISLE_W_M = 3.0; // cross aisle width in metres
 // Minimum bays per face per column — keeps sections visually meaningful
@@ -1533,10 +1609,44 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var rtBayH  = (rackBayWidthM?.[rt])||(BAY_HEIGHT_M_LOOKUP?.[rtB])||0.9;
     var rtCross = ({shelving:13,liveStorage:13,selective:27,
       doubleDeep:27,driveIn:27,cantilever:27,ground:27})[rtB] || 13;
+    if(optIntervals && optIntervals[rt]>0) rtCross = optIntervals[rt];  // area-optimised spacing
     var rtBays  = totalBaysRt || Math.ceil(((rackTypeAreas?.[rt])||0) / (rtBayH * wW));
     var rtLayout= computeSectionLayout(rtBays, sectionW, rtBayH, rtSlot, rtCross, rtB);
     return {rt, rtLayout, rtBays, rtSlot, rtPa, rtFaceD, rtGap, rtStyle:(RACK_TYPE_STYLE?.[rtB])||{label:rtB,color:'#f8fafc',border:'#e2e8f0',text:'#374151'}};
   };
+
+  // ── AREA OPTIMISATION ───────────────────────────────────────────────────────
+  // Choose the warehouse width and the cross-aisle spacing that minimise total
+  // footprint, subject to: full picking aisle both sides, minimum bays per row,
+  // at least 3 columns per section, and aisle spacing inside its allowed band.
+  var optIntervals = null, optResult = null;
+  if (params?.optimiseArea !== false) {
+    var optSpecs = [];
+    RACK_ORDER.forEach(function(rt){
+      var rtB   = baseRackOf(rt);
+      var bays  = (rackConfig||[]).filter(c=>LK(c)===rt).reduce((s,c)=>s+(c.baysNeeded||0),0);
+      if(!bays) return;
+      var pa    = (rackAisleM?.[rt])||(DEFAULT_AISLE_M?.[rtB])||aisleM||1.2;
+      var ri    = (RACK_INFO_2D_LOOKUP?.[rtB])||{depth:2.2};
+      var faceD = (rackBayDepthM?.[rt]) || ri.depth/2 || 1.0;
+      var gap   = (rtB==='shelving'||rtB==='liveStorage')?0.05:0.10;
+      var bayH  = (rackBayWidthM?.[rt])||(BAY_HEIGHT_M_LOOKUP?.[rtB])||0.9;
+      optSpecs.push({ rt:rt, bays:bays, slot:faceD*2+gap+pa, pa:pa, bayH:bayH,
+        minBpf:(MIN_BPF_BY_TYPE?.[rtB])||1,
+        ca:(CROSS_AISLE_RANGE?.[rtB])||[12,15] });
+    });
+    var optBands = [
+      {area:receivingArea||0, min:4}, {area:dispatchArea||0, min:4},
+      {area:officeArea||50,  min:3},  {area:mheArea||0,      min:0},
+    ];
+    try {
+      optResult = optimiseWarehouseWidth(optSpecs, optBands);
+      if (optResult) {
+        optIntervals = {};
+        optResult.sections.forEach(function(s){ optIntervals[s.rt]=s.interval; });
+      }
+    } catch (err) { optResult = null; optIntervals = null; }
+  }
 
   // ── PASS 1: non-ground sections → derive actualWW ───────────────────────────
   RACK_ORDER.filter(rt=>baseRackOf(rt)!=='ground').forEach(rt=>{
@@ -1557,7 +1667,10 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     if(baseRackOf(kv[0])==='ground') return mx;
     return Math.max(mx, kv[1].requiredW||0);
   }, 10);  // requiredW already includes 0.6 margins; no extra +0.6 needed
-  actualWW = Math.max(10, preLayoutWW);
+  // Prefer the optimiser's width when it still satisfies every section
+  actualWW = (optResult && optResult.W >= preLayoutWW - 0.01)
+    ? optResult.W
+    : Math.max(10, preLayoutWW);
 
   // ── PASS 2: ground storage uses actualWW for column count ─────────────────
   RACK_ORDER.filter(rt=>baseRackOf(rt)==='ground').forEach(function(rt){
@@ -1652,7 +1765,9 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     return Math.max(mx, kv[1].requiredW||0);
   }, 10);  // requiredW already includes margins
   // actualWW = rack-driven width
-  actualWW = Math.max(10, layoutWW);
+  actualWW = (optResult && optResult.W >= layoutWW - 0.01)
+    ? optResult.W
+    : Math.max(10, layoutWW);
 
   // Rebuild ALL scale factors with final actual dimensions
   SVG_H = fullscreen ? Math.round(1800 * (actualWL/actualWW) * 0.8 + 220) : 820;
@@ -1805,6 +1920,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var colDepth=faceDepth*2+backGap;
     var actualColSlot=colDepth+pa;
     var crossInterval=(CROSS_AISLE_INTERVAL?.[domB])||13;
+    if(optIntervals && optIntervals[dom]>0) crossInterval=optIntervals[dom];
 
     // Maximum columns that fit in warehouse width
     // For column computation: use original wW (not expanded actualWW) so shelving/SPR
@@ -2018,6 +2134,7 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     stagingH, isBoth, isOne, recH, disH, offH, mheH, supportH,
     zoneRects, stagingRects, supportRects, dockDoors,
     allRackRows, allCrossAisles, allDimAnnotations, sectionCrossAisles, layoutSummary, recPallets, disPallets,
+    optResult, optIntervals,
     packTables, mheBays, dimRight, sectionLayouts,
     doorW: 3.5,
     // Design values needed in render
@@ -2048,6 +2165,7 @@ function FloorPlanSVG({ analysis, design, params, rackConfig, fullscreen=false,
     stagingH, isBoth, isOne, recH, disH, offH, mheH, supportH,
     zoneRects, stagingRects, supportRects, dockDoors,
     allRackRows, allCrossAisles, allDimAnnotations, sectionCrossAisles, layoutSummary, recPallets, disPallets,
+    optResult, optIntervals,
     packTables, mheBays, dimRight, sectionLayouts, doorW,
     zoneAreas, receivingArea, dispatchArea, mheArea, officeArea, netRackArea,
     totalDocks, inboundDocks, outboundDocks, staging,
@@ -4251,6 +4369,7 @@ export default function WarehouseDesignerTool() {
   const [measurePts,   setMeasurePts]   = useState([]);   // in-progress point(s), metres
   const [measurements, setMeasurements] = useState([]);   // completed [ptA, ptB] pairs
   const [snapOn,       setSnapOn]       = useState(true);  // ortho lock + edge snapping
+  const [optimiseArea, setOptimiseArea] = useState(true);  // minimise total footprint
   const [floorPlanFS, setFloorPlanFS] = useState(false); // fullscreen 2D plan
   const plan2DRef   = useRef(null);
   const userPlanRefObj = useRef(null); // user-defined mode plan container
@@ -4262,6 +4381,7 @@ export default function WarehouseDesignerTool() {
   const [error,     setError]     = useState('');
 
   const params = {
+    optimiseArea,
     clearH:parseFloat(clearH)||9,
     nMHE,
     dockSide, dockConfig, dockPitch,
@@ -4494,6 +4614,26 @@ export default function WarehouseDesignerTool() {
   const sysSummary = useMemo(()=>summaryFromLayout(design, rackConfig),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [design, rackConfig, analysis, paramsKey]);
+
+  // ── AREA OPTIMISATION READ-OUT ──────────────────────────────────────────
+  // Build the plan both ways so the saving can be stated rather than claimed.
+  const areaCompare = useMemo(()=>{
+    const dsn = userDesign || design;
+    const cfgs = userRackConfig || rackConfig;
+    if (!dsn || !cfgs || !cfgs.length) return null;
+    const run = (flag) => {
+      try {
+        const L = buildFloorPlanLayout(dsn, {...params, optimiseArea:flag}, cfgs, analysis, false);
+        return L && L.actualWW>0 ? {W:L.actualWW, L:L.actualWL, area:L.actualWW*L.actualWL,
+          opt:L.optResult, intervals:L.optIntervals} : null;
+      } catch (e) { return null; }
+    };
+    const on = run(true), off = run(false);
+    if (!on || !off) return null;
+    return { on, off, saved: off.area - on.area,
+      pct: off.area>0 ? ((off.area-on.area)/off.area)*100 : 0 };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userDesign, design, userRackConfig, rackConfig, analysis, paramsKey]);
 
   // ── RACK ELEVATION HELPERS (user-defined mode) ──────────────────────────
   // Representative container for a rack type: prefer the real config, else a
@@ -6546,6 +6686,96 @@ export default function WarehouseDesignerTool() {
                     );
                   })}
                 </div>
+              </div>
+            )}
+
+            {/* ── AREA OPTIMISATION ────────────────────────────────────── */}
+            {areaCompare && (
+              <div style={{marginBottom:'12px',border:`2px solid ${optimiseArea?'#86efac':'#e2e8f0'}`,
+                borderRadius:'10px',overflow:'hidden',
+                background:optimiseArea?'linear-gradient(180deg,#f6fef9,#fff)':'#fff'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                  padding:'9px 14px',flexWrap:'wrap',gap:'8px'}}>
+                  <div>
+                    <div style={{fontWeight:'800',fontSize:'13px',
+                      color:optimiseArea?'#166534':'#0f172a'}}>
+                      ⚡ Minimise Total Area
+                    </div>
+                    <div style={{fontSize:'10px',color:'#6b7280',marginTop:'2px'}}>
+                      Searches column counts and cross-aisle spacing within your limits
+                      (SPR 25–30m, shelving 12–15m, min rows per column, full aisles both sides).
+                    </div>
+                  </div>
+                  <button onClick={()=>setOptimiseArea(v=>!v)}
+                    style={{padding:'6px 14px',borderRadius:'99px',cursor:'pointer',
+                      fontFamily:'inherit',fontSize:'11px',fontWeight:'800',border:'none',
+                      background:optimiseArea?'#059669':'#e2e8f0',
+                      color:optimiseArea?'#fff':'#6b7280',whiteSpace:'nowrap'}}>
+                    {optimiseArea?'ON':'OFF'}
+                  </button>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',
+                  borderTop:'1px solid #e2e8f0',fontSize:'11px'}}>
+                  {[
+                    ['Baseline', areaCompare.off, '#6b7280'],
+                    ['Optimised', areaCompare.on, '#166534'],
+                  ].map(([lab,v,col])=>(
+                    <div key={lab} style={{padding:'8px 12px',borderRight:'1px solid #f1f5f9'}}>
+                      <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
+                        textTransform:'uppercase'}}>{lab}</div>
+                      <div style={{fontWeight:'800',color:col,fontSize:'13px'}}>
+                        {Math.round(v.area).toLocaleString()} m²
+                      </div>
+                      <div style={{fontSize:'10px',color:'#6b7280'}}>
+                        {v.W.toFixed(1)} × {v.L.toFixed(1)} m
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{padding:'8px 12px'}}>
+                    <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
+                      textTransform:'uppercase'}}>Saving</div>
+                    <div style={{fontWeight:'800',fontSize:'13px',
+                      color:areaCompare.saved>0?'#059669':'#6b7280'}}>
+                      {areaCompare.saved>0
+                        ? `${Math.round(areaCompare.saved).toLocaleString()} m²`
+                        : 'already minimal'}
+                    </div>
+                    {areaCompare.saved>0&&(
+                      <div style={{fontSize:'10px',color:'#059669',fontWeight:'700'}}>
+                        {areaCompare.pct.toFixed(1)}% smaller
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {optimiseArea&&areaCompare.on.opt&&(
+                  <div style={{borderTop:'1px solid #e2e8f0',background:'#fcfcfd',padding:'8px 12px'}}>
+                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:'10px'}}>
+                      <thead>
+                        <tr>
+                          {['Section','Columns','Rows / column','Cross aisle every','Aisles'].map(h=>(
+                            <th key={h} style={{textAlign:'left',padding:'2px 4px',color:'#9ca3af',
+                              fontWeight:'700',textTransform:'uppercase',fontSize:'9px'}}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {areaCompare.on.opt.sections.map(sc=>(
+                          <tr key={sc.rt} style={{borderTop:'1px solid #f1f5f9'}}>
+                            <td style={{padding:'3px 4px',fontWeight:'700',color:'#1d4ed8'}}>
+                              {RACK_LABELS_UI[baseRackOf(sc.rt)]||sc.rt}
+                            </td>
+                            <td style={{padding:'3px 4px'}}>{sc.nCols}</td>
+                            <td style={{padding:'3px 4px'}}>{sc.bpf}</td>
+                            <td style={{padding:'3px 4px',fontWeight:'700',color:'#059669'}}>
+                              {sc.interval} m
+                            </td>
+                            <td style={{padding:'3px 4px'}}>{sc.nCA}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
