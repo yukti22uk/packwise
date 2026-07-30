@@ -1633,17 +1633,28 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
   sX = DW/actualWW; sY = DH/actualWL;
   X = m=>ML+m*sX; Y = m=>MT+m*sY; W = m=>m*sX; H = m=>m*sY;
 
+  // Width of the east dispatch strip used by the corner dock layout.
+  // Declared HERE, before any consumer: it was previously declared further down
+  // inside the south-staging branch, so this update loop and the dock-door code
+  // both read it as `undefined` (var hoisting) and produced NaN widths.
+  var eastW  = Math.min(actualWW*0.3, 14);
+
   // Update all width-dependent rects to use finalised actualWW
   zoneRects.forEach(function(z){ z.w=actualWW; });
   sectionCrossAisles.forEach(function(ca){ ca.w=actualWW; });
   stagingRects.forEach(function(s){
-    // Recalculate positions based on actualWW
-    if(s.key==='receiving'&&isOne){ s.w=actualWW/2; }
-    if(s.key==='dispatch'&&isOne){ s.x=actualWW/2; s.w=actualWW/2; }
-    if(s.key==='receiving'&&isBoth&&s.x===0){ s.w=actualWW-eastW2; }
-    if(s.key==='dispatch'&&isBoth){ s.x=actualWW-eastW; s.w=eastW2; }
-    if(s.key==='receiving'&&!isOne&&!isBoth){ s.w=actualWW; }
-    if(s.key==='dispatch'&&!isOne&&!isBoth){ s.w=actualWW; }
+    if(isOne){
+      // Receiving and dispatch share the south wall, half each
+      if(s.key==='receiving'){ s.x=0;          s.w=actualWW/2; }
+      if(s.key==='dispatch') { s.x=actualWW/2; s.w=actualWW/2; }
+    } else if(isBoth){
+      // Cross-dock: dispatch spans the north wall, receiving the south wall
+      s.x=0; s.w=actualWW;
+    } else {
+      // Corner: receiving on the south wall, dispatch on an east strip
+      if(s.key==='receiving'){ s.x=0;                s.w=actualWW-eastW; }
+      if(s.key==='dispatch') { s.x=actualWW-eastW;   s.w=eastW; }
+    }
   });
   supportRects.forEach(function(s){
     if(s.key==='office'){ s.w=actualWW/2; }
@@ -1663,11 +1674,10 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
       label:'RECEIVING / GRN', subLabel:`${receivingArea}m² (${sqft(receivingArea)})`,
       color:'#e0f2fe', border:'#0284c7', text:'#0369a1' });
   } else {
-    var eastW2=Math.min(wW*0.3,14);
-    stagingRects.push({ key:'receiving', x:0, y:cur, w:actualWW-eastW2, h:stagingH,
+    stagingRects.push({ key:'receiving', x:0, y:cur, w:actualWW-eastW, h:stagingH,
       label:'RECEIVING / GRN', subLabel:`${receivingArea}m² (${sqft(receivingArea)})`,
       color:'#e0f2fe', border:'#0284c7', text:'#0369a1' });
-    stagingRects.push({ key:'dispatch', x:actualWW-eastW, y:cur, w:eastW2, h:stagingH,
+    stagingRects.push({ key:'dispatch', x:actualWW-eastW, y:cur, w:eastW, h:stagingH,
       label:'DISPATCH', subLabel:`${dispatchArea}m² (${sqft(dispatchArea)})`,
       color:'#fef3c7', border:'#d97706', text:'#92400e' });
   }
@@ -1684,7 +1694,6 @@ function buildFloorPlanLayout(design, params, rackConfig, analysis, fullscreen) 
     var nsp=actualWW/(outboundDocks+1);
     for(let i=1;i<=outboundDocks;i++) dockDoors.push({x:nsp*i-doorW/2,y:0,side:'north',label:`D${inboundDocks+i}`});
   } else {
-    var eastW=Math.min(actualWW*0.3,14);
     var southN=inboundDocks, eastN=outboundDocks;
     var ssp2=(actualWW-eastW)/(southN+1);
     for(let i=1;i<=southN;i++) dockDoors.push({x:ssp2*i-doorW/2,y:actualWL,side:'south',label:`D${i}`});
@@ -4210,7 +4219,6 @@ export default function WarehouseDesignerTool() {
   const [binEditsOpen,  setBinEditsOpen]  = useState(true);
   const [binEditsDirty, setBinEditsDirty] = useState(false);
   const [binEditsError, setBinEditsError] = useState('');
-  const [udViewMode,  setUdViewMode]  = useState('2d'); // user defined — default 2D (no WebGL risk)
   // ── Dimension measuring tool ──
   const [measureOn,    setMeasureOn]    = useState(false);
   const [measurePts,   setMeasurePts]   = useState([]);   // in-progress point(s), metres
@@ -4460,6 +4468,78 @@ export default function WarehouseDesignerTool() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [design, rackConfig, analysis, paramsKey]);
 
+  // ── RACK ELEVATION HELPERS (user-defined mode) ──────────────────────────
+  // Representative container for a rack type: prefer the real config, else a
+  // sensible default so the elevation preview is meaningful while typing.
+  const repBinForRack = (key) => {
+    const hit = (userRackConfig||rackConfig||[]).find(cf => cf.rack===key && cf.binDims);
+    if (hit) return hit.binDims;
+    const band = ({shelving:'M', liveStorage:'M', selective:'XL', doubleDeep:'XL',
+      driveIn:'XL', ground:'XL'})[key];
+    if (band) {
+      const ph = binPhysFor(band, binOverrides);
+      if (ph) return ph;
+    }
+    if (key==='cantilever') return [2500, 600, 300];
+    return [600, 400, 300];
+  };
+
+  // Build a cfg from the Step 3 inputs and run it through the real sizing engine
+  // so the elevation and the dimensions shown are the ones that will be used.
+  const udElevationCfg = (key) => {
+    const d     = udRackDefs[key] || {};
+    const bayW  = parseFloat(d.bayW) || 0;
+    const bayD  = parseFloat(d.bayD) || 0;
+    const bayH  = parseFloat(d.bayH) || 0;
+    const aisle = parseFloat(d.aisle) || 3000;
+    if (!bayW || !bayD) return null;                 // nothing to draw yet
+    const binDims  = repBinForRack(key);
+    const isShelf  = ['shelving','liveStorage'].includes(key);
+    const clearance = 50;
+    const base = {
+      id:'ud-'+key, rack:key, bin:'REP', rackName:key, binName:'',
+      binDims, bayW, bayD, clearance, tiers:1, aisleW:aisle,
+      shelfH: bayH || 2200, tierHeight: bayH || 2200,
+      orientation:'LW', locs:100,
+    };
+    if (isShelf) {
+      try { return recalcCfg(base); } catch (e) { return base; }
+    }
+    // Pallet / ground / cantilever: derive levels and pallets-across from the load
+    const ph    = binDims ? binDims[2] : 1200;
+    const face  = binDims ? Math.min(binDims[0], binDims[1]) : 1000;
+    const deep  = binDims ? Math.max(binDims[0], binDims[1]) : 1200;
+    const pitch = Math.max(300, ph + (key==='cantilever' ? 150 : 200));
+    const usable = (bayH || (key==='ground' ? 4000 : 6000));
+    const levels = key==='ground'
+      ? Math.max(1, parseInt(d.levels)||1)
+      : Math.max(1, Math.floor(usable / pitch));
+    const across = Math.max(1, Math.floor(bayW / (face + 100)));
+    const acrossD = key==='driveIn' ? Math.max(1, Math.round(bayD / deep)) : 1;
+    const full = { ...base, levels, acrossW:across, acrossD,
+      locsPerBay: across*levels*acrossD };
+    try { return recalcCfg(full); } catch (e) { return full; }
+  };
+
+  // Compact numeric dimension read-out beside the elevation drawing
+  const rackDimRows = (cfg) => {
+    if (!cfg) return [];
+    const bd = cfg.binDims || [];
+    const perBay = cfg.locsPerBayTotal || cfg.locsPerBay || 0;
+    const fp = (cfg.bayW/1000)*(cfg.bayD/1000);
+    const mod = (cfg.bayD/1000) + (parseFloat(cfg.aisleW||3000)/1000)/2;
+    return [
+      ['Bay width',        cfg.bayW+' mm'],
+      ['Bay depth',        cfg.bayD+' mm'],
+      [cfg.rack==='ground'?'Stack layers':'Levels', String(cfg.levels||'-')],
+      ['Container',        bd.length===3 ? (bd[0]+' x '+bd[1]+' x '+bd[2]+' mm') : '-'],
+      ['Per bay',          perBay ? perBay+' locations' : '-'],
+      ['Picking aisle',    (parseFloat(cfg.aisleW)||3000)+' mm'],
+      ['Bay footprint',    fp.toFixed(2)+' m2'],
+      ['Bay + half aisle', ((cfg.bayW/1000)*mod).toFixed(2)+' m2'],
+    ];
+  };
+
   // ── Measuring tool handlers ─────────────────────────────────────────────
   // Two clicks make one measurement; the first click is held in measurePts.
   // Ortho lock: if the second point is within ORTHO_TOL_DEG of horizontal or
@@ -4685,7 +4765,7 @@ export default function WarehouseDesignerTool() {
     setTimeout(()=>{
       try {
         // Step 1: get or run analysis
-        const mData=parseTable(masterText),oData=parseTable(orderText),iData=parseTable(invText);
+        const mData=parseTSV(masterText),oData=parseTSV(orderText),iData=parseTSV(invText);
         const curA=analysis||runAnalysis(mData,oData,iData,params,preferredBins);
         if(!analysis) setAnalysis(curA);
 
@@ -4702,7 +4782,8 @@ export default function WarehouseDesignerTool() {
           doubleDeep:'reserve',driveIn:'bulk',cantilever:'long'};
         const uCfgs=[];
 
-        if(vBins.length>0&&vRacks.length>0){
+        if(false){  // legacy user-bin branch removed — bins now come from system analysis
+          const vBins=[], vRacks=[];
           vBins.forEach((b,bi)=>{
             const bL=parseFloat(b.L),bW=parseFloat(b.W),bH=parseFloat(b.H);
             vRacks.forEach((rk,ri)=>{
@@ -4749,7 +4830,10 @@ export default function WarehouseDesignerTool() {
 
         // Step 4: ALWAYS compute layout
         const ca={},cza={};
-        uCfgs.forEach(cfg=>{ca[cfg.rack]=(ca[cfg.rack]||0)+(cfg.area||0);});cza[cfg.zone]=(cza[cfg.zone]||0)+(cfg.area||0);
+        uCfgs.forEach(cfg=>{
+          ca[cfg.rack]=(ca[cfg.rack]||0)+(cfg.area||0);
+          cza[cfg.zone]=(cza[cfg.zone]||0)+(cfg.area||0);
+        });
         if(!Object.keys(ca).length) ca.shelving=r?.totArea||50;
         setUserDesign(calcWarehouseSize(curA,params,ca,cza));
 
@@ -5507,6 +5591,55 @@ export default function WarehouseDesignerTool() {
                           {isPallet&&`⚙ Levels auto-calculated: level 1 on floor (pallet 144mm + load H + 100mm MHE), upper levels +100mm beam`}
                         </div>
                       )}
+
+                      {/* ── LIVE ELEVATION PREVIEW + DIMENSIONS ──────────── */}
+                      {(()=>{
+                        const ec=udElevationCfg(key);
+                        if(!ec) return (
+                          <div style={{padding:'10px 12px',fontSize:'10px',color:'#9ca3af',
+                            borderTop:'1px solid #f1f5f9',background:'#fcfcfd'}}>
+                            Enter bay width and depth to see the elevation drawing.
+                          </div>
+                        );
+                        return (
+                          <div style={{borderTop:'1px solid #e2e8f0',background:'#fcfcfd',
+                            display:'flex',flexWrap:'wrap',gap:'10px',padding:'10px 12px',
+                            alignItems:'flex-start'}}>
+                            <div style={{flex:'0 0 250px'}}>
+                              <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
+                                textTransform:'uppercase',letterSpacing:'0.05em',
+                                marginBottom:'4px',textAlign:'center'}}>
+                                Elevation — with dimensions
+                              </div>
+                              <RackElevationSVG cfg={ec} W={250} H={185}/>
+                            </div>
+                            <div style={{flex:'1 1 190px',minWidth:'180px'}}>
+                              <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
+                                textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'4px'}}>
+                                Dimensions
+                              </div>
+                              <table style={{width:'100%',borderCollapse:'collapse',fontSize:'10px'}}>
+                                <tbody>
+                                  {rackDimRows(ec).map(([lab,val])=>(
+                                    <tr key={lab} style={{borderBottom:'1px solid #f1f5f9'}}>
+                                      <td style={{padding:'3px 0',color:'#6b7280'}}>{lab}</td>
+                                      <td style={{padding:'3px 0',textAlign:'right',
+                                        fontWeight:'700',color:'#0f172a'}}>{val}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                              {ec.feasible===false&&(
+                                <div style={{marginTop:'6px',fontSize:'10px',fontWeight:'700',
+                                  color:'#be185d',background:'#fff1f2',border:'1px solid #fecdd3',
+                                  borderRadius:'6px',padding:'4px 7px'}}>
+                                  ⚠ Container does not fit this bay — adjust dimensions
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
                       </div>
                   );
                 })}
@@ -6303,27 +6436,106 @@ export default function WarehouseDesignerTool() {
               );
             })()}
 
-            {/* 3D / 2D Layout */}
+            {/* ── RACK ELEVATIONS + DIMENSIONS ─────────────────────────── */}
+            {(userRackConfig||[]).length>0&&(
+              <div style={{marginBottom:'12px',border:'1px solid #e2e8f0',
+                borderRadius:'10px',overflow:'hidden'}}>
+                <div style={{background:'#0f172a',padding:'8px 14px',display:'flex',
+                  justifyContent:'space-between',alignItems:'center'}}>
+                  <span style={{fontSize:'12px',fontWeight:'700',color:'#f1f5f9',
+                    letterSpacing:'0.03em'}}>📐 Rack Elevations &amp; Dimensions</span>
+                  <span style={{fontSize:'10px',color:'#94a3b8'}}>
+                    {userRackConfig.length} configuration{userRackConfig.length>1?'s':''}
+                  </span>
+                </div>
+                <div style={{padding:'10px'}}>
+                  {userRackConfig.map((cfg,ci)=>{
+                    const bd=cfg.binDims||[];
+                    return (
+                      <div key={cfg.id||ci} style={{border:'1px solid #e2e8f0',
+                        borderRadius:'9px',overflow:'hidden',
+                        marginBottom:ci===userRackConfig.length-1?0:'10px'}}>
+                        <div style={{background:'#f8fafc',padding:'7px 12px',
+                          borderBottom:'1px solid #e2e8f0',display:'flex',
+                          justifyContent:'space-between',alignItems:'center',
+                          flexWrap:'wrap',gap:'6px'}}>
+                          <div>
+                            <span style={{fontWeight:'700',fontSize:'12px',color:'#0f172a'}}>
+                              {cfg.rackName||cfg.rack}
+                            </span>
+                            <span style={{fontSize:'10px',color:'#6b7280',marginLeft:'7px'}}>
+                              {cfg.binName}
+                              {bd.length===3?` (${bd[0]}×${bd[1]}×${bd[2]}mm)`:''}
+                            </span>
+                          </div>
+                          <div style={{display:'flex',gap:'10px',fontSize:'10px'}}>
+                            <span><strong style={{color:'#7c3aed'}}>{(cfg.baysNeeded||0).toLocaleString()}</strong> bays</span>
+                            <span><strong style={{color:'#059669'}}>{cfg.area||0}m²</strong></span>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',flexWrap:'wrap',gap:'10px',
+                          padding:'10px 12px',background:'#fcfcfd',alignItems:'flex-start'}}>
+                          <div style={{flex:'0 0 250px'}}>
+                            <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
+                              textTransform:'uppercase',letterSpacing:'0.05em',
+                              marginBottom:'4px',textAlign:'center'}}>
+                              Front elevation
+                            </div>
+                            <RackElevationSVG cfg={cfg} W={250} H={185}/>
+                          </div>
+                          <div style={{flex:'1 1 190px',minWidth:'180px'}}>
+                            <div style={{fontSize:'9px',color:'#9ca3af',fontWeight:'700',
+                              textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'4px'}}>
+                              Dimensions
+                            </div>
+                            <table style={{width:'100%',borderCollapse:'collapse',fontSize:'10px'}}>
+                              <tbody>
+                                {rackDimRows(cfg).map(([lab,val])=>(
+                                  <tr key={lab} style={{borderBottom:'1px solid #f1f5f9'}}>
+                                    <td style={{padding:'3px 0',color:'#6b7280'}}>{lab}</td>
+                                    <td style={{padding:'3px 0',textAlign:'right',
+                                      fontWeight:'700',color:'#0f172a'}}>{val}</td>
+                                  </tr>
+                                ))}
+                                <tr style={{borderTop:'1px solid #e2e8f0'}}>
+                                  <td style={{padding:'3px 0',color:'#6b7280'}}>Total locations</td>
+                                  <td style={{padding:'3px 0',textAlign:'right',
+                                    fontWeight:'800',color:'#7c3aed'}}>
+                                    {(cfg.locs||0).toLocaleString()}
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                            {cfg.feasible===false&&(
+                              <div style={{marginTop:'6px',fontSize:'10px',fontWeight:'700',
+                                color:'#be185d',background:'#fff1f2',border:'1px solid #fecdd3',
+                                borderRadius:'6px',padding:'4px 7px'}}>
+                                ⚠ Container does not fit this bay
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* 2D Layout */}
             {userDesign && (<>
-              {/* View mode toggle */}
-              <div style={{display:'flex',gap:'8px',marginBottom:'10px'}}>
-                {[['2d','🗺 2D Floor Plan'],['3d','🏭 3D View']].map(([m,label])=>(
-                  <button key={m} onClick={()=>setUdViewMode(m)}
-                    style={{flex:1,padding:'8px',borderRadius:'8px',cursor:'pointer',
-                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
-                      border:`2px solid ${udViewMode===m?'#7c3aed':'#e2e8f0'}`,
-                      background:udViewMode===m?'#f5f3ff':'#fff',
-                      color:udViewMode===m?'#7c3aed':'#6b7280'}}>
-                    {label}
-                  </button>))}
-                {udViewMode==='2d'&&(
-                  <button onClick={()=>setFloorPlanFS(true)}
-                    style={{padding:'8px 12px',borderRadius:'8px',cursor:'pointer',
-                      fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
-                      border:'2px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
-                    ⛶
-                  </button>
-                )}
+              <div style={{display:'flex',justifyContent:'space-between',
+                alignItems:'center',marginBottom:'10px'}}>
+                <div style={{fontWeight:'700',fontSize:'13px',color:'#0f172a'}}>
+                  🗺 2D Floor Plan
+                </div>
+                <button onClick={()=>setFloorPlanFS(true)}
+                  title="View full screen"
+                  style={{padding:'6px 12px',borderRadius:'8px',cursor:'pointer',
+                    fontFamily:'inherit',fontSize:'12px',fontWeight:'700',
+                    border:'2px solid #e2e8f0',background:'#fff',color:'#6b7280'}}>
+                  ⛶ Full Screen
+                </button>
               </div>
               <div style={{...S.card,padding:'10px',marginBottom:'12px'}}>
                 {/* Plan tools */}
@@ -6682,10 +6894,10 @@ export default function WarehouseDesignerTool() {
                   <div style={{background:'#f0fdf4',border:'1px solid #86efac',
                     borderRadius:'8px',padding:'8px 12px',fontSize:'12px',color:'#166534'}}>
                     <strong>✓ Auto-consolidated:</strong>
-                    {analysis.binConsolidation.map(r=>(
+                    {(analysis.binConsolidation||[]).map(r=>(
                       <span key={r.from} style={{marginLeft:'8px'}}>
                         {r.totalMoved} SKU{r.totalMoved>1?'s':''} from <strong>{r.from}</strong> →{' '}
-                        {r.actions.map(a=>`${a.to} (${a.n})`).join(', ')}
+                        {(r.actions||[]).map(a=>`${a.to} (${a.n})`).join(', ')}
                       </span>
                     ))}
                   </div>
