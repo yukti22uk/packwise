@@ -19,12 +19,17 @@ const PALLET_PRESETS = {
 // Lock height: box H is always vertical — only horizontal rotation (L↔W swap)
 
 // ─── PALLET STABILITY ────────────────────────────────────────────────────────
-// A block of height H on a base of width B tips once tilted past
-// theta = atan(B / H). Forklift masts tilt, floors slope and MHE brakes, so the
-// height-to-base "slenderness" ratio decides whether a load can travel upright.
-//   H/B = 2  -> 26.6 deg  stable unsecured
-//   H/B = 3  -> 18.4 deg  marginal, needs wrap or strapping
-//   H/B = 13 ->  4.3 deg  falls over if the truck brakes
+// A load tips once tilted past theta = atan(base / height), so the
+// height-to-base ratio decides whether it can travel upright:
+//   ratio 2:1 -> 26.6 deg   stable
+//   ratio 3:1 -> 18.4 deg   marginal, needs wrap or strapping
+//   ratio 5:1 -> 11.3 deg   unstable
+//
+// Crucially the base is that of the WRAPPED BLOCK on the pallet, not of one
+// carton. Eight thin panels standing side by side and stretch-wrapped form a
+// stable block even though a single panel alone would topple. The block is
+// limited by how many units are actually available, so a part-filled pallet is
+// judged on what really sits on it.
 const SLENDER_STABLE = 2.0, SLENDER_MARGINAL = 3.0, OVERHANG_TOL = 25;
 
 function tipAngle(base, h) {
@@ -49,10 +54,13 @@ function suggestPallet(cl, cw, ch) {
     slender:+b.s.toFixed(2), tip:+tipAngle(Math.min(b.a,b.b), b.h).toFixed(1) };
 }
 
-// Assess one component on one pallet across all three orientations
-function assessStability(cl, cw, ch, pl, pw, ph) {
+// Assess one component on one pallet across all three orientations.
+// qty (optional) caps the block to the units actually on hand.
+function assessStability(cl, cw, ch, pl, pw, ph, qty, assumeWrapped) {
+  assumeWrapped = assumeWrapped !== false;   // wrapping is standard practice
   cl = parseFloat(cl)||0; cw = parseFloat(cw)||0; ch = parseFloat(ch)||0;
   pl = parseFloat(pl)||0; pw = parseFloat(pw)||0; ph = parseFloat(ph)||0;
+  const have = parseFloat(qty) > 0 ? parseFloat(qty) : Infinity;
   if (!(cl>0 && cw>0 && ch>0 && pl>0 && pw>0)) return null;
 
   const all = [
@@ -60,17 +68,42 @@ function assessStability(cl, cw, ch, pl, pw, ph) {
     { name:'Width vertical',  a:cl, b:ch, h:cw },
     { name:'Height vertical', a:cl, b:cw, h:ch },
   ].map(d => {
-    const base = Math.min(d.a, d.b);
-    const slender = base > 0 ? d.h/base : Infinity;
     const fitsBase = (d.a <= pl+OVERHANG_TOL && d.b <= pw+OVERHANG_TOL)
                   || (d.b <= pl+OVERHANG_TOL && d.a <= pw+OVERHANG_TOL);
     const fitsH = !(ph > 0) || d.h <= ph;
-    const perLayer = fitsBase ? Math.max(
-      Math.floor(pl/d.a)*Math.floor(pw/d.b),
-      Math.floor(pl/d.b)*Math.floor(pw/d.a)) : 0;
-    return { ...d, base, slender:+slender.toFixed(2),
-      tip:+tipAngle(base, d.h).toFixed(1), rating:rateSlender(slender),
-      fitsBase, fitsH, usable:fitsBase && fitsH, perLayer };
+
+    // Best arrangement of this footprint on the pallet
+    const arrangements = [
+      { nL:Math.floor(pl/d.a), nW:Math.floor(pw/d.b), ba:d.a, bb:d.b },
+      { nL:Math.floor(pl/d.b), nW:Math.floor(pw/d.a), ba:d.b, bb:d.a },
+    ].filter(x => x.nL > 0 && x.nW > 0)
+     .sort((x,y) => (y.nL*y.nW) - (x.nL*x.nW));
+    const arr = arrangements[0];
+
+    let perLayer = 0, layers = 0, blockBase = Math.min(d.a, d.b), loadH = d.h;
+    if (arr) {
+      perLayer = arr.nL * arr.nW;
+      layers   = ph > 0 && d.h > 0 ? Math.max(1, Math.floor(ph/d.h)) : 1;
+      // Only count units we actually have
+      const unitsOnPallet = Math.min(perLayer * layers, have);
+      const unitsPerLayer = Math.min(perLayer, unitsOnPallet);
+      // Fill the longer run first, so the block stays as square as it can
+      const alongL = Math.min(arr.nL, Math.max(1, Math.ceil(unitsPerLayer/arr.nW)));
+      const alongW = Math.min(arr.nW, Math.max(1, Math.ceil(unitsPerLayer/alongL)));
+      const blockL = alongL * arr.ba, blockW = alongW * arr.bb;
+      blockBase = Math.min(blockL, blockW);
+      const usedLayers = Math.max(1, Math.ceil(unitsOnPallet / Math.max(1, perLayer)));
+      loadH = Math.min(usedLayers, layers) * d.h;
+    }
+
+    const slenderSingle = Math.min(d.a,d.b) > 0 ? d.h/Math.min(d.a,d.b) : Infinity;
+    const slender = blockBase > 0 ? loadH/blockBase : Infinity;
+    return { ...d, base:blockBase, loadH,
+      slender:+slender.toFixed(2), tip:+tipAngle(blockBase, loadH).toFixed(1),
+      slenderSingle:+slenderSingle.toFixed(2),
+      tipSingle:+tipAngle(Math.min(d.a,d.b), d.h).toFixed(1),
+      rating:rateSlender(slender), fitsBase, fitsH,
+      usable:fitsBase && fitsH, perLayer, layers };
   });
 
   const usable = all.filter(x => x.usable);
@@ -78,7 +111,21 @@ function assessStability(cl, cw, ch, pl, pw, ph) {
   const pool = usable.length ? usable : all;
   const best = pool.slice().sort((x,y) =>
     rank[x.rating]-rank[y.rating] || y.perLayer-x.perLayer)[0];
-  const ok = usable.some(x => x.rating === 'stable');
+
+  // Wrapping is a PROCESS the floor may skip, so judge both ways.
+  // ratingLoose = what happens if nobody wraps the layer.
+  if (best) {
+    best.ratingLoose = rateSlender(best.slenderSingle);
+    best.wrapCritical = assumeWrapped
+      && best.usable
+      && best.perLayer > 1
+      && rateSlender(best.slender) === 'stable'
+      && best.ratingLoose !== 'stable';
+  }
+  const okWrapped = usable.some(x => x.rating === 'stable');
+  const okLoose   = usable.some(x => rateSlender(x.slenderSingle) === 'stable');
+  // With wrapping assumed off, only the single-unit result counts
+  const ok = assumeWrapped ? okWrapped : okLoose;
 
   let advice = '', suggested = null;
   if (!usable.length) {
@@ -86,12 +133,21 @@ function assessStability(cl, cw, ch, pl, pw, ph) {
     advice = 'Does not fit this pallet. Use ' + suggested.L + ' x ' + suggested.W
       + 'mm with the item ' + suggested.how + ' (' + suggested.slender + ':1).';
   } else if (ok) {
-    advice = 'Stable as loaded.';
+    advice = best.wrapCritical
+      ? 'Only stable when the layer of ' + best.perLayer
+        + ' is stretch-wrapped as one block. Loose, a single unit is '
+        + best.slenderSingle + ':1 and will topple — wrapping is mandatory.'
+      : (best.perLayer > 1
+          ? 'Stable as a wrapped block of ' + best.perLayer + ' per layer.'
+          : 'Stable as loaded.');
+  } else if (!assumeWrapped && okWrapped) {
+    advice = 'Unstable loose (' + best.slenderSingle + ':1). Stretch wrap the layer of '
+      + best.perLayer + ' into one block to reach ' + best.slender + ':1.';
   } else {
     const marg = usable.filter(x => x.rating === 'marginal')[0];
     if (marg) {
-      advice = 'Rotate to ' + marg.name.toLowerCase() + ' (' + marg.slender
-        + ':1) and secure with stretch wrap or strapping.';
+      advice = 'Stretch wrap the layer into one block ('
+        + marg.slender + ':1, ' + marg.tip + ' deg) or strap to the pallet.';
     } else {
       suggested = suggestPallet(cl, cw, ch);
       const fits = suggested.L <= pl+OVERHANG_TOL && suggested.W <= pw+OVERHANG_TOL;
@@ -101,8 +157,10 @@ function assessStability(cl, cw, ch, pl, pw, ph) {
           + 'mm with the item ' + suggested.how + ' (' + suggested.slender + ':1).';
     }
   }
-  return { ok, rating: usable.length ? best.rating : 'unstable',
-    best, all, advice, suggested };
+  const shownRating = !usable.length ? 'unstable'
+    : assumeWrapped ? best.rating : rateSlender(best.slenderSingle);
+  return { ok, rating: shownRating, wrapCritical: best ? best.wrapCritical : false,
+    assumeWrapped, best, all, advice, suggested };
 }
 
 function calcLockedBPP(pL, pW, pH, sl, sw, sh) {
@@ -293,6 +351,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
   // Pallet mixing
   const [pPreset,     setPPreset]     = useState('standard');
   const [pL,setPL]=useState('1200'); const [pW,setPW]=useState('1000'); const [pH,setPH]=useState('1200');
+  const [wrapped,setWrapped]=useState(true); // are unit loads stretch-wrapped in practice?
   const [maxSkus,     setMaxSkus]     = useState(4);
   const [lockHeight,  setLockHeight]  = useState(false);
   const [lockedSkus,       setLockedSkus]       = useState(new Set());
@@ -336,7 +395,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
       let con = 'Volume';
       if (wQ!==null && wQ<eV) con = 'Weight';
       if (qtyAvail>0 && eQ===qtyAvail) con = 'Stock Limit';
-      const stab = assessStability(sl, sw, sh, pL, pW, pH);
+      const stab = assessStability(sl, sw, sh, pL, pW, pH, qtyAvail, wrapped);
       return { name, sl, sw, sh, category:s.category||'Uncategorised', volQty:eV, wtQty:wQ!==null?wQ:'N/A', effQty:eQ, volUtil:vu, wtUtil:wu, orient, stackLayers:cStackLayers, constraint:con, heightLocked:isLocked, stab };
     }).filter(Boolean);
   }
@@ -618,6 +677,20 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                     onChange={e=>{ setPPreset('custom'); s(e.target.value); }}
                     placeholder="0"/></div>))}
 
+              {/* Are loads stretch-wrapped on the floor? */}
+              <div>
+                <label style={lbl}>Unit Load Wrapping</label>
+                <select value={wrapped?'yes':'no'} onChange={e=>setWrapped(e.target.value==='yes')}
+                  style={{...S.input}}>
+                  <option value="yes">Stretch-wrapped as one block</option>
+                  <option value="no">Not wrapped / loose units</option>
+                </select>
+                <div style={{fontSize:'10px',color:'#9ca3af',marginTop:'3px'}}>
+                  Wrapping binds a layer into one stable block. Turn this off to see
+                  which SKUs topple if the floor skips it.
+                </div>
+              </div>
+
               {/* Max SKUs per pallet */}
               <div>
                 <label style={lbl}>Max SKUs / Pallet</label>
@@ -751,7 +824,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
               <div style={{overflowX:'auto'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
                   <thead><tr>
-                    {['SKU','Category','Vol Qty','Wt Qty','Eff Qty','Vol%','Wt%','→ L-axis','→ W-axis','→ H-axis (stack)','Layers','Constraint','Pallet Stability','🔒 Lock H'].map(h=>(
+                    {['SKU','Category','Pallet Stability','Vol Qty','Wt Qty','Eff Qty','Vol%','Wt%','→ L-axis','→ W-axis','→ H-axis (stack)','Layers','Constraint','🔒 Lock H'].map(h=>(
                       <th key={h} style={{padding:'9px 12px',textAlign:'left',fontWeight:'600',
                         fontSize:'11px',color:'#6b7a8d',textTransform:'uppercase',
                         background:'#f8fafc',borderBottom:'1px solid #e8edf2',whiteSpace:'nowrap'}}>{h}</th>))}
@@ -770,6 +843,39 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               fontWeight:'600',whiteSpace:'nowrap'}}>
                               {r.category||'—'}
                             </span>
+                          </td>
+                          <td style={{padding:'8px 12px',minWidth:'176px'}}>
+                            {r.stab ? (
+                              <div style={{borderRadius:'7px',padding:'4px 8px',fontSize:'11px',
+                                background:r.stab.wrapCritical?'#fffbeb':r.stab.ok?'#f0fdf4':r.stab.rating==='marginal'?'#fffbeb':'#fff1f2',
+                                border:'1px solid '+(r.stab.wrapCritical?'#fbbf24':r.stab.ok?'#86efac':r.stab.rating==='marginal'?'#fde68a':'#fecdd3'),
+                                color:r.stab.wrapCritical?'#92400e':r.stab.ok?'#166534':r.stab.rating==='marginal'?'#92400e':'#be185d'}}>
+                                <div style={{fontWeight:'700'}}>
+                                  {r.stab.wrapCritical&&r.stab.ok ? 'Stable \u2014 wrap required'
+                                    : r.stab.ok ? 'Stable'
+                                    : r.stab.rating==='marginal' ? 'Needs securing' : 'Unstable'}
+                                  {r.stab.best&&r.stab.best.usable
+                                    ? ' \u00b7 '+(r.stab.assumeWrapped?r.stab.best.slender:r.stab.best.slenderSingle)+':1 \u00b7 '+(r.stab.assumeWrapped?r.stab.best.tip:r.stab.best.tipSingle)+'\u00b0'
+                                    : ' \u00b7 does not fit'}
+                                </div>
+                                <div style={{fontSize:'10px',fontWeight:'400',marginTop:'1px',color:'#6b7280'}}>
+                                  {r.stab.best&&r.stab.best.usable?r.stab.best.name:''}
+                                  {r.stab.best&&r.stab.best.usable&&r.stab.best.perLayer>1
+                                    ? ' \u00b7 block of '+r.stab.best.perLayer
+                                    : ''}
+                                </div>
+                                {r.stab.best&&r.stab.best.usable&&r.stab.best.slenderSingle>r.stab.best.slender+0.05&&(
+                                  <div style={{fontSize:'9px',fontWeight:'400',color:'#9ca3af',marginTop:'1px'}}>
+                                    single unit {r.stab.best.slenderSingle}:1 \u2014 wrap the layer together
+                                  </div>
+                                )}
+                                {(!r.stab.ok || r.stab.wrapCritical) && (
+                                  <div style={{fontSize:'10px',fontWeight:'400',marginTop:'3px',lineHeight:'1.35'}}>
+                                    {r.stab.advice}
+                                  </div>
+                                )}
+                              </div>
+                            ) : <span style={{color:'#9ca3af',fontSize:'11px'}}>-</span>}
                           </td>
                           <td style={{padding:'8px 12px',textAlign:'right'}}>{r.volQty?.toLocaleString()}</td>
                           <td style={{padding:'8px 12px',textAlign:'right'}}>{typeof r.wtQty==='number'?r.wtQty.toLocaleString():r.wtQty}</td>
@@ -810,27 +916,6 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               color:r.constraint==='Volume'?'#1d4ed8':r.constraint==='Weight'?'#c2410c':'#6d28d9'}}>
                               {r.constraint}
                             </span>
-                          </td>
-                          <td style={{padding:'8px 12px',minWidth:'176px'}}>
-                            {r.stab ? (
-                              <div style={{borderRadius:'7px',padding:'4px 8px',fontSize:'11px',
-                                background:r.stab.ok?'#f0fdf4':r.stab.rating==='marginal'?'#fffbeb':'#fff1f2',
-                                border:'1px solid '+(r.stab.ok?'#86efac':r.stab.rating==='marginal'?'#fde68a':'#fecdd3'),
-                                color:r.stab.ok?'#166534':r.stab.rating==='marginal'?'#92400e':'#be185d'}}>
-                                <div style={{fontWeight:'700'}}>
-                                  {r.stab.ok?'Stable':r.stab.rating==='marginal'?'Needs securing':'Unstable'}
-                                  {r.stab.best?' \u00b7 '+r.stab.best.slender+':1 \u00b7 '+r.stab.best.tip+'\u00b0':''}
-                                </div>
-                                <div style={{fontSize:'10px',fontWeight:'400',marginTop:'1px',color:'#6b7280'}}>
-                                  {r.stab.best?r.stab.best.name:''}
-                                </div>
-                                {!r.stab.ok && (
-                                  <div style={{fontSize:'10px',fontWeight:'400',marginTop:'3px',lineHeight:'1.35'}}>
-                                    {r.stab.advice}
-                                  </div>
-                                )}
-                              </div>
-                            ) : <span style={{color:'#9ca3af',fontSize:'11px'}}>-</span>}
                           </td>
                           <td style={{padding:'8px 12px',textAlign:'center'}}>
                             <button
@@ -1041,7 +1126,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                     ({(s.remainder*100).toFixed(1)}%)
                                     {s.sl&&s.sw&&s.sh?` ${s.sl}×${s.sw}×${s.sh}`:''}
                                   </span>
-                                  {(()=>{ const st=assessStability(s.sl,s.sw,s.sh,pL,pW,pH);
+                                  {(()=>{ const st=assessStability(s.sl,s.sw,s.sh,pL,pW,pH,s.qtyAvail,wrapped);
                                     if(!st||st.ok) return null;
                                     return <span title={st.advice} style={{marginLeft:'4px',
                                       color:st.rating==='marginal'?'#d97706':'#be185d',
