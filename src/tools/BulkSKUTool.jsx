@@ -17,6 +17,94 @@ const PALLET_PRESETS = {
 
 // ─── BOXES PER PALLET (LOCK HEIGHT) ──────────────────────────────────────────
 // Lock height: box H is always vertical — only horizontal rotation (L↔W swap)
+
+// ─── PALLET STABILITY ────────────────────────────────────────────────────────
+// A block of height H on a base of width B tips once tilted past
+// theta = atan(B / H). Forklift masts tilt, floors slope and MHE brakes, so the
+// height-to-base "slenderness" ratio decides whether a load can travel upright.
+//   H/B = 2  -> 26.6 deg  stable unsecured
+//   H/B = 3  -> 18.4 deg  marginal, needs wrap or strapping
+//   H/B = 13 ->  4.3 deg  falls over if the truck brakes
+const SLENDER_STABLE = 2.0, SLENDER_MARGINAL = 3.0, OVERHANG_TOL = 25;
+
+function tipAngle(base, h) {
+  return h > 0 ? Math.atan(base / h) * 180 / Math.PI : 90;
+}
+function rateSlender(s) {
+  if (s <= SLENDER_STABLE) return 'stable';
+  if (s <= SLENDER_MARGINAL) return 'marginal';
+  return 'unstable';
+}
+
+// Smallest sensible pallet for the flattest orientation, rounded up to 100mm
+function suggestPallet(cl, cw, ch) {
+  const opts = [
+    { a:cw, b:ch, h:cl, n:'lying on its length' },
+    { a:cl, b:ch, h:cw, n:'lying on its width'  },
+    { a:cl, b:cw, h:ch, n:'standing upright'    },
+  ].map(d => ({ ...d, s: Math.min(d.a,d.b) > 0 ? d.h/Math.min(d.a,d.b) : Infinity }))
+   .sort((x,y) => x.s - y.s);
+  const b = opts[0], r = v => Math.ceil(v/100)*100;
+  return { L:r(Math.max(b.a,b.b)), W:r(Math.min(b.a,b.b)), how:b.n,
+    slender:+b.s.toFixed(2), tip:+tipAngle(Math.min(b.a,b.b), b.h).toFixed(1) };
+}
+
+// Assess one component on one pallet across all three orientations
+function assessStability(cl, cw, ch, pl, pw, ph) {
+  cl = parseFloat(cl)||0; cw = parseFloat(cw)||0; ch = parseFloat(ch)||0;
+  pl = parseFloat(pl)||0; pw = parseFloat(pw)||0; ph = parseFloat(ph)||0;
+  if (!(cl>0 && cw>0 && ch>0 && pl>0 && pw>0)) return null;
+
+  const all = [
+    { name:'Length vertical', a:cw, b:ch, h:cl },
+    { name:'Width vertical',  a:cl, b:ch, h:cw },
+    { name:'Height vertical', a:cl, b:cw, h:ch },
+  ].map(d => {
+    const base = Math.min(d.a, d.b);
+    const slender = base > 0 ? d.h/base : Infinity;
+    const fitsBase = (d.a <= pl+OVERHANG_TOL && d.b <= pw+OVERHANG_TOL)
+                  || (d.b <= pl+OVERHANG_TOL && d.a <= pw+OVERHANG_TOL);
+    const fitsH = !(ph > 0) || d.h <= ph;
+    const perLayer = fitsBase ? Math.max(
+      Math.floor(pl/d.a)*Math.floor(pw/d.b),
+      Math.floor(pl/d.b)*Math.floor(pw/d.a)) : 0;
+    return { ...d, base, slender:+slender.toFixed(2),
+      tip:+tipAngle(base, d.h).toFixed(1), rating:rateSlender(slender),
+      fitsBase, fitsH, usable:fitsBase && fitsH, perLayer };
+  });
+
+  const usable = all.filter(x => x.usable);
+  const rank = { stable:0, marginal:1, unstable:2 };
+  const pool = usable.length ? usable : all;
+  const best = pool.slice().sort((x,y) =>
+    rank[x.rating]-rank[y.rating] || y.perLayer-x.perLayer)[0];
+  const ok = usable.some(x => x.rating === 'stable');
+
+  let advice = '', suggested = null;
+  if (!usable.length) {
+    suggested = suggestPallet(cl, cw, ch);
+    advice = 'Does not fit this pallet. Use ' + suggested.L + ' x ' + suggested.W
+      + 'mm with the item ' + suggested.how + ' (' + suggested.slender + ':1).';
+  } else if (ok) {
+    advice = 'Stable as loaded.';
+  } else {
+    const marg = usable.filter(x => x.rating === 'marginal')[0];
+    if (marg) {
+      advice = 'Rotate to ' + marg.name.toLowerCase() + ' (' + marg.slender
+        + ':1) and secure with stretch wrap or strapping.';
+    } else {
+      suggested = suggestPallet(cl, cw, ch);
+      const fits = suggested.L <= pl+OVERHANG_TOL && suggested.W <= pw+OVERHANG_TOL;
+      advice = fits
+        ? 'Strap the load to the pallet or use a stillage.'
+        : 'No stable orientation here. Use ' + suggested.L + ' x ' + suggested.W
+          + 'mm with the item ' + suggested.how + ' (' + suggested.slender + ':1).';
+    }
+  }
+  return { ok, rating: usable.length ? best.rating : 'unstable',
+    best, all, advice, suggested };
+}
+
 function calcLockedBPP(pL, pW, pH, sl, sw, sh) {
   if (sh > pH) return 0; // box taller than pallet
   const layers = Math.floor(pH / sh);
@@ -248,7 +336,8 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
       let con = 'Volume';
       if (wQ!==null && wQ<eV) con = 'Weight';
       if (qtyAvail>0 && eQ===qtyAvail) con = 'Stock Limit';
-      return { name, sl, sw, sh, category:s.category||'Uncategorised', volQty:eV, wtQty:wQ!==null?wQ:'N/A', effQty:eQ, volUtil:vu, wtUtil:wu, orient, stackLayers:cStackLayers, constraint:con, heightLocked:isLocked };
+      const stab = assessStability(sl, sw, sh, pL, pW, pH);
+      return { name, sl, sw, sh, category:s.category||'Uncategorised', volQty:eV, wtQty:wQ!==null?wQ:'N/A', effQty:eQ, volUtil:vu, wtUtil:wu, orient, stackLayers:cStackLayers, constraint:con, heightLocked:isLocked, stab };
     }).filter(Boolean);
   }
 
@@ -398,12 +487,14 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
     const h = ['SKU Name','Category','Max Qty (Volume)','Max Qty (Weight)',
       'Effective Max Qty','Volume Used (%)','Weight Used (%)',
       'L-axis (mm)','W-axis (mm)','H-axis / Stack (mm)',
-      'Stacking Layers','Height Locked','Constraint'];
+      'Stacking Layers','Height Locked','Constraint',
+      'Pallet Stability','Height:Base Ratio','Stability Advice'];
     const rows = results.map(r => {
       const cat = r.category||'Uncategorised';
       const [oL,oW,oH] = (r.orient||'').split('×');
+      const st = r.stab;
       return r.error
-        ? [r.name, cat, r.error, '', '', '', '', '', '', '', '', '', '']
+        ? [r.name, cat, r.error, '', '', '', '', '', '', '', '', '', '', '', '', '']
         : [r.name, cat,
            r.volQty,
            typeof r.wtQty==='number'?r.wtQty:'N/A',
@@ -413,12 +504,15 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
            oL||'', oW||'', oH||'',
            r.stackLayers||'',
            r.heightLocked?'Locked':'',
-           r.constraint];
+           r.constraint,
+           st ? (st.ok?'Stable':st.rating==='marginal'?'Needs securing':'Unstable') : '',
+           st && st.best ? st.best.slender+':1' : '',
+           st ? st.advice : ''];
     });
     const ws = XLSX.utils.aoa_to_sheet([
       ['CONTAINER SKU PACKING RESULTS'],[],
       ['Container',`${container.cL}×${container.cW}×${container.cH}`,'Max Weight',container.cMaxWt],[],h,...rows]);
-    ws['!cols']=[{wch:22},{wch:16},{wch:16},{wch:16},{wch:16},{wch:14},{wch:14},{wch:12},{wch:12},{wch:16},{wch:12},{wch:12},{wch:12}];
+    ws['!cols']=[{wch:22},{wch:16},{wch:16},{wch:16},{wch:16},{wch:14},{wch:14},{wch:12},{wch:12},{wch:16},{wch:12},{wch:12},{wch:12},{wch:16},{wch:16},{wch:60}];
     XLSX.utils.book_append_sheet(wb,ws,'Container Results');
 
     if (mixResult) {
@@ -657,7 +751,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
               <div style={{overflowX:'auto'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
                   <thead><tr>
-                    {['SKU','Category','Vol Qty','Wt Qty','Eff Qty','Vol%','Wt%','→ L-axis','→ W-axis','→ H-axis (stack)','Layers','Constraint','🔒 Lock H'].map(h=>(
+                    {['SKU','Category','Vol Qty','Wt Qty','Eff Qty','Vol%','Wt%','→ L-axis','→ W-axis','→ H-axis (stack)','Layers','Constraint','Pallet Stability','🔒 Lock H'].map(h=>(
                       <th key={h} style={{padding:'9px 12px',textAlign:'left',fontWeight:'600',
                         fontSize:'11px',color:'#6b7a8d',textTransform:'uppercase',
                         background:'#f8fafc',borderBottom:'1px solid #e8edf2',whiteSpace:'nowrap'}}>{h}</th>))}
@@ -716,6 +810,27 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               color:r.constraint==='Volume'?'#1d4ed8':r.constraint==='Weight'?'#c2410c':'#6d28d9'}}>
                               {r.constraint}
                             </span>
+                          </td>
+                          <td style={{padding:'8px 12px',minWidth:'176px'}}>
+                            {r.stab ? (
+                              <div style={{borderRadius:'7px',padding:'4px 8px',fontSize:'11px',
+                                background:r.stab.ok?'#f0fdf4':r.stab.rating==='marginal'?'#fffbeb':'#fff1f2',
+                                border:'1px solid '+(r.stab.ok?'#86efac':r.stab.rating==='marginal'?'#fde68a':'#fecdd3'),
+                                color:r.stab.ok?'#166534':r.stab.rating==='marginal'?'#92400e':'#be185d'}}>
+                                <div style={{fontWeight:'700'}}>
+                                  {r.stab.ok?'Stable':r.stab.rating==='marginal'?'Needs securing':'Unstable'}
+                                  {r.stab.best?' \u00b7 '+r.stab.best.slender+':1 \u00b7 '+r.stab.best.tip+'\u00b0':''}
+                                </div>
+                                <div style={{fontSize:'10px',fontWeight:'400',marginTop:'1px',color:'#6b7280'}}>
+                                  {r.stab.best?r.stab.best.name:''}
+                                </div>
+                                {!r.stab.ok && (
+                                  <div style={{fontSize:'10px',fontWeight:'400',marginTop:'3px',lineHeight:'1.35'}}>
+                                    {r.stab.advice}
+                                  </div>
+                                )}
+                              </div>
+                            ) : <span style={{color:'#9ca3af',fontSize:'11px'}}>-</span>}
                           </td>
                           <td style={{padding:'8px 12px',textAlign:'center'}}>
                             <button
@@ -926,6 +1041,13 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                     ({(s.remainder*100).toFixed(1)}%)
                                     {s.sl&&s.sw&&s.sh?` ${s.sl}×${s.sw}×${s.sh}`:''}
                                   </span>
+                                  {(()=>{ const st=assessStability(s.sl,s.sw,s.sh,pL,pW,pH);
+                                    if(!st||st.ok) return null;
+                                    return <span title={st.advice} style={{marginLeft:'4px',
+                                      color:st.rating==='marginal'?'#d97706':'#be185d',
+                                      fontWeight:'700'}}>
+                                      {st.rating==='marginal'?'\u26a0':'\u26a0\u26a0'}
+                                    </span>; })()}
                                 </span>))}
                             </td>
                           </tr>);})}
