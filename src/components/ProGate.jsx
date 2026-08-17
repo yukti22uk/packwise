@@ -23,6 +23,17 @@ const TOOL_DETAILS = {
       'Export branded PDF loading plan for your warehouse team',
     ],
   },
+  'Warehouse Designer': {
+    icon: '🏭',
+    tagline: 'Design your warehouse storage from your SKU data',
+    bullets: [
+      'Classify every SKU by velocity (VF/F/M/S/VS/NM) and size band (XS/S/M/L/XL)',
+      'Auto-select rack type per SKU: shelving, selective pallet, drive-in, cantilever, live storage',
+      'Recommend warehouse dimensions based on locations required and rack footprints',
+      'Generate a colour-coded visual floor plan with zones, racks, aisles and dock doors',
+      'Download full Excel report (4 sheets) and PPT presentation (6 slides)',
+    ],
+  },
   'Order Analyser': {
     icon: '📊',
     tagline: 'Turn your order data into actionable logistics insights',
