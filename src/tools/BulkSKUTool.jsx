@@ -636,6 +636,28 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                   <input style={inp} type="number" min="0" step="any" value={v}
                     onChange={e=>s(e.target.value)} placeholder="0"/></div>))}
             </div>
+            {/* Opt-in stability analysis */}
+              <label style={{display:'flex',alignItems:'flex-start',gap:'8px',
+                cursor:'pointer',background:stabCheck?'#f0fdf4':'#f8fafc',
+                border:'1px solid '+(stabCheck?'#86efac':'#e2e8f0'),
+                borderRadius:'8px',padding:'9px 12px',marginBottom:'12px'}}>
+                <input type="checkbox" checked={stabCheck}
+                  onChange={e=>setStabCheck(e.target.checked)}
+                  style={{marginTop:'2px',width:'15px',height:'15px',cursor:'pointer',
+                    accentColor:'#16a34a'}}/>
+                <span>
+                  <span style={{fontWeight:'700',fontSize:'13px',
+                    color:stabCheck?'#166534':'#0f172a'}}>
+                    Apply pallet stability check
+                  </span>
+                  <span style={{display:'block',fontSize:'11px',color:'#6b7280',marginTop:'2px'}}>
+                    Adds a column checking whether each SKU will stand safely on the pallet
+                    (height-to-base ratio and tipping angle), and recommends a better
+                    orientation or pallet size where it will not. Leave unticked for the
+                    standard results.
+                  </span>
+                </span>
+              </label>
             {valid && <div style={S.infoBox}>Volume: {(container.cL*container.cW*container.cH).toLocaleString()} mm³</div>}
           </div>
 
@@ -676,29 +698,6 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                   <option key={k} value={k}>{v.label}</option>))}
               </select>
             </div>
-
-            {/* Opt-in stability analysis */}
-            <label style={{display:'flex',alignItems:'flex-start',gap:'8px',
-              cursor:'pointer',background:stabCheck?'#f0fdf4':'#f8fafc',
-              border:'1px solid '+(stabCheck?'#86efac':'#e2e8f0'),
-              borderRadius:'8px',padding:'9px 12px',marginBottom:'12px'}}>
-              <input type="checkbox" checked={stabCheck}
-                onChange={e=>setStabCheck(e.target.checked)}
-                style={{marginTop:'2px',width:'15px',height:'15px',cursor:'pointer',
-                  accentColor:'#16a34a'}}/>
-              <span>
-                <span style={{fontWeight:'700',fontSize:'13px',
-                  color:stabCheck?'#166534':'#0f172a'}}>
-                  Apply pallet stability check
-                </span>
-                <span style={{display:'block',fontSize:'11px',color:'#6b7280',marginTop:'2px'}}>
-                  Adds a column checking whether each SKU will stand safely on the pallet
-                  (height-to-base ratio and tipping angle), and recommends a better
-                  orientation or pallet size where it will not. Leave unticked for the
-                  standard results.
-                </span>
-              </span>
-            </label>
 
             {/* Pallet dimensions */}
             <div style={S.grid2}>
