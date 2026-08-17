@@ -351,7 +351,8 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
   // Pallet mixing
   const [pPreset,     setPPreset]     = useState('standard');
   const [pL,setPL]=useState('1200'); const [pW,setPW]=useState('1000'); const [pH,setPH]=useState('1200');
-  const [wrapped,setWrapped]=useState(true); // are unit loads stretch-wrapped in practice?
+  const [stabCheck,setStabCheck]=useState(false); // opt-in pallet stability analysis
+  const [wrapped,setWrapped]=useState(true);      // are unit loads stretch-wrapped in practice?
   const [maxSkus,     setMaxSkus]     = useState(4);
   const [lockHeight,  setLockHeight]  = useState(false);
   const [lockedSkus,       setLockedSkus]       = useState(new Set());
@@ -395,7 +396,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
       let con = 'Volume';
       if (wQ!==null && wQ<eV) con = 'Weight';
       if (qtyAvail>0 && eQ===qtyAvail) con = 'Stock Limit';
-      const stab = assessStability(sl, sw, sh, pL, pW, pH, qtyAvail, wrapped);
+      const stab = stabCheck ? assessStability(sl, sw, sh, pL, pW, pH, qtyAvail, wrapped) : null;
       return { name, sl, sw, sh, category:s.category||'Uncategorised', volQty:eV, wtQty:wQ!==null?wQ:'N/A', effQty:eQ, volUtil:vu, wtUtil:wu, orient, stackLayers:cStackLayers, constraint:con, heightLocked:isLocked, stab };
     }).filter(Boolean);
   }
@@ -547,13 +548,14 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
       'Effective Max Qty','Volume Used (%)','Weight Used (%)',
       'L-axis (mm)','W-axis (mm)','H-axis / Stack (mm)',
       'Stacking Layers','Height Locked','Constraint',
-      'Pallet Stability','Height:Base Ratio','Stability Advice'];
+      ...(stabCheck?['Pallet Stability','Height:Base Ratio','Stability Advice']:[])];
     const rows = results.map(r => {
       const cat = r.category||'Uncategorised';
       const [oL,oW,oH] = (r.orient||'').split('×');
       const st = r.stab;
       return r.error
-        ? [r.name, cat, r.error, '', '', '', '', '', '', '', '', '', '', '', '', '']
+        ? [r.name, cat, r.error, '', '', '', '', '', '', '', '', '', '',
+           ...(stabCheck?['','','']:[])]
         : [r.name, cat,
            r.volQty,
            typeof r.wtQty==='number'?r.wtQty:'N/A',
@@ -564,14 +566,20 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
            r.stackLayers||'',
            r.heightLocked?'Locked':'',
            r.constraint,
-           st ? (st.ok?'Stable':st.rating==='marginal'?'Needs securing':'Unstable') : '',
-           st && st.best ? st.best.slender+':1' : '',
-           st ? st.advice : ''];
+           ...(stabCheck ? [
+             st ? (st.wrapCritical&&st.ok ? 'Stable - wrap required'
+                   : st.ok ? 'Stable'
+                   : st.rating==='marginal' ? 'Needs securing' : 'Unstable') : '',
+             st && st.best && st.best.usable
+               ? (st.assumeWrapped?st.best.slender:st.best.slenderSingle)+':1' : '',
+             st ? st.advice : '',
+           ] : [])];
     });
     const ws = XLSX.utils.aoa_to_sheet([
       ['CONTAINER SKU PACKING RESULTS'],[],
       ['Container',`${container.cL}×${container.cW}×${container.cH}`,'Max Weight',container.cMaxWt],[],h,...rows]);
-    ws['!cols']=[{wch:22},{wch:16},{wch:16},{wch:16},{wch:16},{wch:14},{wch:14},{wch:12},{wch:12},{wch:16},{wch:12},{wch:12},{wch:12},{wch:16},{wch:16},{wch:60}];
+    ws['!cols']=[{wch:22},{wch:16},{wch:16},{wch:16},{wch:16},{wch:14},{wch:14},{wch:12},{wch:12},{wch:16},{wch:12},{wch:12},{wch:12},
+      ...(stabCheck?[{wch:16},{wch:16},{wch:60}]:[])];
     XLSX.utils.book_append_sheet(wb,ws,'Container Results');
 
     if (mixResult) {
@@ -669,6 +677,29 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
               </select>
             </div>
 
+            {/* Opt-in stability analysis */}
+            <label style={{display:'flex',alignItems:'flex-start',gap:'8px',
+              cursor:'pointer',background:stabCheck?'#f0fdf4':'#f8fafc',
+              border:'1px solid '+(stabCheck?'#86efac':'#e2e8f0'),
+              borderRadius:'8px',padding:'9px 12px',marginBottom:'12px'}}>
+              <input type="checkbox" checked={stabCheck}
+                onChange={e=>setStabCheck(e.target.checked)}
+                style={{marginTop:'2px',width:'15px',height:'15px',cursor:'pointer',
+                  accentColor:'#16a34a'}}/>
+              <span>
+                <span style={{fontWeight:'700',fontSize:'13px',
+                  color:stabCheck?'#166534':'#0f172a'}}>
+                  Apply pallet stability check
+                </span>
+                <span style={{display:'block',fontSize:'11px',color:'#6b7280',marginTop:'2px'}}>
+                  Adds a column checking whether each SKU will stand safely on the pallet
+                  (height-to-base ratio and tipping angle), and recommends a better
+                  orientation or pallet size where it will not. Leave unticked for the
+                  standard results.
+                </span>
+              </span>
+            </label>
+
             {/* Pallet dimensions */}
             <div style={S.grid2}>
               {[['Pallet L (mm)',pL,setPL],['Pallet W (mm)',pW,setPW],['Pallet H (mm)',pH,setPH]].map(([l,v,s])=>(
@@ -678,6 +709,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                     placeholder="0"/></div>))}
 
               {/* Are loads stretch-wrapped on the floor? */}
+              {stabCheck && (
               <div>
                 <label style={lbl}>Unit Load Wrapping</label>
                 <select value={wrapped?'yes':'no'} onChange={e=>setWrapped(e.target.value==='yes')}
@@ -690,6 +722,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                   which SKUs topple if the floor skips it.
                 </div>
               </div>
+              )}
 
               {/* Max SKUs per pallet */}
               <div>
@@ -824,7 +857,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
               <div style={{overflowX:'auto'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
                   <thead><tr>
-                    {['SKU','Category','Pallet Stability','Vol Qty','Wt Qty','Eff Qty','Vol%','Wt%','→ L-axis','→ W-axis','→ H-axis (stack)','Layers','Constraint','🔒 Lock H'].map(h=>(
+                    {['SKU','Category',...(stabCheck?['Pallet Stability']:[]),'Vol Qty','Wt Qty','Eff Qty','Vol%','Wt%','→ L-axis','→ W-axis','→ H-axis (stack)','Layers','Constraint','🔒 Lock H'].map(h=>(
                       <th key={h} style={{padding:'9px 12px',textAlign:'left',fontWeight:'600',
                         fontSize:'11px',color:'#6b7a8d',textTransform:'uppercase',
                         background:'#f8fafc',borderBottom:'1px solid #e8edf2',whiteSpace:'nowrap'}}>{h}</th>))}
@@ -844,6 +877,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               {r.category||'—'}
                             </span>
                           </td>
+                          {stabCheck && (
                           <td style={{padding:'8px 12px',minWidth:'176px'}}>
                             {r.stab ? (
                               <div style={{borderRadius:'7px',padding:'4px 8px',fontSize:'11px',
@@ -877,6 +911,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                               </div>
                             ) : <span style={{color:'#9ca3af',fontSize:'11px'}}>-</span>}
                           </td>
+                          )}
                           <td style={{padding:'8px 12px',textAlign:'right'}}>{r.volQty?.toLocaleString()}</td>
                           <td style={{padding:'8px 12px',textAlign:'right'}}>{typeof r.wtQty==='number'?r.wtQty.toLocaleString():r.wtQty}</td>
                           <td style={{padding:'8px 12px',textAlign:'right',fontWeight:'700'}}>{r.effQty?.toLocaleString()}</td>
@@ -1126,7 +1161,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                                     ({(s.remainder*100).toFixed(1)}%)
                                     {s.sl&&s.sw&&s.sh?` ${s.sl}×${s.sw}×${s.sh}`:''}
                                   </span>
-                                  {(()=>{ const st=assessStability(s.sl,s.sw,s.sh,pL,pW,pH,s.qtyAvail,wrapped);
+                                  {(()=>{ const st=stabCheck ? assessStability(s.sl,s.sw,s.sh,pL,pW,pH,s.qtyAvail,wrapped) : null;
                                     if(!st||st.ok) return null;
                                     return <span title={st.advice} style={{marginLeft:'4px',
                                       color:st.rating==='marginal'?'#d97706':'#be185d',
