@@ -357,7 +357,11 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
     cL:parseFloat(cL)||0, cW:parseFloat(cW)||0,
     cH:parseFloat(cH)||0, cMaxWt:parseFloat(cMaxWt)||0
   };
-  const valid = container.cL>0 && container.cW>0 && container.cH>0 && container.cMaxWt>0;
+  // Only the three dimensions are required. A weight limit is optional: without
+  // one the fit is volume-constrained, which is a legitimate way to plan.
+  const valid = container.cL>0 && container.cW>0 && container.cH>0;
+  const missingDims = ['Length','Width','Height']
+    .filter((_,i) => [container.cL,container.cW,container.cH][i] <= 0);
 
   // ── Per-SKU container packing ──────────────────────────────────────────────
   function pSkus(cont, skus, locked=new Set()) {
@@ -381,11 +385,11 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
       }
       const cStackLayers = calcStackLayers(cL, cW, cH, sl, sw, sh, isLocked);
       let eV = qtyAvail>0 ? Math.min(vQ, qtyAvail) : vQ;
-      let wQ = swt>0 ? Math.floor(cMaxWt/swt) : null;
+      let wQ = (swt>0 && cMaxWt>0) ? Math.floor(cMaxWt/swt) : null;
       if (wQ!==null && qtyAvail>0) wQ = Math.min(wQ, qtyAvail);
       const eQ = wQ!==null ? Math.min(eV,wQ) : eV;
       const vu = (eQ*sl*sw*sh)/cv;
-      const wu = swt>0 ? (eQ*swt)/cMaxWt : null;
+      const wu = (swt>0 && cMaxWt>0) ? (eQ*swt)/cMaxWt : null;
       let con = 'Volume';
       if (wQ!==null && wQ<eV) con = 'Weight';
       if (qtyAvail>0 && eQ===qtyAvail) con = 'Stock Limit';
@@ -426,7 +430,11 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
 
   // ── Run container calculation ──────────────────────────────────────────────
   const run = () => {
-    if (!valid) { setError('Enter container dimensions.'); return; }
+    if (!valid) {
+      setError('Enter container ' + missingDims.join(', ').toLowerCase()
+        + ' (Max Weight is optional).');
+      return;
+    }
     if (!rawSkus) { setError('Upload or paste SKU data.'); return; }
     setError(''); setMixResult(null);
     let toProcess = rawSkus, cap = false;
@@ -656,7 +664,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
           <div style={S.card}>
             <div style={S.cardTitle}>🗃️ Container Details</div>
             <div style={S.grid2}>
-              {[['Length',cL,setCL],['Width',cW,setCW],['Height',cH,setCH],['Max Weight (kg)',cMaxWt,setCMaxWt]].map(([l,v,s])=>(
+              {[['Length',cL,setCL],['Width',cW,setCW],['Height',cH,setCH],['Max Weight (kg) \u2014 optional',cMaxWt,setCMaxWt]].map(([l,v,s])=>(
                 <div key={l}><label style={lbl}>{l}</label>
                   <input style={inp} type="number" min="0" step="any" value={v}
                     onChange={e=>s(e.target.value)} placeholder="0"/></div>))}
