@@ -613,8 +613,16 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
   // the volume, or the reverse, and the two tell very different stories.
   const band = (test) => {
     const rows = results ? results.filter(r => !r.error && test(r)) : [];
-    return { skus: rows.length,
-      qty: rows.reduce((s,r) => s + (Number(r.effQty)||0), 0) };
+    const contVol = container.cL * container.cW * container.cH;
+    // Sum the STOCK entered, not effQty. effQty is only what fits in ONE
+    // container, so adding it across SKUs produces a number that means nothing.
+    let qty = 0, cont = 0;
+    rows.forEach(r => {
+      const stock = r.qtyAvail > 0 ? r.qtyAvail : (Number(r.effQty)||0);
+      qty += stock;
+      if (r.effQty > 0) cont += stock / r.effQty;   // containers this SKU needs
+    });
+    return { skus: rows.length, qty, cont, contVol };
   };
   // Combined utilisation weights every SKU by the container space it actually
   // consumes, so a 981-unit SKU counts far more than a 6-unit one. A plain
@@ -889,8 +897,12 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
                       {b.qty.toLocaleString()}
                     </div>
                     <div style={{fontSize:'10px',color:'#6b7a8d',marginTop:'1px'}}>
-                      units{l!=='Total'&&bAll.qty>0?' \u00b7 '+pct(b.qty)+'% of qty':''}
+                      units in stock{l!=='Total'&&bAll.qty>0?' \u00b7 '+pct(b.qty)+'%':''}
                     </div>
+                    <div style={{fontSize:'11px',fontWeight:'700',color:col,marginTop:'4px'}}>
+                      {b.cont>0?b.cont.toFixed(1):'0'}
+                    </div>
+                    <div style={{fontSize:'10px',color:'#6b7a8d'}}>containers</div>
                   </div>
                 </div>))}
             </div>
