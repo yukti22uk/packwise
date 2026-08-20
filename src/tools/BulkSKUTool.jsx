@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import * as XLSX from 'xlsx';
 import { CONFIG } from '../config.js';
-import { calcMixed } from '../algorithms/packing.js';
+import { calcMixed, calcMixedDetailed } from '../algorithms/packing.js';
 import { S, UtilBadge } from '../components/styles.jsx';
 import PasteFromExcel from '../components/PasteFromExcel.jsx';
 
@@ -163,13 +163,6 @@ function assessStability(cl, cw, ch, pl, pw, ph, qty, assumeWrapped) {
     assumeWrapped, best, all, advice, suggested };
 }
 
-function calcLockedBPP(pL, pW, pH, sl, sw, sh) {
-  if (sh > pH) return 0; // box taller than pallet
-  const layers = Math.floor(pH / sh);
-  const ori1   = Math.floor(pL / sl) * Math.floor(pW / sw);
-  const ori2   = Math.floor(pL / sw) * Math.floor(pW / sl);
-  return Math.max(ori1, ori2) * layers;
-}
 
 // ─── STACKING LAYERS CALCULATOR ──────────────────────────────────────────────
 // Returns how many layers high boxes are stacked on the pallet (vertical direction)
@@ -273,7 +266,7 @@ function calcPalletMix(skus, pL, pW, pH, maxSkus, lockHeight=false, lockedSkus=n
       // Per-SKU lock overrides global lock
       const isLocked = lockHeight || lockedSkus.has(s.name);
       const bpp = isLocked
-        ? calcLockedBPP(pL, pW, pH, s.sl, s.sw, s.sh)
+        ? calcMixedDetailed(pL, pW, pH, s.sl, s.sw, s.sh, { lockHeight:true }).total
         : calcMixed(pL, pW, pH, s.sl, s.sw, s.sh).total;
       const stackLayers = calcStackLayers(pL, pW, pH, s.sl, s.sw, s.sh, isLocked);
       if (!bpp || bpp === 0) return { ...s, bpp:0, palletEquiv:null, fullPallets:0, remainder:0, stackLayers:0, error:'Box too large for pallet' };
@@ -377,11 +370,11 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
       const isLocked = locked.has(name) || lockedCategories.has(s.category||'Uncategorised');
       let vQ, orient;
       if (isLocked) {
-        vQ = calcLockedBPP(cL, cW, cH, sl, sw, sh);
-        // Build orient string for locked (H always vertical)
-        const best = Math.floor(cL/sl)*Math.floor(cW/sw) >= Math.floor(cL/sw)*Math.floor(cW/sl)
-          ? `${sl}×${sw}×${sh}` : `${sw}×${sl}×${sh}`;
-        orient = best;
+        // Height stays vertical, but the leftover strips along L, W and H are
+        // still filled. This previously used a plain floor() product which
+        // silently threw away up to 13% of the container.
+        const res = calcMixedDetailed(cL, cW, cH, sl, sw, sh, { lockHeight:true });
+        vQ = res.total; orient = res.orient;
       } else {
         const res = calcMixed(cL, cW, cH, sl, sw, sh);
         vQ = res.total; orient = res.orient;
