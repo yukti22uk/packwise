@@ -390,7 +390,7 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
       if (wQ!==null && wQ<eV) con = 'Weight';
       if (qtyAvail>0 && eQ===qtyAvail) con = 'Stock Limit';
       const stab = stabCheck ? assessStability(sl, sw, sh, pL, pW, pH, qtyAvail, wrapped) : null;
-      return { name, sl, sw, sh, category:s.category||'Uncategorised', volQty:eV, wtQty:wQ!==null?wQ:'N/A', effQty:eQ, volUtil:vu, wtUtil:wu, orient, stackLayers:cStackLayers, constraint:con, heightLocked:isLocked, stab };
+      return { name, sl, sw, sh, category:s.category||'Uncategorised', volQty:eV, wtQty:wQ!==null?wQ:'N/A', effQty:eQ, qtyAvail, unitVol:sl*sw*sh, volUtil:vu, wtUtil:wu, orient, stackLayers:cStackLayers, constraint:con, heightLocked:isLocked, stab };
     }).filter(Boolean);
   }
 
@@ -600,9 +600,41 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
     XLSX.writeFile(wb,'Bulk_SKU_Results.xlsx');
   };
 
-  const gC=results?results.filter(r=>!r.error&&r.volUtil>=0.75).length:0;
-  const oC=results?results.filter(r=>!r.error&&r.volUtil>=0.5&&r.volUtil<0.75).length:0;
-  const lC=results?results.filter(r=>!r.error&&r.volUtil<0.5).length:0;
+  // Each utilisation band is reported two ways: how many SKUs sit in it, and
+  // how many units those SKUs account for. A band can hold few SKUs but most of
+  // the volume, or the reverse, and the two tell very different stories.
+  const band = (test) => {
+    const rows = results ? results.filter(r => !r.error && test(r)) : [];
+    return { skus: rows.length,
+      qty: rows.reduce((s,r) => s + (Number(r.effQty)||0), 0) };
+  };
+  // Combined utilisation weights every SKU by the container space it actually
+  // consumes, so a 981-unit SKU counts far more than a 6-unit one. A plain
+  // average over SKUs treats them equally and flatters a catalogue with many
+  // small, badly-packing lines.
+  //   containers needed = stock / units per container
+  //   combined %        = total goods volume / total container volume consumed
+  const combined = (() => {
+    if (!results) return null;
+    let goods = 0, space = 0, weighted = 0, simple = 0, n = 0;
+    results.forEach(r => {
+      if (r.error || !(r.effQty > 0) || !(r.unitVol > 0) || !(cv > 0)) return;
+      const stock = r.qtyAvail > 0 ? r.qtyAvail : r.effQty;
+      const containers = stock / r.effQty;      // fractional: part-filled counts
+      goods += stock * r.unitVol;
+      space += containers * cv;
+      simple += r.volUtil; n++;
+    });
+    if (!n || space <= 0) return null;
+    weighted = goods / space;
+    return { weighted, simple: simple / n, n,
+      containers: space / cv, goodsM3: goods / 1e9, spaceM3: space / 1e9 };
+  })();
+  const bAll = band(() => true);
+  const bG   = band(r => r.volUtil >= 0.75);
+  const bO   = band(r => r.volUtil >= 0.5 && r.volUtil < 0.75);
+  const bL   = band(r => r.volUtil < 0.5);
+  const pct  = n => bAll.qty > 0 ? Math.round(n / bAll.qty * 100) : 0;
 
   const inp = { ...S.input, marginBottom:'4px' };
   const lbl = { ...S.label };
@@ -790,12 +822,67 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
 
           {/* Container results */}
           {results && !processing && (<>
+            {/* Combined utilisation — weighted by quantity, not per SKU */}
+            {combined && (
+              <div style={{background:'#0f172a',borderRadius:'12px',padding:'14px 18px',
+                marginBottom:'12px',display:'flex',flexWrap:'wrap',gap:'18px',
+                alignItems:'center',justifyContent:'space-between'}}>
+                <div>
+                  <div style={{fontSize:'10px',color:'#94a3b8',fontWeight:'700',
+                    textTransform:'uppercase',letterSpacing:'0.06em'}}>
+                    Combined utilisation
+                  </div>
+                  <div style={{fontSize:'26px',fontWeight:'800',
+                    color:combined.weighted>=0.75?'#4ade80':combined.weighted>=0.5?'#fbbf24':'#fb7185',
+                    lineHeight:'1.15'}}>
+                    {(combined.weighted*100).toFixed(1)}%
+                  </div>
+                  <div style={{fontSize:'11px',color:'#94a3b8',marginTop:'1px'}}>
+                    weighted by quantity across {combined.n} SKU{combined.n>1?'s':''}
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:'18px',flexWrap:'wrap'}}>
+                  {[['Goods volume',combined.goodsM3.toFixed(1)+' m\u00b3'],
+                    ['Container volume',combined.spaceM3.toFixed(1)+' m\u00b3'],
+                    ['Containers needed',combined.containers.toFixed(2)],
+                    ['Unweighted SKU avg',(combined.simple*100).toFixed(1)+'%']].map(([l,v])=>(
+                    <div key={l}>
+                      <div style={{fontSize:'15px',fontWeight:'700',color:'#e2e8f0'}}>{v}</div>
+                      <div style={{fontSize:'10px',color:'#64748b',marginTop:'1px'}}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {combined && Math.abs(combined.weighted-combined.simple) > 0.05 && (
+              <div style={{fontSize:'11px',color:'#92400e',background:'#fffbeb',
+                border:'1px solid #fde68a',borderRadius:'8px',padding:'7px 12px',
+                marginBottom:'12px'}}>
+                {combined.weighted > combined.simple
+                  ? 'Your high-volume SKUs pack better than the SKU average suggests \u2014 the badly-packing lines are small ones.'
+                  : 'Your high-volume SKUs pack worse than the SKU average suggests \u2014 focus on the largest lines first.'}
+              </div>
+            )}
+
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'12px',marginBottom:'16px'}}>
-              {[['Total',results.length,'#f8fafc'],['≥75%',gC,'#f0fdf4'],['50–74%',oC,'#fefce8'],['<50%',lC,'#fff8fc']].map(([l,v,bg])=>(
+              {[['Total',bAll,'#f8fafc','#1a2332'],
+                ['≥75%',bG,'#f0fdf4','#166534'],
+                ['50–74%',bO,'#fefce8','#854d0e'],
+                ['<50%',bL,'#fff8fc','#be185d']].map(([l,b,bg,col])=>(
                 <div key={l} style={{background:bg,borderRadius:'10px',padding:'12px',
                   textAlign:'center',border:'1px solid rgba(0,0,0,0.06)'}}>
-                  <div style={{fontSize:'20px',fontWeight:'700',color:'#1a2332'}}>{v}</div>
-                  <div style={{fontSize:'11px',color:'#6b7a8d',marginTop:'2px'}}>{l}</div>
+                  <div style={{fontSize:'20px',fontWeight:'700',color:col}}>{b.skus}</div>
+                  <div style={{fontSize:'11px',color:'#6b7a8d',marginTop:'2px'}}>
+                    {l}{l==='Total'?' SKUs':' \u00b7 SKUs'}
+                  </div>
+                  <div style={{borderTop:'1px solid rgba(0,0,0,0.07)',marginTop:'7px',paddingTop:'6px'}}>
+                    <div style={{fontSize:'15px',fontWeight:'700',color:col}}>
+                      {b.qty.toLocaleString()}
+                    </div>
+                    <div style={{fontSize:'10px',color:'#6b7a8d',marginTop:'1px'}}>
+                      units{l!=='Total'&&bAll.qty>0?' \u00b7 '+pct(b.qty)+'% of qty':''}
+                    </div>
+                  </div>
                 </div>))}
             </div>
             <button style={{...S.btnPrimary,marginBottom:'16px'}} onClick={exp}>
