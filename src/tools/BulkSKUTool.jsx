@@ -623,20 +623,21 @@ export default function ContainerSkuTool({ isPro, onUpgrade }) {
   //   containers needed = stock / units per container
   //   combined %        = total goods volume / total container volume consumed
   const combined = (() => {
-    if (!results) return null;
-    let goods = 0, space = 0, weighted = 0, simple = 0, n = 0;
+    // cv is local to pSkus, so derive the container volume here from `container`
+    const contVol = container.cL * container.cW * container.cH;
+    if (!results || !(contVol > 0)) return null;
+    let goods = 0, space = 0, simple = 0, n = 0;
     results.forEach(r => {
-      if (r.error || !(r.effQty > 0) || !(r.unitVol > 0) || !(cv > 0)) return;
+      if (r.error || !(r.effQty > 0) || !(r.unitVol > 0)) return;
       const stock = r.qtyAvail > 0 ? r.qtyAvail : r.effQty;
       const containers = stock / r.effQty;      // fractional: part-filled counts
       goods += stock * r.unitVol;
-      space += containers * cv;
-      simple += r.volUtil; n++;
+      space += containers * contVol;
+      simple += (r.volUtil || 0); n++;
     });
     if (!n || space <= 0) return null;
-    weighted = goods / space;
-    return { weighted, simple: simple / n, n,
-      containers: space / cv, goodsM3: goods / 1e9, spaceM3: space / 1e9 };
+    return { weighted: goods / space, simple: simple / n, n,
+      containers: space / contVol, goodsM3: goods / 1e9, spaceM3: space / 1e9 };
   })();
   const bAll = band(() => true);
   const bG   = band(r => r.volUtil >= 0.75);
